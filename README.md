@@ -110,15 +110,15 @@ Other commands:
 
 ## Pricing — shared with all AgentMesh products
 
-| Tier | Monthly credits | Lecturecast 5-min video cost | Job Agent application cost |
+| Tier | Credits | Effective Lecturecast | Effective Job Agent |
 |---|---|---|---|
-| Free | 100 | 50 credits each (= 2 / month) | 1 credit each |
-| Pro $9.9/mo | 1,500 | (= 30 videos / month) | |
-| Team $39/mo | 8,000 | (= 160 videos / month) | |
+| Free | **50 at signup, one-time** | 1 video | 50 applications |
+| Pro $9.9 / mo | 1,500 / month | 30 videos / month | 1,500 applications / month |
+| Team $39 / mo | 8,000 / month | 160 videos / month | 8,000 applications / month |
 
-You buy one subscription. Credits are spent across whichever product you use.
+**Free is a trial, not a recurring tier.** You get 50 credits when you sign up — enough to make one Lecturecast video (or test Job Agent for a week) and decide. From there, one AgentMesh subscription gives you a shared monthly credit pool spent across whichever products you use.
 
-**M1 phase**: premium is free with a license key while we collect feedback.
+**M1 phase**: paid tier is currently free with a license key while we collect feedback.
 
 ---
 
