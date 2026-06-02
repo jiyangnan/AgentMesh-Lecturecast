@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lecturecast"
+version = "0.2.0a0"
+description = "Thin CLI for Lecturecast — turn a topic into B站 + 小红书 course videos via api.lecturecast.agentmesh360.com"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "jiyangnan", email = "niclolaszhaosi@gmail.com" }]
+keywords = ["lecturecast", "agentmesh", "video", "course", "bilibili", "xiaohongshu"]
+dependencies = [
+    "httpx>=0.27",
+    "typer>=0.12",
+    "rich>=13.7",
+    "platformdirs>=4.0",
+    "tomli>=2.0; python_version<'3.11'",
+    "tomli-w>=1.0",
+    "pydantic>=2.9",
+]
+
+[project.scripts]
+lecturecast = "lecturecast.cli:app"
+
+[project.urls]
+Homepage = "https://lecturecast.agentmesh360.com"
+Repository = "https://github.com/jiyangnan/AgentMesh-Lecturecast"
+Issues = "https://github.com/jiyangnan/AgentMesh-Lecturecast/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lecturecast"]
