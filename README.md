@@ -121,7 +121,14 @@ Other commands:
 
 **Monthly credits reset each billing cycle (use-it-or-lose-it).** Pick the tier matching your real monthly usage; unused credits do not roll over.
 
-**Which tier is for you?**
+### Hard cap — no surprise charges
+
+- When you run out: **HTTP 402** with a link to upgrade. **No automatic overage billing.** Predictable bills, always.
+- **Upgrade immediately tops up the tier difference.** Pro→Team gives you `8000 − 1500 = 6500` extra credits on the spot, plus you keep your current balance.
+- **Downgrade**: current cycle keeps your balance; next cycle resets to the new tier.
+- **No refunds.** Cancellation stops the next renewal; you keep your current cycle's credits until period end.
+
+### Which tier is for you?
 
 - **Pro** — you make 1 video a day, or use Job Agent for a casual job hunt.
 - **Creator** — you're a professional content creator. ~2 videos a day, +18% per-credit savings vs Pro.
