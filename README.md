@@ -14,23 +14,13 @@ English · [中文](README.zh.md)
 
 <sub>↑ Same script, two visual systems. Left: Bilibili 1920×1080. Right: Xiaohongshu 1080×1920. Played at 12× speed — actual length ~5:21.</sub>
 
-**Core loop**: Topic → 7-section draft script (cloud) → your approval → TTS + scenes + rendering (cloud) → mp4s downloaded to your machine.
+**Core loop**: topic → 7-section draft script → your approval → voiceover + scenes + rendering → finished mp4s + covers on your machine.
 
-**Architecture in one breath**: The CLI is thin — it sends your topic to `api.lecturecast.agentmesh360.com`, polls for the script draft, shows it in your terminal for approval, then waits for the cloud worker to render and downloads the final mp4s + covers when ready. No local setup for the cloud path. *(Prefer to render on your own machine — or driving this from an AI agent? There's a full **local** path too: see [AGENTS.md](AGENTS.md) and [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md).)*
+**Driving this from an AI agent?** Start with **[AGENTS.md](AGENTS.md)** and **[docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)** — the complete how-to for producing a video end to end.
 
 This is a product under the **[AgentMesh](https://agentmesh360.com)** umbrella — a series of vertical AI agents for specific industries. Your AgentMesh subscription's credit pool is **shared across all products**: Pro $9.9/mo gives you 1,500 credits = 30 Lecturecast videos OR 1,500 Job Agent applications OR a mix.
 
 > **⚠️ Free during open beta**. Create an AgentMesh360 account, grab your API key from the account dashboard, and you're in — no credit limits enforced for now. Subscriptions land soon.
-
----
-
-## Architecture — two repos + one platform
-
-| Repo | Visibility | What it holds |
-|------|-----------|---------------|
-| **Lecturecast CLI** (this repo) | Public · Apache 2.0 | Thin cloud client **+ the full local render workflow** (`templates/` + scripts). Use the cloud, or render locally as the director. |
-| **Server** | **Private** | The remaining closed-source IP: the **script & scene-generation prompts** that power zero-touch cloud automation. (The Remotion visual system + render scripts ship publicly here, for the local path.) |
-| **agentmesh-core** | **Private** | Shared identity, subscriptions, credits across all AgentMesh products. |
 
 ---
 
@@ -180,19 +170,10 @@ The agent shells out to `lecturecast new` and waits for completion.
 ## Privacy
 
 - The audio files and rendered mp4s are temporarily stored on the cloud worker (24h TTL) for download. After 24h, they're auto-deleted.
-- Your topic + draft script text are processed by DeepSeek V4 Flash (LLM provider) for script generation. Billing is handled separately by agentmesh-core; payment details never touch the product backend (official WeChat / Alipay payments will be added once the company entity is registered).
+- Your topic + draft script text are processed by an LLM provider for script generation. Billing is handled separately by agentmesh-core; payment details never touch the product backend.
 - No tracking, no telemetry beyond per-action credit metering.
 
 ---
-
-## Roadmap
-
-- [ ] M1: hosted service live + free open beta for early users (you're here)
-- [ ] M2: self-serve subscription checkout (WeChat / Alipay)
-- [ ] M2: webhook on completion (飞书 / Slack / email)
-- [ ] M3: batch series mode (3-4 60s clips from one script)
-- [ ] M3: custom theme upload (your brand colors / fonts)
-- [ ] M3: direct B站/小红书publish API integration (with your auth)
 
 ## License
 

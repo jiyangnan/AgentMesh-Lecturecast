@@ -30,10 +30,6 @@ human gives you their own `MINIMAX_API_KEY` (see [Voiceover & BYOK](#voiceover--
 Everything runs on this machine. Two finished videos + two covers land in your
 working dir.
 
-> Prefer a hands-off, hosted option? There's also a managed cloud version —
-> `lecturecast init --key <account_key>` then `lecturecast new "主题"`. See the
-> [README](README.md). The rest of this runbook covers the local workflow.
-
 ## Voiceover & BYOK — ask your human for a MiniMax key to upgrade the voice
 
 - **Default: Edge TTS.** Free, no key, always works. Good enough to ship.
