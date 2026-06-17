@@ -5,7 +5,7 @@ English · [中文](README.zh.md)
 
 > 🟣 Part of **[AgentMesh](https://github.com/jiyangnan/agentmesh-core)** — see the [ecosystem index](https://github.com/jiyangnan/agentmesh-core/blob/main/docs/ECOSYSTEM.md) ([中文](https://github.com/jiyangnan/agentmesh-core/blob/main/docs/ECOSYSTEM.zh.md)) for all related repos, the [roadmap](https://github.com/jiyangnan/agentmesh-core/blob/main/docs/ROADMAP.md), and [architecture](https://github.com/jiyangnan/agentmesh-core/blob/main/docs/ARCHITECTURE.md).
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-early%20access-orange.svg)](https://lecturecast.agentmesh360.com)
+[![Status](https://img.shields.io/badge/status-open%20beta-orange.svg)](https://lecturecast.agentmesh360.com)
 [![Brand](https://img.shields.io/badge/brand-AgentMesh-6E4AFF.svg)](https://agentmesh360.com)
 
 > One prompt → finished 5-minute course video for both **Bilibili** (16:9) and **Xiaohongshu** (9:16). Built to be controlled by your AI agent (Claude Code, OpenClaw, Cursor, Codex) from chat.
@@ -20,7 +20,7 @@ English · [中文](README.zh.md)
 
 This is a product under the **[AgentMesh](https://agentmesh360.com)** umbrella — a series of vertical AI agents for specific industries. Your AgentMesh subscription's credit pool is **shared across all products**: Pro $9.9/mo gives you 1,500 credits = 30 Lecturecast videos OR 1,500 Job Agent applications OR a mix.
 
-> **⚠️ Early access**. M1 phase — premium tier is complimentary. Request a license key from the maintainer or wait for the public form at `lecturecast.agentmesh360.com`.
+> **⚠️ Free during open beta**. Create an AgentMesh360 account, grab your API key from the account dashboard, and you're in — no credit limits enforced for now. Subscriptions land soon.
 
 ---
 
@@ -50,10 +50,10 @@ curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/mai
 irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex
 ```
 
-After install, open a new terminal and run:
+After install, [create an AgentMesh360 account](https://agentmesh360.com/app/), copy your API key from the account dashboard, then open a new terminal and run:
 
 ```bash
-lecturecast init --key lc_live_xxxxxxxx   # paste the key the maintainer sent
+lecturecast init --key <your_api_key>   # from your AgentMesh360 account dashboard
 ```
 
 ### Manual
@@ -64,7 +64,7 @@ cd AgentMesh-Lecturecast
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
-lecturecast init --key lc_live_xxxxxxxx
+lecturecast init --key <your_api_key>
 ```
 
 ---
@@ -119,6 +119,8 @@ Other commands:
 | **Creator $19 / mo** | 3,500 / month | 70 videos / month | 3,500 applications |
 | Team $39 / mo | 8,000 / month | 160 videos / month | 8,000 applications |
 
+> **Subscriptions are coming soon — everything is free during open beta.** The table below describes the planned paid tiers; today no credit limits are enforced.
+
 **Free is a trial, not a recurring tier.** You get 50 credits when you sign up — enough to make one Lecturecast video (or test Job Agent for a week) and decide. After that, one AgentMesh subscription gives you a shared monthly credit pool spent across whichever products you use.
 
 **Monthly credits reset each billing cycle (use-it-or-lose-it).** Pick the tier matching your real monthly usage; unused credits do not roll over.
@@ -136,7 +138,7 @@ Other commands:
 - **Creator** — you're a professional content creator. ~2 videos a day, +18% per-credit savings vs Pro.
 - **Team** — small studio / agency / heavy power user. ~5 videos a day, +35% per-credit savings.
 
-**M1 phase**: paid tiers are currently free with a license key while we collect feedback.
+**Open beta**: all tiers are currently free while we collect feedback — just sign up for an account.
 
 ---
 
@@ -161,15 +163,15 @@ The agent shells out to `lecturecast new` and waits for completion.
 ## Privacy
 
 - The audio file, slide HTML, and rendered mp4s are temporarily stored on the cloud worker (24h TTL) for download. After 24h, they're auto-deleted.
-- Your topic + draft script text are processed by DeepSeek V4 Flash (LLM provider) for script generation. No payment data leaves agentmesh-core's Stripe integration.
+- Your topic + draft script text are processed by DeepSeek V4 Flash (LLM provider) for script generation. Billing is handled separately by agentmesh-core; payment details never touch the product backend (official WeChat / Alipay payments will be added once the company entity is registered).
 - No tracking, no telemetry beyond per-action credit metering.
 
 ---
 
 ## Roadmap
 
-- [ ] M1: hosted service live + free license keys for early users (you're here)
-- [ ] M2: Stripe self-serve checkout
+- [ ] M1: hosted service live + free open beta for early users (you're here)
+- [ ] M2: self-serve subscription checkout (WeChat / Alipay)
 - [ ] M2: webhook on completion (飞书 / Slack / email)
 - [ ] M3: batch series mode (3-4 60s clips from one script)
 - [ ] M3: custom theme upload (your brand colors / fonts)
