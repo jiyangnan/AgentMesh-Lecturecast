@@ -12,11 +12,10 @@ Two ways to produce the video (full runbook: **[AGENTS.md](../../AGENTS.md)**):
   (+ optional BYOK MiniMax key). Full pipeline:
   **[docs/LOCAL-WORKFLOW.md](../../docs/LOCAL-WORKFLOW.md)**.
 - **Cloud** — drive the `lecturecast` CLI against the hosted service, zero local
-  setup. *(Server-side render isn't live yet — for guaranteed output today, use
-  the local path.)*
+  setup.
 
-The sections below cover the **cloud** CLI. For the local path, follow
-LOCAL-WORKFLOW.md.
+The sections below cover the **cloud** CLI. For the local path (you as the
+director, rendering on this machine), follow LOCAL-WORKFLOW.md.
 
 ## When to use
 
@@ -116,7 +115,6 @@ CLI downloads finished files to `~/lecturecast/<topic>/`:
 | `RuntimeError: No token configured` | User needs `lecturecast init --key <account_key>` |
 | HTTP 401 from CLI | Token invalid/expired — re-init |
 | HTTP 402 "insufficient_credits" | (rare in open beta) Out of credits — top up at `https://agentmesh360.com/account` |
-| Cloud `new` queues but never renders | Expected for now — server render isn't live. Use the local path (LOCAL-WORKFLOW.md). |
 
 ## Do not
 
