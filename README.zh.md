@@ -109,9 +109,19 @@ $ lecturecast new "RAG 工作原理"
 | `lecturecast usage` | 本月 credit 余额 |
 | `lecturecast status` | 云端 + token 健康检查 |
 
----
+### 配音 — 默认免费，MiniMax 可选（BYOK 自带 key）
 
-## 定价 — 所有 AgentMesh 产品共享
+配音默认走 **Edge TTS**（免费、零配置）。想升级到更暖更自然的 **MiniMax** 音色，
+就自带一个 MiniMax key——它是 [minimaxi.com](https://www.minimaxi.com) 的第三方账户
+（你自己注册，不是 Lecturecast 的密钥）。设到环境变量里，CLI 会自动启用：
+
+```bash
+export MINIMAX_API_KEY=<你自己的-minimax-key>   # 只在你本机，CLI 绝不落盘保存
+lecturecast new "RAG 工作原理"                   # 此时走 MiniMax；出错自动回退 Edge
+```
+
+key 只留在你的环境变量里，经 HTTPS 一次性传服务端用于该任务，绝不持久化。
+**用 AI agent 来驱动？请读 [AGENTS.md](AGENTS.md)**——涵盖安装、云端工作流、BYOK 与排障。
 
 | 档 | Credits | 折算 Lecturecast | 折算 Job Agent |
 |---|---|---|---|

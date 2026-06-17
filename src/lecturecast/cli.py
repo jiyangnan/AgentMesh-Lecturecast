@@ -51,10 +51,11 @@ def new(
     depth: str = typer.Option("concept", "--depth", help="concept | deep | hands_on"),
     platforms: str = typer.Option("bilibili,xiaohongshu", "--platforms",
                                   help="comma-separated"),
-    engine: str = typer.Option("minimax", "--engine",
-                               help="Voice engine: minimax (default, warm) or edge (fallback)"),
-    voice: str = typer.Option("male-qn-jingying", "--voice",
-                              help="Voice id (engine-specific)"),
+    engine: str = typer.Option(None, "--engine",
+                               help="Voice engine: edge (free default) or minimax "
+                                    "(BYOK — needs MINIMAX_API_KEY). Auto-detected if omitted."),
+    voice: str = typer.Option(None, "--voice",
+                              help="Voice id (engine-specific). Defaults per engine."),
     script: Path | None = typer.Option(None, "--script",
                                        help="Skip draft. Use this JSON as the script."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve draft"),
@@ -65,11 +66,26 @@ def new(
     cli = LectureCastAPI()
     user_script = script.read_text() if script else None
 
+    # BYOK voiceover: the free default is Edge (no key). Use MiniMax only if the
+    # user brought their own key (env MINIMAX_API_KEY). The key is sent over HTTPS
+    # for this one job and is never written to disk or our config.
+    mm_key = config.get_minimax_key()
+    if engine is None:
+        engine = "minimax" if mm_key else "edge"
+    if engine == "minimax" and not mm_key:
+        console.print("[yellow]⚠[/yellow] --engine minimax needs a MINIMAX_API_KEY env var "
+                      "(ask your human for a MiniMax key) — falling back to free Edge voice")
+        engine = "edge"
+    if voice is None:
+        voice = "male-qn-jingying" if engine == "minimax" else "zh-CN-YunjianNeural"
+
     with console.status("[cyan]submitting[/cyan]…"):
         job = cli.new_course(
             topic=topic, depth=depth,
             platforms=[p.strip() for p in platforms.split(",") if p.strip()],
-            voice_engine=engine, voice=voice, user_script=user_script,
+            voice_engine=engine, voice=voice,
+            minimax_api_key=mm_key if engine == "minimax" else None,
+            user_script=user_script,
         )
     jid = job["job_id"]
     console.print(f"  job_id = [bold]{jid}[/bold]")

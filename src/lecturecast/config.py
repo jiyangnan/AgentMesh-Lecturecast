@@ -41,3 +41,13 @@ def get_api_base() -> str:
 
 def get_token() -> str | None:
     return os.environ.get("LECTURECAST_TOKEN") or load().get("token")
+
+
+def get_minimax_key() -> str | None:
+    """BYOK MiniMax key, read from the user's env only.
+
+    Intentionally NOT read from (or written to) config.toml — a third-party TTS
+    key shouldn't be persisted by this CLI. Set it for the session to upgrade
+    voiceover from the free Edge voice to MiniMax:  export MINIMAX_API_KEY=...
+    """
+    return os.environ.get("MINIMAX_API_KEY")

@@ -109,6 +109,22 @@ Other commands:
 | `lecturecast usage` | Credits remaining this month |
 | `lecturecast status` | Cloud + token health check |
 
+### Voiceover — free by default, MiniMax optional (BYOK)
+
+Voiceover defaults to **Edge TTS** (free, no setup). To upgrade to the warmer
+**MiniMax** voice, bring your own MiniMax key — a third-party account from
+[minimaxi.com](https://www.minimaxi.com), not a Lecturecast secret. Set it in
+your env and the CLI uses it automatically:
+
+```bash
+export MINIMAX_API_KEY=<your-minimax-key>   # your own key — never stored by the CLI
+lecturecast new "RAG 工作原理"               # now uses MiniMax; falls back to Edge on any error
+```
+
+The key stays in your env, is sent over HTTPS for that one job, and is never
+persisted. **Driving this from an AI agent? Read [AGENTS.md](AGENTS.md)** — it
+covers install, the cloud workflow, BYOK, and troubleshooting.
+
 ---
 
 ## Pricing — shared with all AgentMesh products
