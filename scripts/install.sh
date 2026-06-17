@@ -70,7 +70,8 @@ esac
 
 echo
 bold "Installed. Next:"
-echo "    lecturecast init --key lc_live_xxxxxxxx"
-echo "    lecturecast new \"RAG 工作原理\""
+echo "    lecturecast workflow      # where the local workflow lives"
 echo
-echo "Get a free M1 license: https://lecturecast.agentmesh360.com"
+echo "Lecturecast runs fully locally and is driven by an AI agent."
+echo "Read the runbook:  AGENTS.md  +  docs/LOCAL-WORKFLOW.md"
+echo "Then tell your agent:  做一条关于 RAG 工作原理的 5 分钟课程视频"

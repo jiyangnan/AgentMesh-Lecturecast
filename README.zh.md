@@ -5,22 +5,24 @@
 
 > 🟣 Part of **[AgentMesh](https://github.com/jiyangnan/agentmesh-core)** — see the [ecosystem index](https://github.com/jiyangnan/agentmesh-core/blob/main/docs/ECOSYSTEM.md) ([中文](https://github.com/jiyangnan/agentmesh-core/blob/main/docs/ECOSYSTEM.zh.md)) for all related repos, the [roadmap](https://github.com/jiyangnan/agentmesh-core/blob/main/docs/ROADMAP.md), and [architecture](https://github.com/jiyangnan/agentmesh-core/blob/main/docs/ARCHITECTURE.md).
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-open%20beta-orange.svg)](https://lecturecast.agentmesh360.com)
+[![Status](https://img.shields.io/badge/status-active-brightgreen.svg)](#)
 [![Brand](https://img.shields.io/badge/brand-AgentMesh-6E4AFF.svg)](https://agentmesh360.com)
 
-> 一句话生成可发的 5 分钟课程视频——**B 站 16:9** + **小红书 9:16** 两条同时出。专门设计成让你的 AI agent（Claude Code / OpenClaw / Cursor / Codex）从聊天里直接驱动。
+> 一个**开源、完全本地**的视频制作工作流，专门给 AI agent 用。一句话生成可发的 5 分钟课程视频——**B 站 16:9** + **小红书 9:16** 两条同时出，全程在**你自己机器上**渲染。设计成让你的 AI agent（Claude Code / OpenClaw / Cursor / Codex）从聊天里直接驱动。
 
 ![Lecturecast demo — 两条成片并排](assets/demo.gif)
 
 <sub>↑ 同一份脚本，两套视觉系统。左：B 站 1920×1080。右：小红书 1080×1920。12 倍速播放，原片各 ~5:21。</sub>
 
-**核心流程**：你给主题 → 起 7 段草稿脚本 → 你审批 → 配音 + 场景 + 渲染 + 烧字幕 + 封面 → 成片 mp4 + 封面落到你本机。
+**全程本地。** 没有云端服务、没有账户、没有 API key。你的 agent 当导演，用仓库自带的 `templates/` 在你本机跑完整条流水线：
 
-**用 AI agent 驱动？** 先看 **[AGENTS.md](AGENTS.md)** 和 **[docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)**——一条完整出片的上手指南。
+- **Remotion**（Node）渲染两个比例的动画场景。
+- **edge-tts**（Python）配音——默认免费、零配置。
+- **ffmpeg** 烧字幕、拼接音视频。
 
-这是 **[AgentMesh](https://agentmesh360.com)** 旗下的产品——一系列垂直 AI agent 矩阵。**你订阅一次 AgentMesh，所有产品共享 credit 池**：Pro $9.9/月 给你 1,500 credits = 30 条 Lecturecast 视频 OR 1,500 次 Job Agent 投递 OR 自由组合。
+**核心流程**：你给主题 → 起 7 段草稿脚本 → 你审批 → 配音 + 场景 + 渲染 + 烧字幕 + 封面 → 成片 mp4 + 封面全部落到你本机。
 
-> **⚠️ 当前免费开放**。注册 AgentMesh360 账户 → 在账户面板获取 API key → 开始用，当前不拦截额度。订阅即将上线。
+**用 AI agent 驱动？** 先看 **[AGENTS.md](AGENTS.md)** 和 **[docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)**——一条完整、端到端的本地出片指南。
 
 ---
 
@@ -34,18 +36,6 @@
 curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash
 ```
 
-**Windows**（PowerShell）：
-
-```powershell
-irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex
-```
-
-装完先[注册 AgentMesh360 账户](https://agentmesh360.com/app/)，在账户面板复制你的 API key，再**开新终端**运行：
-
-```bash
-lecturecast init --key <注册后在账户面板获取>
-```
-
 ### 手动安装
 
 ```bash
@@ -54,98 +44,56 @@ cd AgentMesh-Lecturecast
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
-lecturecast init --key <注册后在账户面板获取>
 ```
+
+本地渲染还需要 **Node 20+**、**Python 3.11+**、**带 libass 的 ffmpeg**——一行安装命令见 [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)。
 
 ---
 
 ## 用
 
+Lecturecast 是 **agent 驱动**的。`lecturecast` CLI 本身只是个本地辅助小工具：
+
 ```bash
-$ lecturecast new "RAG 工作原理"
-→ 提交任务 … job_id=lct_5xz9k1
-→ 起草脚本（~90s） ⠋
-→ ┌─ 草稿（7 段 · ~5 min） ──────────┐
-  │ § 1 (24s) 开场钩子                 │
-  │ § 2 (38s) 什么是 RAG               │
-  │ § 3 (58s) Embedding 详解            │
-  │ § 4 (62s) 检索环节                  │
-  │ § 5 (60s) 生成环节                  │
-  │ § 6 (40s) 实际效果                  │
-  │ § 7 (18s) 总结 + 下期               │
-  └──────────────────────────────────┘
-[Y] 通过  [E] 编辑  [N] 否决  > Y
-→ 配音（MiniMax） ……………… 38%
-→ 渲染视频（双版一次出） … 70%
-→ 烧字幕 + 封面 ……… 92%
-→ 下载 … ✓
-✓ 4 个文件 → ~/lecturecast/RAG-工作原理/
-  → bilibili.mp4 (13 MB · 5:21)
-  → xiaohongshu.mp4 (20 MB · 5:21)
-  → cover-bilibili.png
-  → cover-xiaohongshu.png
+lecturecast workflow   # 本地工作流在哪
+lecturecast version    # 当前版本
 ```
 
-其他命令：
+真正干活的是你的 AI agent 跑本地工作流。跟 agent 说：
 
-| 命令 | 作用 |
-|---|---|
-| `lecturecast new "主题"` | 起新课程 |
-| `lecturecast new "主题" --depth hands_on --platforms xiaohongshu` | 定制深度 / 平台 |
-| `lecturecast new "主题" --engine edge --voice zh-CN-YunjianNeural` | 选配音引擎 + 嗓音 |
-| `lecturecast new --script ./my-script.json` | 跳过起草，直接用你写的脚本 |
-| `lecturecast list` | 历史任务 |
-| `lecturecast get <job_id>` | 重新下载历史成片 |
-| `lecturecast usage` | 本月 credit 余额 |
-| `lecturecast status` | 云端 + token 健康检查 |
+> 做一条关于 RAG 工作原理的 5 分钟课程视频
+
+Agent 会读 [AGENTS.md](AGENTS.md) / [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)，然后驱动整条流水线：
+
+```
+主题
+  ▼ 定范围（平台 / 深度 / 系列品牌 / 嗓音）
+  ▼ 7 段草稿脚本           （你审批）
+  ▼ 配音   python3 build_audio_mm.py   （Edge 免费、MiniMax 可选）
+  ▼ 场景   Remotion（竖版 + 横版）
+  ▼ 渲染   ./build_video.sh <slug>      （ffmpeg + libass）
+  ▼ 工作目录里出 2 个 mp4 + 2 张封面
+```
 
 ### 配音 — 默认免费，MiniMax 可选（BYOK 自带 key）
 
 配音默认走 **Edge TTS**（免费、零配置）。想升级到更暖更自然的 **MiniMax** 音色，
 就自带一个 MiniMax key——它是 [minimaxi.com](https://www.minimaxi.com) 的第三方账户
-（你自己注册，不是 Lecturecast 的密钥）。设到环境变量里，CLI 会自动启用：
+（你自己注册，不是 Lecturecast 的密钥）。设到环境变量里，本地的 `build_audio_mm.py`
+会自动启用：
 
 ```bash
-export MINIMAX_API_KEY=<你自己的-minimax-key>   # 只在你本机，CLI 绝不落盘保存
-lecturecast new "RAG 工作原理"                   # 此时走 MiniMax；出错自动回退 Edge
+export MINIMAX_API_KEY=<你自己的-minimax-key>   # 只在你本机的环境变量里，绝不落盘
 ```
 
-key 只留在你的环境变量里，经 HTTPS 一次性传服务端用于该任务，绝不持久化。
-**用 AI agent 来驱动？请读 [AGENTS.md](AGENTS.md)**——涵盖安装、云端工作流、BYOK 与排障。
-
-| 档 | Credits | 折算 Lecturecast | 折算 Job Agent |
-|---|---|---|---|
-| Free | **注册一次性赠 50** | 1 条视频 | 50 次投递 |
-| Pro $9.9 / 月 | 1,500 / 月 | 30 条视频 / 月 | 1,500 次投递 |
-| **Creator $19 / 月** | 3,500 / 月 | 70 条视频 / 月 | 3,500 次投递 |
-| Team $39 / 月 | 8,000 / 月 | 160 条视频 / 月 | 8,000 次投递 |
-
-> **订阅即将上线——当前全部免费开放**。下表是规划中的付费档位说明；当前不拦截任何额度。
-
-**Free 是试用券不是常驻档**。注册时一次性发 50 credits——够你出 1 条 Lecturecast 视频（或体验 Job Agent 一周）做决定。继续用就升级订阅，credits 跨所有 AgentMesh 产品共享按需消耗。
-
-**月度 credits 采用"覆盖式"重置**：每个订阅周期开始时余额重置为该档的额度，**未用完不结转**。按你真实的月度用量选档，囤积无收益。
-
-### 硬封死规则 — 不会被意外扣款
-
-- credits 用完：**HTTP 402** + 升级链接。**绝不自动超额计费**。账单永远可预测。
-- **升级立刻补足档位差额**。Pro → Team 上来当场多 `8000 − 1500 = 6500` credits，加上你原有余额。
-- **降级**：当前周期保留现有余额，下个周期重置到新档。
-- **无退款**。取消订阅停止下次续费，本周期 credits 用到周期结束。
-
-### 怎么选档
-
-- **Pro** — 平均一天 1 条视频，或者偶尔用 Job Agent 找工作
-- **Creator** — 专业内容创作者，一天 2 条视频左右，每 credit 比 Pro 便宜 18%
-- **Team** — 小型工作室 / agency / 重度玩家，一天 5 条视频，每 credit 便宜 35%
-
-**免费开放期**：当前所有档位对早期用户全部免费——注册账户即可使用。
+key 只留在你的环境变量里，出错自动回退免费的 Edge 音色。
+**用 AI agent 来驱动？请读 [AGENTS.md](AGENTS.md)**——涵盖安装、完整本地工作流、BYOK 与排障。
 
 ---
 
 ## 让你的 AI agent 来调
 
-CLI 自带 agent skill，路径 `skills/claude-code/SKILL.md`。`lecturecast init` 之后建个软链接：
+仓库自带 agent skill，路径 `skills/claude-code/SKILL.md`。建个软链接：
 
 ```bash
 ln -s "$(pwd)/skills/claude-code" ~/.claude/skills/lecturecast
@@ -156,15 +104,15 @@ ln -s "$(pwd)/skills/claude-code" ~/.codex/skills/lecturecast
 
 > 做一条关于 RAG 工作原理的 5 分钟课程视频
 
-Agent 会自动调 `lecturecast new` 并等结果。
+Agent 会读 runbook 并驱动本地流水线跑到完成。
 
 ---
 
 ## 隐私
 
-- 音频文件、成片 mp4 在云端临时存 24 小时供下载，到期自动清理。
-- 你的主题文本 + 草稿脚本由 LLM 供应商处理用于起草。账单由 agentmesh-core 单独处理，支付信息不会到产品后端。
-- 除按动作扣 credit 之外**无任何遥测**。
+- **全程在你机器上跑、留在你机器上**。音频、成片 mp4、封面都本地生成——不上传任何东西。
+- 如果你选用 MiniMax 音色（BYOK），你的主题 + 脚本文本会经 HTTPS 发到**你自己的** MiniMax 账户做合成。默认 Edge 音色无需任何第三方账户。
+- 无追踪、无遥测。
 
 ---
 

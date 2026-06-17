@@ -1,7 +1,9 @@
 # AGENTS.md — driving Lecturecast as an AI agent
 
 You are an AI agent (Claude Code / OpenClaw / Cursor / Codex …) running Lecturecast
-on behalf of your human. This file tells you **how to produce the video, what to
+on behalf of your human. Lecturecast is **fully local and open source** — there is
+no cloud service, no account, and no API key. You are the director, and everything
+runs on this machine. This file tells you **how to produce the video, what to
 install, and what to ask your human for** — so you don't get stuck.
 
 Lecturecast turns one topic into a finished 5-minute course video in **both**

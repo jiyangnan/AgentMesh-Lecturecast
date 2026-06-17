@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lecturecast — 把一个想法，变成一条课程视频 · 开源本地工具</title>
+<meta name="description" content="Lecturecast 是 AgentMesh360 生态下的开源本地工具：把一个主题交给你的 AI agent，在本机端到端写稿、配音、渲染，同时产出 B 站横版与小红书竖版，烧好中文字幕、配好封面。完全本地运行、不需账户、免费、Apache 2.0 开源。" />
+<meta property="og:title" content="Lecturecast — 把一个想法，变成一条课程视频" />
+<meta property="og:description" content="开源本地工具：AI 写稿 + 配音 + 双平台成片（B 站 16:9 / 小红书 9:16），全程在你自己的机器上跑。一个主题进，两条成片出。" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://github.com/jiyangnan/AgentMesh-Lecturecast" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎬</text></svg>" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Noto+Serif+SC:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+<style>
+  :root {
+    --bg:#F0EEE6; --surface:#FAF9F5; --ink:#1A1915; --ink-soft:#36342E;
+    --muted:#76746B; --rule:#D9D6C8; --accent:#CC785C; --accent-ink:#7F3E26;
+    --code-bg:#1F1D18; --code-fg:#E8E4D5; --code-dim:#918B79; --code-acc:#E89A78;
+    --serif:"Source Serif 4","Noto Serif SC","Songti SC","STSong",Georgia,serif;
+    --sans:"Inter",-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --maxw:1120px; --gutter:clamp(20px,4vw,56px);
+  }
+  *{box-sizing:border-box} html,body{margin:0;padding:0} html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.55;
+    -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;font-feature-settings:"ss01","cv11"}
+  ::selection{background:var(--accent);color:#fff}
+  a{color:inherit;text-decoration:none}
+  a.link{color:var(--ink);border-bottom:1px solid currentColor;padding-bottom:1px;transition:color .15s,border-color .15s}
+  a.link:hover{color:var(--accent);border-bottom-color:var(--accent)}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 var(--gutter)}
+
+  .nav{position:sticky;top:0;z-index:50;background:color-mix(in oklab,var(--bg) 85%,transparent);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border-bottom:1px solid transparent;transition:border-color .2s}
+  .nav.scrolled{border-bottom-color:var(--rule)}
+  .nav-inner{max-width:var(--maxw);margin:0 auto;padding:18px var(--gutter);display:flex;align-items:center;justify-content:space-between;gap:24px}
+  .brand{display:inline-flex;align-items:center;gap:10px;font-family:var(--serif);font-weight:500;font-size:18px;letter-spacing:-0.005em}
+  .brand-mark{width:22px;height:22px;display:inline-block;flex:none;color:var(--accent)}
+  .brand small{font-family:var(--sans);font-weight:450;color:var(--muted);font-size:13px;letter-spacing:0}
+  .nav-links{display:flex;align-items:center;gap:32px;font-size:14px;color:var(--ink-soft)}
+  .nav-links a{transition:color .15s} .nav-links a:hover{color:var(--accent)}
+  .nav-cta{font-size:14px;background:var(--ink);color:var(--surface);padding:9px 16px;border-radius:999px;transition:background .15s}
+  .nav-cta:hover{background:var(--accent)}
+  @media(max-width:720px){.nav-links a:not(.nav-cta){display:none}}
+
+  .hero{padding:clamp(64px,11vw,140px) 0 clamp(48px,8vw,96px)}
+  .eyebrow{display:inline-flex;align-items:center;gap:10px;font-size:12.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);font-weight:500}
+  .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px color-mix(in oklab,var(--accent) 20%,transparent)}
+  h1.display{font-family:var(--serif);font-weight:500;font-size:clamp(38px,5.2vw,70px);line-height:1.06;letter-spacing:-0.02em;margin:28px 0 0}
+  h1.display em{font-style:italic;color:var(--accent-ink);font-weight:500}
+  .lede{margin:28px 0 0;font-size:clamp(17px,1.5vw,19px);line-height:1.55;color:var(--ink-soft);max-width:62ch;text-wrap:pretty}
+  .hero-ctas{margin-top:36px;display:flex;flex-wrap:wrap;gap:12px}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:13px 22px;font-size:14.5px;font-weight:500;border-radius:999px;transition:background .15s,color .15s,border-color .15s,transform .15s;border:1px solid transparent;cursor:pointer;font-family:inherit}
+  .btn-primary{background:var(--ink);color:var(--surface)} .btn-primary:hover{background:var(--accent)}
+  .btn-ghost{background:transparent;color:var(--ink);border-color:var(--rule)} .btn-ghost:hover{border-color:var(--ink)}
+  .btn .arrow{transition:transform .15s} .btn:hover .arrow{transform:translateX(3px)}
+
+  .terminal-frame{margin-top:64px;background:var(--code-bg);color:var(--code-fg);border-radius:14px;overflow:hidden;box-shadow:0 1px 0 rgba(255,255,255,0.04) inset,0 30px 60px -30px rgba(31,29,24,0.4),0 12px 24px -16px rgba(31,29,24,0.25)}
+  .terminal-bar{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.06)}
+  .terminal-bar .lights{display:flex;gap:6px}
+  .terminal-bar .lights span{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,0.1)}
+  .terminal-bar .title{font-family:var(--mono);font-size:12px;color:var(--code-dim);margin-left:8px}
+  pre.code{margin:0;padding:22px 24px 26px;font-family:var(--mono);font-size:13.5px;line-height:1.85;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  pre.code .c-prompt{color:var(--code-acc);user-select:none} pre.code .c-cmd{color:var(--code-fg)}
+  pre.code .c-flag{color:#B6C9D8} pre.code .c-str{color:#C8C49F} pre.code .c-dim{color:var(--code-dim)}
+
+  section.block{padding:clamp(72px,10vw,128px) 0;border-top:1px solid var(--rule)}
+  .kicker{font-size:12.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);font-weight:500;margin-bottom:28px;display:flex;align-items:center;gap:12px}
+  .kicker::before{content:"";width:24px;height:1px;background:var(--muted);display:inline-block}
+  h2.section-title{font-family:var(--serif);font-weight:500;font-size:clamp(32px,4.2vw,52px);line-height:1.08;letter-spacing:-0.018em;margin:0;max-width:22ch;text-wrap:balance}
+  h2.section-title em{font-style:italic;color:var(--accent-ink);font-weight:500}
+  .section-lede{margin-top:22px;font-size:18px;line-height:1.55;color:var(--ink-soft);max-width:58ch}
+
+  .why{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(32px,5vw,80px);align-items:start}
+  .why h2{max-width:14ch}
+  .why-body p{font-size:clamp(20px,2vw,24px);line-height:1.45;color:var(--ink);margin:0;font-family:var(--serif);font-weight:400;letter-spacing:-0.005em;text-wrap:pretty}
+  .why-body p + p{margin-top:18px} .why-body p .hi{color:var(--accent-ink);font-style:italic}
+  @media(max-width:820px){.why{grid-template-columns:1fr;gap:24px}}
+
+  .features{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(28px,3.5vw,56px);margin-top:clamp(48px,6vw,80px)}
+  .feat-num{font-family:var(--serif);font-style:italic;font-weight:400;font-size:16px;color:var(--accent);margin-bottom:22px;display:inline-block}
+  .feat h3{font-family:var(--serif);font-weight:500;font-size:22px;line-height:1.22;letter-spacing:-0.008em;margin:0 0 14px;text-wrap:balance}
+  .feat p{margin:0;font-size:15.5px;line-height:1.6;color:var(--ink-soft);text-wrap:pretty}
+  @media(max-width:820px){.features{grid-template-columns:1fr}}
+
+  /* dual-platform showcase */
+  .platforms{display:grid;grid-template-columns:1fr 1fr;gap:clamp(20px,3vw,32px);margin-top:clamp(48px,6vw,72px)}
+  @media(max-width:680px){.platforms{grid-template-columns:1fr}}
+  .pf{background:var(--surface);border:1px solid var(--rule);border-radius:16px;padding:clamp(24px,3vw,36px);display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center}
+  .pf .frame{background:var(--code-bg);border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--code-dim);font-family:var(--mono);font-size:12px}
+  .pf.land .frame{width:100%;aspect-ratio:16/9}
+  .pf.port .frame{width:60%;max-width:180px;aspect-ratio:9/16}
+  .pf h3{font-family:var(--serif);font-weight:500;font-size:21px;margin:0;letter-spacing:-0.008em}
+  .pf p{margin:0;font-size:14.5px;color:var(--ink-soft);line-height:1.55}
+  .pf .ratio{font-family:var(--mono);font-size:12px;color:var(--accent-ink)}
+
+  /* local stack triplet */
+  .stack{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(20px,3vw,32px);margin-top:clamp(48px,6vw,72px)}
+  @media(max-width:680px){.stack{grid-template-columns:1fr}}
+  .stk{background:var(--surface);border:1px solid var(--rule);border-radius:14px;padding:clamp(22px,2.6vw,30px)}
+  .stk .stk-icon{font-family:var(--mono);font-size:12px;color:var(--accent-ink);letter-spacing:0.04em;margin-bottom:14px}
+  .stk h3{font-family:var(--serif);font-weight:500;font-size:19px;margin:0 0 10px;letter-spacing:-0.008em}
+  .stk p{margin:0;font-size:14.5px;color:var(--ink-soft);line-height:1.58}
+  .stk code{font-family:var(--mono);background:rgba(204,120,92,0.1);color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em}
+
+  .steps{margin-top:clamp(48px,6vw,72px);display:grid;grid-template-columns:1fr;gap:0}
+  .step{display:grid;grid-template-columns:56px 1fr;gap:clamp(20px,3vw,48px);padding:32px 0;border-top:1px solid var(--rule);align-items:start}
+  .step:last-child{border-bottom:1px solid var(--rule)}
+  .step-n{font-family:var(--serif);font-weight:400;font-size:26px;color:var(--muted);line-height:1;font-feature-settings:"lnum";padding-top:4px}
+  .step-body{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:clamp(20px,4vw,64px);align-items:start}
+  @media(max-width:720px){.step-body{grid-template-columns:1fr;gap:12px}}
+  .step h3{font-family:var(--serif);font-weight:500;font-size:clamp(22px,2.4vw,28px);line-height:1.18;letter-spacing:-0.012em;margin:0;text-wrap:balance}
+  .step p{margin:0;color:var(--ink-soft);font-size:16px;line-height:1.6;text-wrap:pretty}
+  .step p code{font-family:var(--mono);background:rgba(204,120,92,0.1);color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em}
+
+  .faq-list{margin-top:clamp(40px,5vw,56px)}
+  .faq-item{border-top:1px solid var(--rule)}
+  .faq-list .faq-item:last-child{border-bottom:1px solid var(--rule)}
+  .faq-item summary{list-style:none;padding:26px 32px 26px 0;position:relative;font-family:var(--serif);font-weight:500;font-size:clamp(18px,1.7vw,21px);line-height:1.35;letter-spacing:-0.008em;color:var(--ink);transition:color .15s}
+  .faq-item summary::-webkit-details-marker{display:none}
+  .faq-item summary:hover{color:var(--accent)}
+  .faq-item summary::after{content:"";position:absolute;right:4px;top:50%;width:14px;height:14px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-65%) rotate(45deg);transition:transform .2s;opacity:.55}
+  .faq-item[open] summary::after{transform:translateY(-25%) rotate(-135deg)}
+  .faq-answer{padding:0 48px 28px 0;color:var(--ink-soft);font-size:16px;line-height:1.65;max-width:70ch;text-wrap:pretty}
+  .faq-answer code{font-family:var(--mono);background:rgba(204,120,92,0.1);color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.92em}
+
+  footer.foot{border-top:1px solid var(--rule);padding:56px 0 72px;font-size:14px;color:var(--muted)}
+  .foot-inner{display:flex;flex-wrap:wrap;justify-content:space-between;gap:24px;align-items:flex-end}
+  .foot .brand{font-size:16px} .foot-meta{display:flex;flex-wrap:wrap;gap:24px} .foot-meta a:hover{color:var(--accent)}
+</style>
+</head>
+<body>
+
+<header class="nav" id="topnav">
+  <div class="nav-inner">
+    <a href="#" class="brand" aria-label="Lecturecast">
+      <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="3" y="6" width="14" height="12" rx="2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M17 10l4-2.5v9L17 14" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+      Lecturecast <small>· AgentMesh360</small>
+    </a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#features">能力</a>
+      <a href="#platforms">双平台</a>
+      <a href="#how">怎么用</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="nav-cta">看 GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <div class="eyebrow"><span class="dot"></span> OPEN SOURCE · 完全本地运行</div>
+    <h1 class="display">把一个想法，<em>变成</em>一条课程视频。</h1>
+    <p class="lede">
+      Lecturecast 是一套<strong>完全本地、开源</strong>的出片工作流：把一个主题交给你的 AI agent，它在你自己的机器上跑完整条流水线——写讲稿、配音、渲染，<strong>同时产出 B 站横版和小红书竖版</strong>，烧好中文字幕、配好封面。不需账户、不上云、免费、Apache 2.0 开源。
+    </p>
+    <div class="hero-ctas">
+      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="btn btn-primary">看 GitHub <span class="arrow">→</span></a>
+      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md" class="btn btn-ghost">看本地工作流</a>
+    </div>
+
+    <div class="terminal-frame" aria-label="在本地装好，交给你的 agent">
+      <div class="terminal-bar">
+        <div class="lights"><span></span><span></span><span></span></div>
+        <span class="title">~ run-this-locally</span>
+      </div>
+<pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
+<span class="c-prompt">$</span> <span class="c-cmd">lecturecast workflow</span>      <span class="c-dim"># 打印本地工作流位置，交给你的 AI agent</span>
+
+<span class="c-dim"># 你的 agent 按 AGENTS.md / docs/LOCAL-WORKFLOW.md 在本地端到端跑：</span>
+<span class="c-dim"># 写稿 → 配音（edge-tts / MiniMax）→ Remotion 渲染 → ffmpeg 烧字幕 → 双平台成片</span></pre>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="wrap why">
+    <div>
+      <div class="kicker">为什么不自己剪</div>
+      <h2 class="section-title">写稿能交给 AI，<em>出片</em>才是真麻烦。</h2>
+    </div>
+    <div class="why-body">
+      <p>让 AI 写个脚本不难，难的是后面——<span class="hi">配音、对轴、渲染、烧字幕、做封面、还要横竖两版各适配一次</span>。</p>
+      <p>Lecturecast 把这条出片流水线整个交到你的 AI agent 手里，全程在你自己的机器上跑，让它真的能交付成片，而不是只给你一段文字。</p>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="features">
+  <div class="wrap">
+    <div class="kicker">产品能力 · 全在本地跑</div>
+    <h2 class="section-title">从一句主题，到<em>两条成片</em>。</h2>
+    <div class="features">
+      <div class="feat">
+        <span class="feat-num">i.</span>
+        <h3>AI 写讲稿</h3>
+        <p>把主题交给你的 agent，它生成结构化课程讲稿——分节、有逻辑、口语化。脚本是审批关卡，先给你确认和修改，再进入制作。</p>
+      </div>
+      <div class="feat">
+        <span class="feat-num">ii.</span>
+        <h3>本地配音对轴</h3>
+        <p>讲稿在本机转成自然语音，自动切句、对齐时间轴，长段落自动校验时长重试，不会出现声画错位。默认 Edge TTS 免费，可选自带 MiniMax。</p>
+      </div>
+      <div class="feat">
+        <span class="feat-num">iii.</span>
+        <h3>双平台渲染</h3>
+        <p>同一份内容，用本机的 Remotion 一次产出 B 站横版（16:9）和小红书竖版（9:16），各自适配排版，不用你二次剪辑。</p>
+      </div>
+      <div class="feat">
+        <span class="feat-num">iv.</span>
+        <h3>字幕 + 封面</h3>
+        <p>本机 ffmpeg 自动烧录中文字幕、生成双平台封面，并跑一遍小红书合规检查。拿到就能直接发，不用再开剪辑软件。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="platforms">
+  <div class="wrap">
+    <div class="kicker">一次生成 · 双版本</div>
+    <h2 class="section-title">B 站和小红书，<em>各发各的</em>。</h2>
+    <p class="section-lede">同一个主题、同一份讲稿，在本地一次跑完同时产出两个比例的成片，分别适配横屏与竖屏的排版和字幕，直接发布即可。</p>
+    <div class="platforms">
+      <div class="pf land">
+        <div class="frame">1920 × 1080</div>
+        <h3>B 站横版</h3>
+        <div class="ratio">16 : 9</div>
+        <p>适合知识讲解、长视频；Remotion 渲染的清晰排版 + 烧录字幕。</p>
+      </div>
+      <div class="pf port">
+        <div class="frame">1080 × 1920</div>
+        <h3>小红书竖版</h3>
+        <div class="ratio">9 : 16</div>
+        <p>适合手机竖屏、信息流；Remotion 渲染的竖版排版 + 封面。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="stack">
+  <div class="wrap">
+    <div class="kicker">本地三件套依赖</div>
+    <h2 class="section-title">全部跑在<em>你自己的机器</em>上。</h2>
+    <p class="section-lede">没有云端 worker，没有远程渲染。装好这三样，你的 agent 就能在本机端到端出片。<code style="font-family:var(--mono);background:rgba(204,120,92,0.1);color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh</code> 会帮你检查缺哪样。</p>
+    <div class="stack">
+      <div class="stk">
+        <div class="stk-icon">RENDER</div>
+        <h3>Node + Remotion</h3>
+        <p>用代码驱动的动画场景渲染双平台画面。<code>brew install node</code> 后 <code>npm install</code> 即可。</p>
+      </div>
+      <div class="stk">
+        <div class="stk-icon">VOICE</div>
+        <h3>Python + edge-tts</h3>
+        <p>本地配音、切句、对轴。默认免费 Edge TTS；想升级音色就自带 MiniMax key。</p>
+      </div>
+      <div class="stk">
+        <div class="stk-icon">MUX</div>
+        <h3>ffmpeg（带 libass）</h3>
+        <p>烧录中文字幕、合成成片。<code>brew install ffmpeg</code> 一行装好带 libass 的版本。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="how">
+  <div class="wrap">
+    <div class="kicker">怎么用</div>
+    <h2 class="section-title">设计为 <em>agent-friendly</em>。</h2>
+    <p class="section-lede">核心是一套本地工作流，把它交给你的 AI 助理。脚本生成后会停下来等你确认，确认满意才进入配音和渲染。</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-n">01</div>
+        <div class="step-body">
+          <h3>装上 CLI</h3>
+          <p>一行 <code>install.sh</code> 装好 <code>lecturecast</code> CLI 和本地工作流；<code>lecturecast workflow</code> 会打印工作流文件的位置。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">看 GitHub →</a></p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-n">02</div>
+        <div class="step-body">
+          <h3>把 AGENTS.md 整段交给你的 agent</h3>
+          <p>把仓库里的 <code>AGENTS.md</code> 整段贴给你的 Claude Code / OpenClaw / Cursor / Codex，它就知道如何当导演驱动整条流水线。Claude Code / Codex 还会自动加载内置 skill。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/AGENTS.md">看 AGENTS.md →</a></p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-n">03</div>
+        <div class="step-body">
+          <h3>agent 在本地端到端出片</h3>
+          <p>给一个主题，先看 AI 写的讲稿、改到满意；确认后在本机自动配音、双平台渲染、烧字幕、做封面，几分钟后两条成片 + 两张封面落在你的工作目录里。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="faq">
+  <div class="wrap">
+    <div class="kicker">常见问题</div>
+    <h2 class="section-title">FAQ.</h2>
+    <div class="faq-list">
+      <details class="faq-item">
+        <summary>要钱吗？要注册账户吗？</summary>
+        <div class="faq-answer">都不要。Lecturecast 是完全开源（Apache 2.0）的本地工具，没有账户、没有云服务、没有 key，免费使用。所有处理都在你自己的机器上完成。</div>
+      </details>
+      <details class="faq-item">
+        <summary>视频会上传到云端吗？</summary>
+        <div class="faq-answer">不会。写稿、配音、渲染、烧字幕全程在本机跑，不需要联网渲染，你的内容不会离开你的电脑。</div>
+      </details>
+      <details class="faq-item">
+        <summary>配音用什么？能换更好的音色吗？</summary>
+        <div class="faq-answer">默认用免费的 Edge TTS，开箱即用、足够出片。如果想要更暖的音色，可以自带（BYOK）一个 <a class="link" href="https://www.minimaxi.com">MiniMax</a> key —— 那是你自己在 minimaxi.com 注册的第三方服务，不是 Lecturecast 提供的 key，只通过环境变量 <code>MINIMAX_API_KEY</code> 传入、绝不写入磁盘。</div>
+      </details>
+      <details class="faq-item">
+        <summary>视频是全自动生成的吗？我能改吗？</summary>
+        <div class="faq-answer">脚本会先给你确认和修改（审批关卡），满意后才进入配音和渲染——你掌控内容，AI 负责出片。</div>
+      </details>
+      <details class="faq-item">
+        <summary>需要装什么？</summary>
+        <div class="faq-answer">本地三件套：<code>Node</code> + Remotion（渲染）、<code>Python</code> + edge-tts（配音）、<code>ffmpeg</code> 带 libass（烧字幕）。<code>install.sh</code> 会帮你检查缺哪样，macOS 用 <code>brew install node ffmpeg</code> 即可。</div>
+      </details>
+      <details class="faq-item">
+        <summary>支持哪些平台的成片？</summary>
+        <div class="faq-answer">一次产出 B 站横版（<code>1920×1080</code>）和小红书竖版（<code>1080×1920</code>）两个版本，已烧录中文字幕并生成封面。</div>
+      </details>
+      <details class="faq-item">
+        <summary>真的开源吗？</summary>
+        <div class="faq-answer">是。整套工具 Apache 2.0 开源，代码全在 <a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a>，欢迎自取、改造、提 issue。</div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<footer class="foot">
+  <div class="wrap foot-inner">
+    <div>
+      <a href="#" class="brand">
+        <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="3" y="6" width="14" height="12" rx="2" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M17 10l4-2.5v9L17 14" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+        </svg>
+        Lecturecast
+      </a>
+      <div style="margin-top:8px;font-size:13.5px;color:var(--muted);">AgentMesh 生态（<a class="link" href="https://agentmesh360.com" style="font-size:inherit">agentmesh360.com</a>）下的开源项目 · Apache 2.0</div>
+    </div>
+    <div class="foot-meta">
+      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a>
+      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md">本地工作流</a>
+      <a href="https://agentmesh360.com">AgentMesh360</a>
+      <span>© 2026</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  (function(){
+    const nav = document.getElementById('topnav');
+    const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 8);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+  })();
+</script>
+
+</body>
+</html>

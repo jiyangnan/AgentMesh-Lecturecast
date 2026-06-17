@@ -1,21 +1,19 @@
 ---
 name: lecturecast
-description: Turn a topic into a finished 5-minute course video on both Bilibili (16:9) and Xiaohongshu (9:16). Two paths — render the whole thing locally as the director, or drive the hosted cloud service (see AGENTS.md / docs/LOCAL-WORKFLOW.md). Use when the user asks to "做一条课程视频 / 5 分钟讲清 X / 出一期教程 / make a course video / lecturecast about X".
+description: Turn a topic into a finished 5-minute course video on both Bilibili (16:9) and Xiaohongshu (9:16), rendered fully locally. You act as the director and run the whole pipeline on this machine from the bundled templates/ (script -> TTS -> Remotion -> ffmpeg). Use when the user asks to "做一条课程视频 / 5 分钟讲清 X / 出一期教程 / make a course video / lecturecast about X".
 ---
 
 # Lecturecast
 
-Two ways to produce the video (full runbook: **[AGENTS.md](../../AGENTS.md)**):
+Lecturecast is a **fully local, open-source** video workflow. There is no cloud
+service, no account, and no API key — you act as the director and render the whole
+video on this machine from the bundled `templates/`.
 
-- **Local (recommended today)** — you act as the director and render the whole
-  video on this machine from the bundled `templates/`. Needs Node + ffmpeg
-  (+ optional BYOK MiniMax key). Full pipeline:
-  **[docs/LOCAL-WORKFLOW.md](../../docs/LOCAL-WORKFLOW.md)**.
-- **Cloud** — drive the `lecturecast` CLI against the hosted service, zero local
-  setup.
+**Full runbook:** **[AGENTS.md](../../AGENTS.md)**
+**Full pipeline:** **[docs/LOCAL-WORKFLOW.md](../../docs/LOCAL-WORKFLOW.md)**
 
-The sections below cover the **cloud** CLI. For the local path (you as the
-director, rendering on this machine), follow LOCAL-WORKFLOW.md.
+The CLI itself is just a thin local helper (`lecturecast workflow`, `lecturecast
+version`). The real work is the local pipeline below.
 
 ## When to use
 
@@ -29,44 +27,36 @@ Trigger only when the topic is **didactic** — a concept, technology, or
 how-to. For viral / lifestyle / hook-driven short videos, use the
 `/moneyprinter` skill (auto-clipped Pexels footage).
 
-## Prerequisites
+## Prerequisites (all local)
 
-- `lecturecast` CLI on PATH (run `curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash` if missing)
-- **AgentMesh360 account key** configured (`~/.lecturecast/config.toml` has `token`).
-  Free during open beta — the user signs up at <https://agentmesh360.com/app/>
-  and runs `lecturecast init --key <account_key>`.
-- *(Optional, BYOK)* For the warmer **MiniMax** voice instead of the free Edge
-  default, ask the user for a **MiniMax** key (their own, from minimaxi.com) and
-  `export MINIMAX_API_KEY=…` before running.
+Check at the start; offer to install whatever's missing.
 
-Verify before running: `lecturecast status` — should return ok.
-If not, ask the user to run `lecturecast init --key <account_key>` first.
+- **Node 20+** + `npm` — Remotion render (`brew install node`)
+- **Python 3.11+** (venv) — `edge-tts` + the SRT/ASS converters
+- **ffmpeg with libass** — subtitle burn + audio concat (`brew install ffmpeg`)
+- *(optional, BYOK)* a **MiniMax** key from the user's own minimaxi.com account →
+  `export MINIMAX_API_KEY=…`. No key → the free Edge voice is used automatically.
 
-> **Full agent runbook** — install, workflow, BYOK, troubleshooting: see
-> [`AGENTS.md`](../../AGENTS.md) at the repo root.
+## How to run — the local pipeline
 
-## How to run
+Follow **[docs/LOCAL-WORKFLOW.md](../../docs/LOCAL-WORKFLOW.md)** end to end:
 
-For a typical request like "做一条关于 RAG 工作原理的 5 分钟课程视频":
-
-```bash
-lecturecast new "RAG 工作原理" --depth concept --platforms bilibili,xiaohongshu
-```
-
-The CLI is **interactive** — it will print the 7-section draft script and ask
-for [Y]/[E]/[N]. **Surface the draft to the user in chat and pass their
-response back to the CLI.** (You will need to break this into two CLI calls
-or pipe approval via `--yes` if the user pre-approves.)
-
-For **user-provided scripts** (recommended for science/medical/code topics):
-
-```bash
-lecturecast new "TOPIC" --script ./script.json
-```
+1. **Scope** — platforms / depth / series brand / voice (quick gate).
+2. **Script** — write a 7–8 section `scripts/bilibili.json` and surface the full
+   draft to the user; wait for explicit "通过 / approved". For science / medical /
+   code topics, demand user-verified text — do not hallucinate facts.
+3. **Voiceover** — `python3 build_audio_mm.py` (MiniMax if `MINIMAX_API_KEY` is
+   set, else free Edge).
+4. **Scenes** — one Remotion project, `src/scenes/<Id>.tsx` (vertical) +
+   `src/scenesH/<Id>H.tsx` (landscape).
+5. **Render** — `./build_video.sh <slug>` merges audio, renders both aspect
+   ratios, burns subs (ffmpeg + libass), and renders both covers.
+6. **Xiaohongshu compliance pass** — grep the whole video for banned/导流 words.
+7. **Deliver** — 2 mp4s + 2 covers + `publish-meta.md`, all in the working dir.
 
 ## Depth selection
 
-| User intent | `--depth` |
+| User intent | Depth |
 |---|---|
 | "讲清 X" / explain / introduce | `concept` (default, best for 5 min) |
 | "深入讲 X" / how it works under the hood | `deep` |
@@ -74,58 +64,41 @@ lecturecast new "TOPIC" --script ./script.json
 
 ## Platform selection
 
-- Default: `bilibili,xiaohongshu` (both)
-- Bilibili-only: `--platforms bilibili`
-- Xiaohongshu-only: `--platforms xiaohongshu`
-
-The script and voice are reused across platforms; only visual rendering doubles,
-so doing both is the value play. (Free during open beta — no credits enforced.)
+- Default: both Bilibili + Xiaohongshu (script and voice are reused; only visual
+  rendering doubles, so doing both is the value play).
+- Bilibili-only or Xiaohongshu-only if the user asks.
 
 ## Voice selection
 
-Two engines, auto-selected (or forced with `--engine`):
-
-- `edge` — **free default**, no key. Voices: `zh-CN-YunjianNeural` (sober male,
+- **Edge** — free default, no key. Voices: `zh-CN-YunjianNeural` (sober male,
   default), `zh-CN-XiaomengNeural` (gentle female).
-- `minimax` — **BYOK upgrade**, warmer MiniMax T2A. Used automatically when the
-  user has `MINIMAX_API_KEY` set in their env (see Prerequisites). Default voice
-  `male-qn-jingying`.
-
-```bash
-lecturecast new "TOPIC"                              # Edge (free), or MiniMax if MINIMAX_API_KEY is set
-lecturecast new "TOPIC" --engine minimax             # force MiniMax (needs MINIMAX_API_KEY)
-lecturecast new "TOPIC" --engine edge --voice zh-CN-XiaomengNeural
-```
+- **MiniMax** — BYOK upgrade, warmer MiniMax T2A. Used automatically when the user
+  has their own `MINIMAX_API_KEY` set in their env. Default voice `male-qn-jingying`.
 
 The MiniMax key is BYOK: it lives only in the **user's** env, is sent over HTTPS
-for that one job, and is never persisted. The CLI never handles any of our own
-TTS keys — MiniMax is the user's third-party account, not a Lecturecast secret.
+to their own MiniMax account for synthesis, and is never persisted. Lecturecast
+has no TTS keys of its own.
 
 ## Output location
 
-CLI downloads finished files to `~/lecturecast/<topic>/`:
+Work in a dir **outside this repo** (e.g. `~/lecturecast-projects/<slug>/`) so
+renders don't pollute the repo. Finished files land in `output/`:
 
-- `<platform>.mp4`
-- `cover-<platform>.png`
-
-## Failure modes
-
-| Symptom | Action |
-|---|---|
-| `RuntimeError: No token configured` | User needs `lecturecast init --key <account_key>` |
-| HTTP 401 from CLI | Token invalid/expired — re-init |
-| HTTP 402 "insufficient_credits" | (rare in open beta) Out of credits — top up at `https://agentmesh360.com/account` |
+- `<slug>-bilibili.mp4` / `<slug>-xiaohongshu.mp4`
+- `<slug>-cover-bilibili.png` / `<slug>-cover-xiaohongshu.png`
 
 ## Do not
 
-- Do not hardcode or commit any API key — `MINIMAX_API_KEY` from env only.
+- Do not hardcode or commit any key — `MINIMAX_API_KEY` from env only.
 - Do not put 导流 / 诱导关注 / links in the 小红书 video or description (限流 risk;
   end card = soft hook only).
-- Do not run more than 2 concurrent cloud `lecturecast new` calls during open
-  beta (small server worker pool).
+- Do not hand-edit `theme.ts` `SECTIONS` — `update_theme.py` owns it.
+- Do not `bun install` the Remotion project — use `npm install`.
+- Do not edit files under `templates/` in place — copy them into your working dir.
 
 ## Reference
 
-- Public docs: https://lecturecast.agentmesh360.com
+- Agent runbook: [AGENTS.md](../../AGENTS.md)
+- Full local pipeline: [docs/LOCAL-WORKFLOW.md](../../docs/LOCAL-WORKFLOW.md)
 - CLI repo: https://github.com/jiyangnan/AgentMesh-Lecturecast
-- AgentMesh hub: https://agentmesh360.com (shared subscription across products)
+- AgentMesh ecosystem: https://agentmesh360.com

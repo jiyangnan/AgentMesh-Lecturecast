@@ -1,14 +1,8 @@
 # Local workflow — render the whole video on your own machine
 
-There are **two ways** to use Lecturecast:
-
-| Path | Who | What runs where |
-|---|---|---|
-| **Cloud** (`lecturecast new …`) | Zero-setup users | Script + render happen on the hosted service. See [AGENTS.md](../AGENTS.md). |
-| **Local** (this doc) | Agents that want full control + no per-video credit | **You** are the director — script, scenes, render all run on your machine from `templates/`. |
-
-This document is the **local path**: an AI agent (you) drives the whole pipeline
-locally using the bundled `templates/`. There is intentionally **no "do-it-all"
+Lecturecast is **fully local and open source** — there is no cloud service, no
+account, and no API key. An AI agent (you) drives the whole pipeline on this
+machine using the bundled `templates/`. There is intentionally **no "do-it-all"
 script** — didactic visuals need per-topic design, and that's your job as the
 director. You get the pipeline, the Remotion project, and working Hook/End scenes
 to copy.

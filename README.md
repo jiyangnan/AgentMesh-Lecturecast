@@ -5,22 +5,24 @@ English · [中文](README.zh.md)
 
 > 🟣 Part of **[AgentMesh](https://github.com/jiyangnan/agentmesh-core)** — see the [ecosystem index](https://github.com/jiyangnan/agentmesh-core/blob/main/docs/ECOSYSTEM.md) ([中文](https://github.com/jiyangnan/agentmesh-core/blob/main/docs/ECOSYSTEM.zh.md)) for all related repos, the [roadmap](https://github.com/jiyangnan/agentmesh-core/blob/main/docs/ROADMAP.md), and [architecture](https://github.com/jiyangnan/agentmesh-core/blob/main/docs/ARCHITECTURE.md).
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-open%20beta-orange.svg)](https://lecturecast.agentmesh360.com)
+[![Status](https://img.shields.io/badge/status-active-brightgreen.svg)](#)
 [![Brand](https://img.shields.io/badge/brand-AgentMesh-6E4AFF.svg)](https://agentmesh360.com)
 
-> One prompt → finished 5-minute course video for both **Bilibili** (16:9) and **Xiaohongshu** (9:16). Built to be controlled by your AI agent (Claude Code, OpenClaw, Cursor, Codex) from chat.
+> An **open-source, fully local** video-production workflow for AI agents. One topic → a finished 5-minute course video for both **Bilibili** (16:9) and **Xiaohongshu** (9:16) — everything renders on **your** machine. Built to be driven by your AI agent (Claude Code, OpenClaw, Cursor, Codex) from chat.
 
 ![Lecturecast demo — side-by-side Bilibili and Xiaohongshu output](assets/demo.gif)
 
 <sub>↑ Same script, two visual systems. Left: Bilibili 1920×1080. Right: Xiaohongshu 1080×1920. Played at 12× speed — actual length ~5:21.</sub>
 
-**Core loop**: topic → 7-section draft script → your approval → voiceover + scenes + rendering → finished mp4s + covers on your machine.
+**Everything is local.** There is no cloud service, no account, and no API key. Your agent acts as the director and runs the whole pipeline on your machine using the bundled `templates/`:
 
-**Driving this from an AI agent?** Start with **[AGENTS.md](AGENTS.md)** and **[docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)** — the complete how-to for producing a video end to end.
+- **Remotion** (Node) renders the animated scenes for both aspect ratios.
+- **edge-tts** (Python) does the voiceover — free by default, no setup.
+- **ffmpeg** burns subtitles and stitches audio + video.
 
-This is a product under the **[AgentMesh](https://agentmesh360.com)** umbrella — a series of vertical AI agents for specific industries. Your AgentMesh subscription's credit pool is **shared across all products**: Pro $9.9/mo gives you 1,500 credits = 30 Lecturecast videos OR 1,500 Job Agent applications OR a mix.
+**Core loop**: topic → 7-section draft script → your approval → voiceover + scenes + rendering → finished mp4s + covers, all on your machine.
 
-> **⚠️ Free during open beta**. Create an AgentMesh360 account, grab your API key from the account dashboard, and you're in — no credit limits enforced for now. Subscriptions land soon.
+**Driving this from an AI agent?** Start with **[AGENTS.md](AGENTS.md)** and **[docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)** — the complete, end-to-end how-to for producing a video locally.
 
 ---
 
@@ -34,18 +36,6 @@ This is a product under the **[AgentMesh](https://agentmesh360.com)** umbrella �
 curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash
 ```
 
-**Windows** (PowerShell):
-
-```powershell
-irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex
-```
-
-After install, [create an AgentMesh360 account](https://agentmesh360.com/app/), copy your API key from the account dashboard, then open a new terminal and run:
-
-```bash
-lecturecast init --key <your_api_key>   # from your AgentMesh360 account dashboard
-```
-
 ### Manual
 
 ```bash
@@ -54,105 +44,57 @@ cd AgentMesh-Lecturecast
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
-lecturecast init --key <your_api_key>
 ```
+
+You'll also need **Node 20+**, **Python 3.11+**, and **ffmpeg with libass** for the local render — see [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md) for the one-line installs.
 
 ---
 
 ## Use
 
+Lecturecast is **agent-driven**. The `lecturecast` CLI itself is just a thin local helper:
+
 ```bash
-$ lecturecast new "RAG 工作原理"
-→ submitting … job_id=lct_5xz9k1
-→ drafting script (~90s) ⠋
-→ ┌─ Draft (7 sections, ~5 min) ────┐
-  │ § 1 (24s) Hook                    │
-  │ § 2 (38s) What is RAG             │
-  │ § 3 (58s) Embeddings explained    │
-  │ § 4 (62s) Retrieval step          │
-  │ § 5 (60s) Generation step         │
-  │ § 6 (40s) Real example            │
-  │ § 7 (18s) Recap + next            │
-  └───────────────────────────────────┘
-[Y] approve  [E] edit  [N] reject  > Y
-→ generating audio (MiniMax) ……… 38%
-→ rendering video (both aspect ratios) … 70%
-→ burning subtitles + covers … 92%
-→ downloading … ✓
-✓ 4 files in ~/lecturecast/RAG-工作原理/
-  → bilibili.mp4 (13 MB · 5:21)
-  → xiaohongshu.mp4 (20 MB · 5:21)
-  → cover-bilibili.png
-  → cover-xiaohongshu.png
+lecturecast workflow   # shows where the local workflow lives
+lecturecast version    # installed version
 ```
 
-Other commands:
+The real work happens when your AI agent follows the local workflow. In your agent chat:
 
-| Command | What it does |
-|---|---|
-| `lecturecast new "TOPIC"` | Start a new course |
-| `lecturecast new "TOPIC" --depth hands_on --platforms xiaohongshu` | Customize |
-| `lecturecast new "TOPIC" --engine edge --voice zh-CN-YunjianNeural` | Pick voice engine + voice |
-| `lecturecast new --script ./my-script.json` | Skip draft, use your own |
-| `lecturecast list` | History |
-| `lecturecast get <job_id>` | Re-download outputs |
-| `lecturecast usage` | Credits remaining this month |
-| `lecturecast status` | Cloud + token health check |
+> 做一条关于 RAG 工作原理的 5 分钟课程视频
+
+The agent reads [AGENTS.md](AGENTS.md) / [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md), then drives the pipeline:
+
+```
+topic
+  ▼ scope (platforms / depth / series brand / voice)
+  ▼ 7-section draft script         (your approval gate)
+  ▼ voiceover   python3 build_audio_mm.py   (Edge free, MiniMax optional)
+  ▼ scenes      Remotion (vertical + landscape)
+  ▼ render      ./build_video.sh <slug>      (ffmpeg + libass)
+  ▼ 2 mp4s + 2 covers in your working dir
+```
 
 ### Voiceover — free by default, MiniMax optional (BYOK)
 
 Voiceover defaults to **Edge TTS** (free, no setup). To upgrade to the warmer
 **MiniMax** voice, bring your own MiniMax key — a third-party account from
 [minimaxi.com](https://www.minimaxi.com), not a Lecturecast secret. Set it in
-your env and the CLI uses it automatically:
+your env and the local `build_audio_mm.py` uses it automatically:
 
 ```bash
-export MINIMAX_API_KEY=<your-minimax-key>   # your own key — never stored by the CLI
-lecturecast new "RAG 工作原理"               # now uses MiniMax; falls back to Edge on any error
+export MINIMAX_API_KEY=<your-minimax-key>   # your own key — never stored, env only
 ```
 
-The key stays in your env, is sent over HTTPS for that one job, and is never
-persisted. **Driving this from an AI agent? Read [AGENTS.md](AGENTS.md)** — it
-covers install, the cloud workflow, BYOK, and troubleshooting.
-
----
-
-## Pricing — shared with all AgentMesh products
-
-| Tier | Credits | Effective Lecturecast | Effective Job Agent |
-|---|---|---|---|
-| Free | **50 at signup, one-time** | 1 video | 50 applications |
-| Pro $9.9 / mo | 1,500 / month | 30 videos / month | 1,500 applications |
-| **Creator $19 / mo** | 3,500 / month | 70 videos / month | 3,500 applications |
-| Team $39 / mo | 8,000 / month | 160 videos / month | 8,000 applications |
-
-> **Subscriptions are coming soon — everything is free during open beta.** The table below describes the planned paid tiers; today no credit limits are enforced.
-
-**Free is a trial, not a recurring tier.** You get 50 credits when you sign up — enough to make one Lecturecast video (or test Job Agent for a week) and decide. After that, one AgentMesh subscription gives you a shared monthly credit pool spent across whichever products you use.
-
-**Monthly credits reset each billing cycle (use-it-or-lose-it).** Pick the tier matching your real monthly usage; unused credits do not roll over.
-
-### Hard cap — no surprise charges
-
-- When you run out: **HTTP 402** with a link to upgrade. **No automatic overage billing.** Predictable bills, always.
-- **Upgrade immediately tops up the tier difference.** Pro→Team gives you `8000 − 1500 = 6500` extra credits on the spot, plus you keep your current balance.
-- **Downgrade**: current cycle keeps your balance; next cycle resets to the new tier.
-- **No refunds.** Cancellation stops the next renewal; you keep your current cycle's credits until period end.
-
-### Which tier is for you?
-
-- **Pro** — you make 1 video a day, or use Job Agent for a casual job hunt.
-- **Creator** — you're a professional content creator. ~2 videos a day, +18% per-credit savings vs Pro.
-- **Team** — small studio / agency / heavy power user. ~5 videos a day, +35% per-credit savings.
-
-**Open beta**: all tiers are currently free while we collect feedback — just sign up for an account.
+The key stays in your env and falls back to the free Edge voice on any error.
+**Driving this from an AI agent? Read [AGENTS.md](AGENTS.md)** — it covers
+install, the full local workflow, BYOK, and troubleshooting.
 
 ---
 
 ## Use it from your AI agent
 
-Lecturecast ships with an agent skill at `skills/claude-code/SKILL.md`. After
-`lecturecast init`, drop a symlink:
+Lecturecast ships with an agent skill at `skills/claude-code/SKILL.md`. Drop a symlink:
 
 ```bash
 ln -s "$(pwd)/skills/claude-code" ~/.claude/skills/lecturecast
@@ -163,15 +105,15 @@ Then in your agent chat:
 
 > 做一条关于 RAG 工作原理的 5 分钟课程视频
 
-The agent shells out to `lecturecast new` and waits for completion.
+The agent reads the runbook and drives the local pipeline to completion.
 
 ---
 
 ## Privacy
 
-- The audio files and rendered mp4s are temporarily stored on the cloud worker (24h TTL) for download. After 24h, they're auto-deleted.
-- Your topic + draft script text are processed by an LLM provider for script generation. Billing is handled separately by agentmesh-core; payment details never touch the product backend.
-- No tracking, no telemetry beyond per-action credit metering.
+- **Everything runs and stays on your machine.** Audio, rendered mp4s, and covers are produced locally — nothing is uploaded.
+- If you opt into the MiniMax voice (BYOK), your topic + script text are sent to your own MiniMax account over HTTPS for synthesis. The default Edge voice runs without any third-party account.
+- No tracking, no telemetry.
 
 ---
 
