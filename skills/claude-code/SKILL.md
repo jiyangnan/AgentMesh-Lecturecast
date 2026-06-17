@@ -1,14 +1,22 @@
 ---
 name: lecturecast
-description: Turn a topic into a finished 5-minute course video on both Bilibili (16:9) and Xiaohongshu (9:16). Uses the hosted Lecturecast service at api.lecturecast.agentmesh360.com — no local rendering. Use when the user asks to "做一条课程视频 / 5 分钟讲清 X / 出一期教程 / make a course video / lecturecast about X".
+description: Turn a topic into a finished 5-minute course video on both Bilibili (16:9) and Xiaohongshu (9:16). Two paths — render the whole thing locally as the director, or drive the hosted cloud service (see AGENTS.md / docs/LOCAL-WORKFLOW.md). Use when the user asks to "做一条课程视频 / 5 分钟讲清 X / 出一期教程 / make a course video / lecturecast about X".
 ---
 
-# Lecturecast (cloud edition)
+# Lecturecast
 
-This skill drives the `lecturecast` CLI installed in `~/.lecturecast/app`.
-All script generation, TTS, scene rendering, and subtitle burning happen on
-`api.lecturecast.agentmesh360.com`. No local Docker / Playwright / Remotion
-needed.
+Two ways to produce the video (full runbook: **[AGENTS.md](../../AGENTS.md)**):
+
+- **Local (recommended today)** — you act as the director and render the whole
+  video on this machine from the bundled `templates/`. Needs Node + ffmpeg
+  (+ optional BYOK MiniMax key). Full pipeline:
+  **[docs/LOCAL-WORKFLOW.md](../../docs/LOCAL-WORKFLOW.md)**.
+- **Cloud** — drive the `lecturecast` CLI against the hosted service, zero local
+  setup. *(Server-side render isn't live yet — for guaranteed output today, use
+  the local path.)*
+
+The sections below cover the **cloud** CLI. For the local path, follow
+LOCAL-WORKFLOW.md.
 
 ## When to use
 
@@ -71,8 +79,8 @@ lecturecast new "TOPIC" --script ./script.json
 - Bilibili-only: `--platforms bilibili`
 - Xiaohongshu-only: `--platforms xiaohongshu`
 
-Each video costs 50 credits regardless of platform count — the script and
-voice are reused; only visual rendering doubles. Doing both is the value play.
+The script and voice are reused across platforms; only visual rendering doubles,
+so doing both is the value play. (Free during open beta — no credits enforced.)
 
 ## Voice selection
 
@@ -105,20 +113,18 @@ CLI downloads finished files to `~/lecturecast/<topic>/`:
 
 | Symptom | Action |
 |---|---|
-| `RuntimeError: No token configured` | User needs `lecturecast init --key lc_live_xxx` |
+| `RuntimeError: No token configured` | User needs `lecturecast init --key <account_key>` |
 | HTTP 401 from CLI | Token invalid/expired — re-init |
-| HTTP 402 "insufficient_credits" | User out of credits — direct to `https://agentmesh360.com/account` to top up |
-| Rendering takes >15 min | Server queue is congested; CLI keeps polling, no user action needed |
+| HTTP 402 "insufficient_credits" | (rare in open beta) Out of credits — top up at `https://agentmesh360.com/account` |
+| Cloud `new` queues but never renders | Expected for now — server render isn't live. Use the local path (LOCAL-WORKFLOW.md). |
 
 ## Do not
 
-- Do not attempt to run lecturecast locally without the CLI/server.
-  Pre-v0.2.0 templates lived in this repo but are now in the private
-  `lecturecast-server`. All rendering is server-side now.
-- Do not invent prompts or scripts to bypass the API — the cost model
-  depends on the server doing the LLM work.
-- Do not run more than 2 concurrent `lecturecast new` calls on M1 phase
-  (server worker pool is small; queue exists but UX degrades).
+- Do not hardcode or commit any API key — `MINIMAX_API_KEY` from env only.
+- Do not put 导流 / 诱导关注 / links in the 小红书 video or description (限流 risk;
+  end card = soft hook only).
+- Do not run more than 2 concurrent cloud `lecturecast new` calls during open
+  beta (small server worker pool).
 
 ## Reference
 

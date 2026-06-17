@@ -16,7 +16,7 @@ English · [中文](README.zh.md)
 
 **Core loop**: Topic → 7-section draft script (cloud) → your approval → TTS + scenes + rendering (cloud) → mp4s downloaded to your machine.
 
-**Architecture in one breath**: The CLI is thin — it sends your topic to `api.lecturecast.agentmesh360.com`, polls for the script draft, shows it in your terminal for approval, then waits for the cloud worker to render and downloads the final mp4s + covers when ready. No local Docker / Playwright / Remotion / Python setup.
+**Architecture in one breath**: The CLI is thin — it sends your topic to `api.lecturecast.agentmesh360.com`, polls for the script draft, shows it in your terminal for approval, then waits for the cloud worker to render and downloads the final mp4s + covers when ready. No local setup for the cloud path. *(Prefer to render on your own machine — or driving this from an AI agent? There's a full **local** path too: see [AGENTS.md](AGENTS.md) and [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md).)*
 
 This is a product under the **[AgentMesh](https://agentmesh360.com)** umbrella — a series of vertical AI agents for specific industries. Your AgentMesh subscription's credit pool is **shared across all products**: Pro $9.9/mo gives you 1,500 credits = 30 Lecturecast videos OR 1,500 Job Agent applications OR a mix.
 
@@ -28,8 +28,8 @@ This is a product under the **[AgentMesh](https://agentmesh360.com)** umbrella �
 
 | Repo | Visibility | What it holds |
 |------|-----------|---------------|
-| **Lecturecast CLI** (this repo) | Public · Apache 2.0 | Thin client. Talks to the cloud API. No rendering happens locally. |
-| **Server** | **Private** | Closed-source IP: script & scene prompts, one Remotion project (both aspect ratios), MiniMax→Edge voiceover, libass subtitle burner, Xiaohongshu compliance gate. |
+| **Lecturecast CLI** (this repo) | Public · Apache 2.0 | Thin cloud client **+ the full local render workflow** (`templates/` + scripts). Use the cloud, or render locally as the director. |
+| **Server** | **Private** | The remaining closed-source IP: the **script & scene-generation prompts** that power zero-touch cloud automation. (The Remotion visual system + render scripts ship publicly here, for the local path.) |
 | **agentmesh-core** | **Private** | Shared identity, subscriptions, credits across all AgentMesh products. |
 
 ---

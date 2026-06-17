@@ -16,7 +16,7 @@
 
 **核心流程**：你给主题 → 云端起 7 段草稿脚本 → 你审批 → TTS、视觉、合成、烧字幕、封面全部在云端跑 → 4 个文件自动下载到本地。
 
-**架构一句话**：CLI 客户端**很薄**——只负责把主题发到 `api.lecturecast.agentmesh360.com`、轮询任务状态、在你终端里展示草稿请你确认、等渲染完拉文件。**你本地不需要装 Docker / Playwright / Remotion / Python 任何重型环境。**
+**架构一句话**：CLI 客户端**很薄**——只负责把主题发到 `api.lecturecast.agentmesh360.com`、轮询任务状态、在你终端里展示草稿请你确认、等渲染完拉文件。走云端路径时你本地不需要装任何重型环境。*（想在自己机器上渲染，或用 AI agent 驱动？还有一条完整的**本地路径**：见 [AGENTS.md](AGENTS.md) 和 [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)。）*
 
 这是 **[AgentMesh](https://agentmesh360.com)** 旗下的产品——一系列垂直 AI agent 矩阵。**你订阅一次 AgentMesh，所有产品共享 credit 池**：Pro $9.9/月 给你 1,500 credits = 30 条 Lecturecast 视频 OR 1,500 次 Job Agent 投递 OR 自由组合。
 
@@ -28,8 +28,8 @@
 
 | 仓库 | 可见性 | 内容 |
 |---|---|---|
-| **Lecturecast CLI**（本仓库） | 公开 · Apache 2.0 | 薄客户端，调云端 API。本地不渲染。 |
-| **lecturecast-server** | **私有** | IP 重仓：脚本 + 视觉 prompt、单 Remotion 项目（同时出双版）、MiniMax→Edge 配音、libass 字幕烧录、小红书合规闸门 |
+| **Lecturecast CLI**（本仓库） | 公开 · Apache 2.0 | 云端瘦客户端 **+ 完整本地渲染工作流**（`templates/` + 脚本）。可走云端，也可由 agent 当 director 本地出片。 |
+| **lecturecast-server** | **私有** | 剩下的闭源 IP：驱动零门槛云端全自动的**脚本 / 场景生成 prompt**。（Remotion 视觉系统 + 渲染脚本已随本地路径公开在本仓库。） |
 | **agentmesh-core** | **私有** | 所有 AgentMesh 产品共用的身份、订阅、credit 服务 |
 
 ---

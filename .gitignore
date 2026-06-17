@@ -7,3 +7,13 @@ dist/
 .pytest_cache/
 .ruff_cache/
 .DS_Store
+
+# Local-workflow runtime artifacts (templates/remotion is committed source only)
+templates/remotion/node_modules/
+templates/remotion/out/
+templates/remotion/public/narration.mp3
+# A course run's working dir (scripts/audio/assets/output live outside the repo
+# under ~/lecturecast-projects/<topic>/, but ignore them if created in-tree)
+audio/
+assets/
+output/
