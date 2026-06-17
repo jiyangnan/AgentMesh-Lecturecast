@@ -69,8 +69,19 @@ voice are reused; only visual rendering doubles. Doing both is the value play.
 
 ## Voice selection
 
-- Default: `zh-CN-YunxiNeural` (young male, friendly)
-- Other recommended: `YunjianNeural` (sober male), `XiaomengNeural` (gentle female)
+Two engines, selected with `--engine`:
+
+- `minimax` (default) — warm, non-robotic. Default voice `male-qn-jingying`.
+- `edge` — fallback engine, no extra setup. Voices like `zh-CN-YunjianNeural`
+  (sober male), `zh-CN-XiaomengNeural` (gentle female).
+
+```bash
+lecturecast new "TOPIC" --engine minimax --voice male-qn-jingying   # default
+lecturecast new "TOPIC" --engine edge --voice zh-CN-YunjianNeural   # Edge voice
+```
+
+The voice engine and its credentials live entirely on the server — you only pick
+the engine + voice id; the CLI never handles any TTS keys.
 
 ## Output location
 

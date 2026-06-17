@@ -22,12 +22,14 @@ class LectureCastAPI:
             return {"status": r.status_code, **(r.json() if r.is_success else {})}
 
     def new_course(self, *, topic: str, depth: str, platforms: list[str],
-                   voice: str, user_script: str | None = None) -> dict:
+                   voice_engine: str = "minimax", voice: str = "male-qn-jingying",
+                   user_script: str | None = None) -> dict:
         with httpx.Client(timeout=30) as cli:
             r = cli.post(
                 f"{self.base}/v1/courses",
                 json={"topic": topic, "depth": depth, "platforms": platforms,
-                      "voice": voice, "user_script": user_script},
+                      "voice_engine": voice_engine, "voice": voice,
+                      "user_script": user_script},
                 headers=self._headers(),
             )
         r.raise_for_status()

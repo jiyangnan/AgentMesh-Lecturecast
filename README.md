@@ -29,7 +29,7 @@ This is a product under the **[AgentMesh](https://agentmesh360.com)** umbrella �
 | Repo | Visibility | What it holds |
 |------|-----------|---------------|
 | **Lecturecast CLI** (this repo) | Public · Apache 2.0 | Thin client. Talks to the cloud API. No rendering happens locally. |
-| **Server** | **Private** | Closed-source IP: script & scene prompts, HTML/Remotion templates, Edge TTS pipeline, Playwright recorder, libass subtitle burner. |
+| **Server** | **Private** | Closed-source IP: script & scene prompts, one Remotion project (both aspect ratios), MiniMax→Edge voiceover, libass subtitle burner, Xiaohongshu compliance gate. |
 | **agentmesh-core** | **Private** | Shared identity, subscriptions, credits across all AgentMesh products. |
 
 ---
@@ -85,9 +85,9 @@ $ lecturecast new "RAG 工作原理"
   │ § 7 (18s) Recap + next            │
   └───────────────────────────────────┘
 [Y] approve  [E] edit  [N] reject  > Y
-→ rendering bilibili ……………… 42%
-→ rendering xiaohongshu …… 73%
-→ burning subtitles + covers … 91%
+→ generating audio (MiniMax) ……… 38%
+→ rendering video (both aspect ratios) … 70%
+→ burning subtitles + covers … 92%
 → downloading … ✓
 ✓ 4 files in ~/lecturecast/RAG-工作原理/
   → bilibili.mp4 (13 MB · 5:21)
@@ -102,6 +102,7 @@ Other commands:
 |---|---|
 | `lecturecast new "TOPIC"` | Start a new course |
 | `lecturecast new "TOPIC" --depth hands_on --platforms xiaohongshu` | Customize |
+| `lecturecast new "TOPIC" --engine edge --voice zh-CN-YunjianNeural` | Pick voice engine + voice |
 | `lecturecast new --script ./my-script.json` | Skip draft, use your own |
 | `lecturecast list` | History |
 | `lecturecast get <job_id>` | Re-download outputs |
@@ -162,7 +163,7 @@ The agent shells out to `lecturecast new` and waits for completion.
 
 ## Privacy
 
-- The audio file, slide HTML, and rendered mp4s are temporarily stored on the cloud worker (24h TTL) for download. After 24h, they're auto-deleted.
+- The audio files and rendered mp4s are temporarily stored on the cloud worker (24h TTL) for download. After 24h, they're auto-deleted.
 - Your topic + draft script text are processed by DeepSeek V4 Flash (LLM provider) for script generation. Billing is handled separately by agentmesh-core; payment details never touch the product backend (official WeChat / Alipay payments will be added once the company entity is registered).
 - No tracking, no telemetry beyond per-action credit metering.
 

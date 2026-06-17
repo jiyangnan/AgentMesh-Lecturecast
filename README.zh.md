@@ -29,7 +29,7 @@
 | 仓库 | 可见性 | 内容 |
 |---|---|---|
 | **Lecturecast CLI**（本仓库） | 公开 · Apache 2.0 | 薄客户端，调云端 API。本地不渲染。 |
-| **lecturecast-server** | **私有** | IP 重仓：脚本 + 视觉 prompt、HTML / Remotion 模板、Edge TTS、Playwright 录屏、libass 字幕烧录 |
+| **lecturecast-server** | **私有** | IP 重仓：脚本 + 视觉 prompt、单 Remotion 项目（同时出双版）、MiniMax→Edge 配音、libass 字幕烧录、小红书合规闸门 |
 | **agentmesh-core** | **私有** | 所有 AgentMesh 产品共用的身份、订阅、credit 服务 |
 
 ---
@@ -85,9 +85,9 @@ $ lecturecast new "RAG 工作原理"
   │ § 7 (18s) 总结 + 下期               │
   └──────────────────────────────────┘
 [Y] 通过  [E] 编辑  [N] 否决  > Y
-→ 渲染 B 站 ……………………… 42%
-→ 渲染 小红书 …………… 73%
-→ 烧字幕 + 封面 ……… 91%
+→ 配音（MiniMax） ……………… 38%
+→ 渲染视频（双版一次出） … 70%
+→ 烧字幕 + 封面 ……… 92%
 → 下载 … ✓
 ✓ 4 个文件 → ~/lecturecast/RAG-工作原理/
   → bilibili.mp4 (13 MB · 5:21)
@@ -102,6 +102,7 @@ $ lecturecast new "RAG 工作原理"
 |---|---|
 | `lecturecast new "主题"` | 起新课程 |
 | `lecturecast new "主题" --depth hands_on --platforms xiaohongshu` | 定制深度 / 平台 |
+| `lecturecast new "主题" --engine edge --voice zh-CN-YunjianNeural` | 选配音引擎 + 嗓音 |
 | `lecturecast new --script ./my-script.json` | 跳过起草，直接用你写的脚本 |
 | `lecturecast list` | 历史任务 |
 | `lecturecast get <job_id>` | 重新下载历史成片 |
@@ -161,7 +162,7 @@ Agent 会自动调 `lecturecast new` 并等结果。
 
 ## 隐私
 
-- 音频文件、HTML、成片 mp4 在云端临时存 24 小时供下载，到期自动清理。
+- 音频文件、成片 mp4 在云端临时存 24 小时供下载，到期自动清理。
 - 你的主题文本 + 草稿脚本由 DeepSeek V4 Flash（LLM 供应商）处理用于起草。账单由 agentmesh-core 单独处理，支付信息不会到产品后端（未来支付走微信 / 支付宝官方渠道，公司注册后再上）。
 - 除按动作扣 credit 之外**无任何遥测**。
 

@@ -51,7 +51,10 @@ def new(
     depth: str = typer.Option("concept", "--depth", help="concept | deep | hands_on"),
     platforms: str = typer.Option("bilibili,xiaohongshu", "--platforms",
                                   help="comma-separated"),
-    voice: str = typer.Option("zh-CN-YunxiNeural", "--voice"),
+    engine: str = typer.Option("minimax", "--engine",
+                               help="Voice engine: minimax (default, warm) or edge (fallback)"),
+    voice: str = typer.Option("male-qn-jingying", "--voice",
+                              help="Voice id (engine-specific)"),
     script: Path | None = typer.Option(None, "--script",
                                        help="Skip draft. Use this JSON as the script."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve draft"),
@@ -66,7 +69,7 @@ def new(
         job = cli.new_course(
             topic=topic, depth=depth,
             platforms=[p.strip() for p in platforms.split(",") if p.strip()],
-            voice=voice, user_script=user_script,
+            voice_engine=engine, voice=voice, user_script=user_script,
         )
     jid = job["job_id"]
     console.print(f"  job_id = [bold]{jid}[/bold]")
