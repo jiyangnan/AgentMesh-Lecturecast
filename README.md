@@ -7,8 +7,11 @@ English · [中文](README.zh.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-active-brightgreen.svg)](#)
 [![Brand](https://img.shields.io/badge/brand-AgentMesh-6E4AFF.svg)](https://agentmesh360.com)
+[![Website](https://img.shields.io/badge/website-lecturecast.agentmesh360.com-CC785C.svg)](https://lecturecast.agentmesh360.com)
 
 > An **open-source, fully local** video-production workflow for AI agents. One topic → a finished 5-minute course video for both **Bilibili** (16:9) and **Xiaohongshu** (9:16) — everything renders on **your** machine. Built to be driven by your AI agent (Claude Code, OpenClaw, Cursor, Codex) from chat.
+
+Website: **[lecturecast.agentmesh360.com](https://lecturecast.agentmesh360.com)** · AgentMesh360 main site: **[agentmesh360.com](https://agentmesh360.com)**
 
 ![Lecturecast demo — side-by-side Bilibili and Xiaohongshu output](assets/demo.gif)
 

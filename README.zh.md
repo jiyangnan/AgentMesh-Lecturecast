@@ -7,8 +7,11 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-active-brightgreen.svg)](#)
 [![Brand](https://img.shields.io/badge/brand-AgentMesh-6E4AFF.svg)](https://agentmesh360.com)
+[![Website](https://img.shields.io/badge/website-lecturecast.agentmesh360.com-CC785C.svg)](https://lecturecast.agentmesh360.com)
 
 > 一个**开源、完全本地**的视频制作工作流，专门给 AI agent 用。一句话生成可发的 5 分钟课程视频——**B 站 16:9** + **小红书 9:16** 两条同时出，全程在**你自己机器上**渲染。设计成让你的 AI agent（Claude Code / OpenClaw / Cursor / Codex）从聊天里直接驱动。
+
+官网：**[lecturecast.agentmesh360.com](https://lecturecast.agentmesh360.com)** · AgentMesh360 主站：**[agentmesh360.com](https://agentmesh360.com)**
 
 ![Lecturecast demo — 两条成片并排](assets/demo.gif)
 
