@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lecturecast — 一つのアイデアから、講座動画を一本 · オープンソースのローカルツール</title>
+<meta name="description" content="Lecturecast は AgentMesh360 エコシステムのオープンソース・ローカルツール：テーマを AI エージェントに渡せば、ローカルで脚本作成・配音・レンダリングを行い、B 站横版と小红书縦版を同時に出力し、中国語字幕を焼き付け、カバーまで用意します。完全ローカル動作、アカウント不要、無料、Apache 2.0。" />
+<meta property="og:title" content="Lecturecast — 一つのアイデアから、講座動画を一本" />
+<meta property="og:description" content="オープンソースのローカルツール：AI 脚本 + 配音 + 2 プラットフォーム同時出力（B 站 16:9 / 小红书 9:16）、すべてあなたのマシン上で。テーマ 1 つ、成片 2 本。" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://lecturecast.agentmesh360.com/ja/" />
+<meta property="og:site_name" content="Lecturecast · AgentMesh360" />
+<meta property="og:locale" content="ja_JP" />
+<meta name="robots" content="index,follow,max-image-preview:large" />
+<meta name="theme-color" content="#0E8A6E" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="Lecturecast — オープンソースのローカル講座動画ワークフロー" />
+<meta name="twitter:description" content="Lecturecast はオープンソースのローカルツール：AI エージェントにテーマを渡せば、ローカルで脚本・配音・レンダリング・字幕焼き付け・カバーまで完了し、B 站横版と小红书縦版を同時に出力します。" />
+<link rel="canonical" href="https://lecturecast.agentmesh360.com/ja/" />
+<link rel="alternate" type="text/markdown" href="/llms.txt" title="Lecturecast LLMs.txt" />
+<link rel="alternate" hreflang="zh-CN" href="https://lecturecast.agentmesh360.com/" />
+<link rel="alternate" hreflang="en" href="https://lecturecast.agentmesh360.com/en/" />
+<link rel="alternate" hreflang="ja" href="https://lecturecast.agentmesh360.com/ja/" />
+<link rel="alternate" hreflang="ko" href="https://lecturecast.agentmesh360.com/ko/" />
+<link rel="alternate" hreflang="x-default" href="https://lecturecast.agentmesh360.com/" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎬</text></svg>" />
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://agentmesh360.com/#organization",
+      "name": "AgentMesh360",
+      "url": "https://agentmesh360.com/"
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://lecturecast.agentmesh360.com/#software",
+      "name": "Lecturecast",
+      "url": "https://lecturecast.agentmesh360.com/ja/",
+      "inLanguage": "ja",
+      "codeRepository": "https://github.com/jiyangnan/AgentMesh-Lecturecast",
+      "license": "https://www.apache.org/licenses/LICENSE-2.0",
+      "applicationCategory": "MultimediaApplication",
+      "applicationSubCategory": "local AI video generation workflow",
+      "operatingSystem": "macOS, Windows, Linux",
+      "isAccessibleForFree": true,
+      "provider": { "@id": "https://agentmesh360.com/#organization" },
+      "description": "Lecturecast は AgentMesh360 エコシステムのオープンソース・ローカル講座動画ワークフロー。AI エージェントがローカルで脚本・配音・レンダリング・字幕焼き付け・2 プラットフォーム出力までを完了させます。",
+      "featureList": [
+        "ローカル AI 講座脚本生成",
+        "ローカル配音とタイムライン整合",
+        "B 站 16:9 横版動画",
+        "小红书 9:16 縦版動画",
+        "中国語字幕焼き付け",
+        "カバー生成",
+        "Apache 2.0 オープンソース"
+      ],
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "JPY",
+        "availability": "https://schema.org/InStock"
+      }
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://lecturecast.agentmesh360.com/ja/#faq",
+      "inLanguage": "ja",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Lecturecast にアカウントや API キーは必要ですか？",
+          "acceptedAnswer": { "@type": "Answer", "text": "不要です。Lecturecast はローカルなオープンソースツールで、AgentMesh360 アカウント・クラウドサービス・キーは要りません。" }
+        },
+        {
+          "@type": "Question",
+          "name": "Lecturecast の処理過程でクラウドにアップロードされますか？",
+          "acceptedAnswer": { "@type": "Answer", "text": "アップロードされません。Lecturecast の脚本作成・配音・レンダリング・字幕焼き付け・カバー生成のワークフローはユーザーのマシン上で実行されます。" }
+        },
+        {
+          "@type": "Question",
+          "name": "Lecturecast はどの動画プラットフォーム形式に対応していますか？",
+          "acceptedAnswer": { "@type": "Answer", "text": "Lecturecast は B 站横版と小红书縦版を同時に出力し、16:9 と 9:16 の 2 つのアスペクト比に対応します。" }
+        }
+      ]
+    }
+  ]
+}
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Noto+Serif+JP:wght@400;500;600&family=Inter:wght@400;450;500;600&family=Noto+Sans+JP:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+<style>
+  :root {
+    --bg:#FFF7F0; --surface:#FFFCF8; --ink:#1A1915; --ink-soft:#33423D;
+    --muted:#786F66; --rule:#E8DCCD; --accent:#0E8A6E; --accent-ink:#075B49;
+    --blue:#2E5BFF; --red:#FF2442; --yellow:#FFD400;
+    --code-bg:#0B2D27; --code-fg:#F5EFE5; --code-dim:#A7B7AE; --code-acc:#FFD400;
+    --serif:"Source Serif 4","Noto Serif JP","Hiragino Mincho ProN","Yu Mincho",Georgia,serif;
+    --sans:"Inter","Noto Sans JP",-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --maxw:1120px; --gutter:clamp(20px,4vw,56px);
+  }
+  *{box-sizing:border-box} html,body{margin:0;padding:0} html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.7;
+    -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;font-feature-settings:"ss01","cv11"}
+  ::selection{background:var(--accent);color:#fff}
+  a{color:inherit;text-decoration:none}
+  a.link{color:var(--ink);border-bottom:1px solid currentColor;padding-bottom:1px;transition:color .15s,border-color .15s}
+  a.link:hover{color:var(--accent);border-bottom-color:var(--accent)}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 var(--gutter)}
+
+  .nav{position:sticky;top:0;z-index:50;background:color-mix(in oklab,var(--bg) 85%,transparent);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border-bottom:1px solid transparent;transition:border-color .2s}
+  .nav.scrolled{border-bottom-color:var(--rule)}
+  .nav-inner{max-width:var(--maxw);margin:0 auto;padding:18px var(--gutter);display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:nowrap}
+  .brand{display:inline-flex;align-items:center;gap:10px;font-family:var(--serif);font-weight:500;font-size:18px;letter-spacing:-0.005em;white-space:nowrap;flex-shrink:0}
+  .brand-mark{width:22px;height:22px;display:inline-block;flex:none;color:var(--accent)}
+  .brand small{font-family:var(--sans);font-weight:450;color:var(--muted);font-size:13px;letter-spacing:0;white-space:nowrap}
+  .nav-links{display:flex;align-items:center;gap:22px;font-size:14px;color:var(--ink-soft);flex-shrink:0}
+  .nav-links a{transition:color .15s;white-space:nowrap} .nav-links a:hover{color:var(--accent)}
+  .nav-cta{font-size:14px;background:var(--ink);color:var(--surface);padding:9px 16px;border-radius:999px;transition:background .15s,color .15s;white-space:nowrap}
+  .nav-links .nav-cta:hover{background:var(--accent);color:var(--surface)}
+  .lang-switch{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:12px;letter-spacing:0.02em;flex-shrink:0}
+  .lang-switch .lang{color:var(--muted);transition:color .15s;padding:2px 0;white-space:nowrap}
+  .lang-switch .lang:hover{color:var(--accent)}
+  .lang-switch .lang.lang-active{color:var(--accent-ink);font-weight:500}
+  .lang-switch .sep{width:1px;height:11px;background:var(--rule);display:inline-block;flex-shrink:0}
+  @media(max-width:880px){.nav-links a.nav-section{display:none}}
+  @media(max-width:720px){.nav-links a:not(.nav-cta):not(.lang){display:none} .lang-switch{gap:7px} .brand small{display:none}}
+  @media(max-width:480px){.nav-inner{gap:12px;padding:14px 16px} .brand{font-size:15px;gap:7px} .brand-mark{width:20px;height:20px} .lang-switch{gap:5px;font-size:11px} .nav-cta{padding:8px 12px;font-size:13px}}
+
+  .hero{padding:clamp(64px,11vw,140px) 0 clamp(48px,8vw,96px)}
+  .eyebrow{display:inline-flex;align-items:center;gap:10px;font-size:12.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);font-weight:500}
+  .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px color-mix(in oklab,var(--accent) 20%,transparent)}
+  h1.display{font-family:var(--serif);font-weight:500;font-size:clamp(34px,4.8vw,60px);line-height:1.2;letter-spacing:-0.015em;margin:28px 0 0}
+  h1.display em{font-style:normal;color:var(--accent-ink);font-weight:600}
+  .lede{margin:28px 0 0;font-size:clamp(16px,1.4vw,18px);line-height:1.8;color:var(--ink-soft);max-width:62ch;text-wrap:pretty}
+  .hero-ctas{margin-top:36px;display:flex;flex-wrap:wrap;gap:12px}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:13px 22px;font-size:14.5px;font-weight:500;border-radius:999px;transition:background .15s,color .15s,border-color .15s,transform .15s;border:1px solid transparent;cursor:pointer;font-family:inherit}
+  .btn-primary{background:var(--ink);color:var(--surface)} .btn-primary:hover{background:var(--accent);color:var(--surface)}
+  .btn-ghost{background:transparent;color:var(--ink);border-color:var(--rule)} .btn-ghost:hover{border-color:var(--ink)}
+  .btn .arrow{transition:transform .15s} .btn:hover .arrow{transform:translateX(3px)}
+
+  .terminal-frame{margin-top:64px;background:var(--code-bg);color:var(--code-fg);border-radius:14px;overflow:hidden;box-shadow:0 1px 0 rgba(255,255,255,0.04) inset,0 30px 60px -30px rgba(31,29,24,0.4),0 12px 24px -16px rgba(31,29,24,0.25)}
+  .terminal-bar{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.06)}
+  .terminal-bar .lights{display:flex;gap:6px}
+  .terminal-bar .lights span{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,0.1)}
+  .terminal-bar .title{font-family:var(--mono);font-size:12px;color:var(--code-dim);margin-left:8px}
+  pre.code{margin:0;padding:22px 24px 26px;font-family:var(--mono);font-size:13.5px;line-height:1.85;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  pre.code .c-prompt{color:var(--code-acc);user-select:none} pre.code .c-cmd{color:var(--code-fg)}
+  pre.code .c-dim{color:var(--code-dim)}
+
+  section.block{padding:clamp(72px,10vw,128px) 0;border-top:1px solid var(--rule)}
+  .kicker{font-size:12.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);font-weight:500;margin-bottom:28px;display:flex;align-items:center;gap:12px}
+  .kicker::before{content:"";width:24px;height:1px;background:var(--muted);display:inline-block}
+  h2.section-title{font-family:var(--serif);font-weight:500;font-size:clamp(28px,3.8vw,46px);line-height:1.28;letter-spacing:-0.012em;margin:0;max-width:24ch;text-wrap:balance}
+  h2.section-title em{font-style:normal;color:var(--accent-ink);font-weight:600}
+  .section-lede{margin-top:22px;font-size:17px;line-height:1.8;color:var(--ink-soft);max-width:58ch}
+
+  .why{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(32px,5vw,80px);align-items:start}
+  .why h2{max-width:18ch}
+  .why-body p{font-size:clamp(18px,1.8vw,22px);line-height:1.7;color:var(--ink);margin:0;font-family:var(--serif);font-weight:400;letter-spacing:-0.003em;text-wrap:pretty}
+  .why-body p + p{margin-top:18px} .why-body p .hi{color:var(--accent-ink);font-weight:500}
+  @media(max-width:820px){.why{grid-template-columns:1fr;gap:24px}}
+
+  .features{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(28px,3.5vw,56px);margin-top:clamp(48px,6vw,80px)}
+  .feat-num{font-family:var(--serif);font-style:italic;font-weight:400;font-size:16px;color:var(--accent);margin-bottom:22px;display:inline-block}
+  .feat h3{font-family:var(--serif);font-weight:500;font-size:22px;line-height:1.4;letter-spacing:-0.005em;margin:0 0 14px;text-wrap:balance}
+  .feat p{margin:0;font-size:15px;line-height:1.75;color:var(--ink-soft);text-wrap:pretty}
+  @media(max-width:820px){.features{grid-template-columns:1fr}}
+
+  .platforms{display:grid;grid-template-columns:1fr 1fr;gap:clamp(20px,3vw,32px);margin-top:clamp(48px,6vw,72px)}
+  @media(max-width:680px){.platforms{grid-template-columns:1fr}}
+  .pf{background:var(--surface);border:1px solid var(--rule);border-radius:16px;padding:clamp(24px,3vw,36px);display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center}
+  .pf .frame{background:var(--code-bg);border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--code-dim);font-family:var(--mono);font-size:12px}
+  .pf.land .frame{width:100%;aspect-ratio:16/9}
+  .pf.port .frame{width:60%;max-width:180px;aspect-ratio:9/16}
+  .pf h3{font-family:var(--serif);font-weight:500;font-size:21px;margin:0;letter-spacing:-0.005em}
+  .pf p{margin:0;font-size:14px;color:var(--ink-soft);line-height:1.75}
+  .pf .ratio{font-family:var(--mono);font-size:12px;color:var(--accent-ink)}
+
+  .stack{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(20px,3vw,32px);margin-top:clamp(48px,6vw,72px)}
+  @media(max-width:680px){.stack{grid-template-columns:1fr}}
+  .stk{background:var(--surface);border:1px solid var(--rule);border-radius:14px;padding:clamp(22px,2.6vw,30px)}
+  .stk .stk-icon{font-family:var(--mono);font-size:12px;color:var(--accent-ink);letter-spacing:0.04em;margin-bottom:14px}
+  .stk h3{font-family:var(--serif);font-weight:500;font-size:19px;margin:0 0 10px;letter-spacing:-0.005em}
+  .stk p{margin:0;font-size:14px;color:var(--ink-soft);line-height:1.75}
+  .stk code{font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em}
+
+  .steps{margin-top:clamp(48px,6vw,72px);display:grid;grid-template-columns:1fr;gap:0}
+  .step{display:grid;grid-template-columns:56px 1fr;gap:clamp(20px,3vw,48px);padding:32px 0;border-top:1px solid var(--rule);align-items:start}
+  .step:last-child{border-bottom:1px solid var(--rule)}
+  .step-n{font-family:var(--serif);font-weight:400;font-size:26px;color:var(--muted);line-height:1;padding-top:4px}
+  .step-body{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:clamp(20px,4vw,64px);align-items:start}
+  @media(max-width:720px){.step-body{grid-template-columns:1fr;gap:12px}}
+  .step h3{font-family:var(--serif);font-weight:500;font-size:clamp(20px,2.2vw,26px);line-height:1.4;letter-spacing:-0.008em;margin:0;text-wrap:balance}
+  .step p{margin:0;color:var(--ink-soft);font-size:15.5px;line-height:1.8;text-wrap:pretty}
+  .step p code{font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em}
+
+  .faq-list{margin-top:clamp(40px,5vw,56px)}
+  .faq-item{border-top:1px solid var(--rule)}
+  .faq-list .faq-item:last-child{border-bottom:1px solid var(--rule)}
+  .faq-item summary{list-style:none;padding:26px 32px 26px 0;position:relative;font-family:var(--serif);font-weight:500;font-size:clamp(17px,1.5vw,20px);line-height:1.5;letter-spacing:-0.005em;color:var(--ink);transition:color .15s}
+  .faq-item summary::-webkit-details-marker{display:none}
+  .faq-item summary:hover{color:var(--accent)}
+  .faq-item summary::after{content:"";position:absolute;right:4px;top:50%;width:14px;height:14px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-65%) rotate(45deg);transition:transform .2s;opacity:.55}
+  .faq-item[open] summary::after{transform:translateY(-25%) rotate(-135deg)}
+  .faq-answer{padding:0 48px 28px 0;color:var(--ink-soft);font-size:15.5px;line-height:1.85;max-width:70ch;text-wrap:pretty}
+  .faq-answer code{font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.92em}
+
+  footer.foot{border-top:1px solid var(--rule);padding:56px 0 72px;font-size:14px;color:var(--muted)}
+  .foot-inner{display:flex;flex-wrap:wrap;justify-content:space-between;gap:24px;align-items:flex-end}
+  .foot .brand{font-size:16px} .foot-meta{display:flex;flex-wrap:wrap;gap:24px} .foot-meta a:hover{color:var(--accent)}
+  .foot-note{margin-top:14px;font-size:12px;color:var(--muted);opacity:0.85}
+  .foot-note a{border-bottom:1px dotted currentColor} .foot-note a:hover{color:var(--accent);border-bottom-color:var(--accent)}
+</style>
+</head>
+<body>
+
+<header class="nav" id="topnav">
+  <div class="nav-inner">
+    <a href="/ja/" class="brand" aria-label="Lecturecast">
+      <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="3" y="6" width="14" height="12" rx="2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M17 10l4-2.5v9L17 14" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+      Lecturecast <small>· AgentMesh360</small>
+    </a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#features" class="nav-section">機能</a>
+      <a href="#platforms" class="nav-section">2 プラットフォーム</a>
+      <a href="#how" class="nav-section">使い方</a>
+      <a href="#faq" class="nav-section">FAQ</a>
+      <span class="lang-switch" aria-label="Language">
+        <a class="lang" href="/" hreflang="zh-CN">中</a>
+        <span class="sep"></span>
+        <a class="lang" href="/en/" hreflang="en">EN</a>
+        <span class="sep"></span>
+        <a class="lang lang-active" aria-current="page">日</a>
+        <span class="sep"></span>
+        <a class="lang" href="/ko/" hreflang="ko">한</a>
+      </span>
+      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="nav-cta">GitHub を見る</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <div class="eyebrow"><span class="dot"></span> OPEN SOURCE · 完全ローカル動作</div>
+    <h1 class="display">一つのアイデアから、<em>講座動画を一本</em>。</h1>
+    <p class="lede">
+      Lecturecast は<strong>完全ローカル・オープンソース</strong>の動画制作ワークフローです。テーマをあなたの AI エージェントに渡せば、ローカル環境でパイプライン全体を実行します——脚本作成、配音、レンダリング、そして<strong>B 站横版と小红书縦版を同時出力</strong>、中国語字幕の焼き付けと公開用カバーまで仕上げます。アカウント不要、クラウド不要、無料、Apache 2.0。
+      <span style="display:block;margin-top:8px;font-size:0.9em;color:var(--muted);">（B 站と小红书は中国の主要動画プラットフォーム——それぞれ横向き／縦向き）。利用しない場合でも、両フォーマットが揃って出力されます。）</span>
+    </p>
+    <div class="hero-ctas">
+      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="btn btn-primary">GitHub を見る <span class="arrow">→</span></a>
+      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md" class="btn btn-ghost">ローカルワークフローを見る</a>
+    </div>
+
+    <div class="terminal-frame" aria-label="ローカルにインストールしてエージェントに渡す">
+      <div class="terminal-bar">
+        <div class="lights"><span></span><span></span><span></span></div>
+        <span class="title">~ run-this-locally</span>
+      </div>
+<pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
+<span class="c-prompt">$</span> <span class="c-cmd">lecturecast workflow</span>      <span class="c-dim"># ローカルワークフローの場所を出力し、AI エージェントに渡します</span>
+
+<span class="c-dim"># エージェントは AGENTS.md / docs/LOCAL-WORKFLOW.md に従い、ローカルでエンドツーエンド実行：</span>
+<span class="c-dim"># 脚本 → 配音（edge-tts / MiniMax）→ Remotion レンダリング → ffmpeg 字幕焼き付け → 2 プラットフォーム成片</span></pre>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="wrap why">
+    <div>
+      <div class="kicker">なぜ任せるのか</div>
+      <h2 class="section-title">脚本は AI に書かせられても、<em>成片</em>の作業が本当の難題です。</h2>
+    </div>
+    <div class="why-body">
+      <p>AI に脚本を書かせるのは難しくありません。難しいのはその後——<span class="hi">配音、タイムライン整合、レンダリング、字幕焼き付け、カバー作成、横版と縦版それぞれの調整</span>です。</p>
+      <p>Lecturecast は成片パイプライン全体をあなたの AI エージェントに丸ごと任せます。すべてあなたのマシン上で実行され、エージェントが「テキスト」ではなく「完成した動画」を実際に届けます。</p>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="features">
+  <div class="wrap">
+    <div class="kicker">機能 · すべてローカル動作</div>
+    <h2 class="section-title">一つのテーマから、<em>2 本の成片</em>へ。</h2>
+    <div class="features">
+      <div class="feat">
+        <span class="feat-num">i.</span>
+        <h3>AI による脚本作成</h3>
+        <p>テーマをエージェントに渡すと、構造化された講座脚本——セクション分け、論理的、口語調——を生成します。脚本は承認ゲート：あなたが確認・修正してから制作に進みます。</p>
+      </div>
+      <div class="feat">
+        <span class="feat-num">ii.</span>
+        <h3>ローカル配音と整合</h3>
+        <p>脚本はローカルで自然な音声に変換され、自動的に文ごとに分割、タイムラインに整合されます。長段落は長さ検証＋自動リトライで、音声と映像のズレを防止。デフォルトは無料の Edge TTS、自前 MiniMax への切り替えも可能です。</p>
+      </div>
+      <div class="feat">
+        <span class="feat-num">iii.</span>
+        <h3>2 プラットフォーム同時レンダリング</h3>
+        <p>同じ脚本から、ローカルの Remotion で B 站横版（16:9）と小红书縦版（9:16）を一度に出力。それぞれにレイアウトが最適化され、後から再編集する必要はありません。</p>
+      </div>
+      <div class="feat">
+        <span class="feat-num">iv.</span>
+        <h3>字幕 + カバー</h3>
+        <p>ローカルの ffmpeg が中国語字幕を焼き付け、2 プラットフォーム用のカバーを生成。小红书のコンプライアンスチェックも自動実行——受け取ってすぐ投稿でき、編集ソフトを開く必要はありません。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="platforms">
+  <div class="wrap">
+    <div class="kicker">一度の生成 · 2 つのバージョン</div>
+    <h2 class="section-title">B 站と小红书、<em>それぞれに</em>。</h2>
+    <p class="section-lede">同じテーマ、同じ脚本——Lecturecast は 2 つのアスペクト比を同時に出力し、それぞれに適したレイアウトと字幕で公開可能な形に仕上げます。</p>
+    <div class="platforms">
+      <div class="pf land">
+        <div class="frame">1920 × 1080</div>
+        <h3>B 站横版</h3>
+        <div class="ratio">16 : 9</div>
+        <p>知識解説や長尺動画向け；Remotion のクリーンなレイアウトに字幕焼き付け済み。</p>
+      </div>
+      <div class="pf port">
+        <div class="frame">1080 × 1920</div>
+        <h3>小红书縦版</h3>
+        <div class="ratio">9 : 16</div>
+        <p>スマホ縦向きフィード向け；Remotion の縦版レイアウト＋カバー付き。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="stack">
+  <div class="wrap">
+    <div class="kicker">ローカル 3 点セット依存</div>
+    <h2 class="section-title">すべて<em>あなたのマシン</em>上で。</h2>
+    <p class="section-lede">クラウド worker もリモートレンダラもありません。3 点をインストールすれば、エージェントがローカルでエンドツーエンド実行できます。<code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh</code> が不足を確認します。</p>
+    <div class="stack">
+      <div class="stk">
+        <div class="stk-icon">RENDER</div>
+        <h3>Node + Remotion</h3>
+        <p>コード駆動のアニメシーンで 2 アスペクト比をレンダリング。<code>brew install node</code> 後 <code>npm install</code>。</p>
+      </div>
+      <div class="stk">
+        <div class="stk-icon">VOICE</div>
+        <h3>Python + edge-tts</h3>
+        <p>ローカル配音、文ごとの分割、タイムライン整合。デフォルトは無料 Edge TTS、自前 MiniMax key でグレードアップ可能。</p>
+      </div>
+      <div class="stk">
+        <div class="stk-icon">MUX</div>
+        <h3>ffmpeg（libass 付き）</h3>
+        <p>中国語字幕を焼き付け、成片を合成。<code>brew install ffmpeg</code> で libass 入りビルドが入手できます。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="how">
+  <div class="wrap">
+    <div class="kicker">使い方</div>
+    <h2 class="section-title"><em>エージェント向け</em>に設計。</h2>
+    <p class="section-lede">これはあなたの AI アシスタントに渡すローカルワークフローです。脚本生成後は必ず一旦停止し、あなたの承認・修正を待ってから配音・レンダリングに進みます。</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-n">01</div>
+        <div class="step-body">
+          <h3>CLI をインストール</h3>
+          <p>一行の <code>install.sh</code> で <code>lecturecast</code> CLI とローカルワークフローがインストールされ、<code>lecturecast workflow</code> がワークフローの場所を出力します。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub を見る →</a></p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-n">02</div>
+        <div class="step-body">
+          <h3>AGENTS.md をエージェントに渡す</h3>
+          <p>リポジトリの <code>AGENTS.md</code> をそのまま Claude Code / OpenClaw / Cursor / Codex に貼り付ければ、エージェントはパイプライン全体を指揮する方法を学びます。Claude Code と Codex は組み込み skill も自動ロードします。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/AGENTS.md">AGENTS.md を見る →</a></p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-n">03</div>
+        <div class="step-body">
+          <h3>エージェントがローカルでエンドツーエンド出片</h3>
+          <p>テーマを与え、AI が書いた脚本を確認・修正。承認後、ローカルで自動的に配音、2 プラットフォーム同時レンダリング、字幕焼き付け、カバー作成が走り、数分後に成片 2 本＋カバー 2 枚が作業ディレクトリに揃います。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="faq">
+  <div class="wrap">
+    <div class="kicker">よくある質問</div>
+    <h2 class="section-title">FAQ.</h2>
+    <div class="faq-list">
+      <details class="faq-item">
+        <summary>有料ですか？アカウント登録は必要？</summary>
+        <div class="faq-answer">どちらも不要です。Lecturecast は完全オープンソース（Apache 2.0）のローカルツールで、アカウントもクラウドサービスも key も不要、無料で使えます。すべてあなたのマシン上で処理が完結します。</div>
+      </details>
+      <details class="faq-item">
+        <summary>動画はクラウドにアップロードされますか？</summary>
+        <div class="faq-answer">されません。脚本作成、配音、レンダリング、字幕焼き付けはすべてローカルで動作——リモートレンダリングは不要で、コンテンツがマシンから出ることはありません。</div>
+      </details>
+      <details class="faq-item">
+        <summary>配音は何を使いますか？もっと良い声に変えられますか？</summary>
+        <div class="faq-answer">デフォルトは無料の Edge TTS——すぐ使えて、出片には十分。より暖かい声が欲しい場合は、自前で <a class="link" href="https://www.minimaxi.com">MiniMax</a> key を持ち込めます——これは Lecturecast 提供ではなく、ご自身で minimaxi.com に登録するサードパーティサービスです。key は環境変数 <code>MINIMAX_API_KEY</code> 経由でのみ渡され、ディスクに書き込まれることはありません。</div>
+      </details>
+      <details class="faq-item">
+        <summary>動画は完全自動生成ですか？修正できますか？</summary>
+        <div class="faq-answer">脚本生成後に必ず一旦停止し、あなたの確認と修正を待ってから配音・レンダリングに進みます——内容はあなたが掌握し、AI は制作を担当します。</div>
+      </details>
+      <details class="faq-item">
+        <summary>何をインストールする必要がありますか？</summary>
+        <div class="faq-answer">ローカル 3 点セット：<code>Node</code> + Remotion（レンダリング）、<code>Python</code> + edge-tts（配音）、libass 入り <code>ffmpeg</code>（字幕焼き付け）。<code>install.sh</code> が不足を教えてくれます。macOS なら <code>brew install node ffmpeg</code> で揃います。</div>
+      </details>
+      <details class="faq-item">
+        <summary>どのプラットフォーム向けの成片に対応していますか？</summary>
+        <div class="faq-answer">B 站横版（<code>1920×1080</code>）と小红书縦版（<code>1080×1920</code>）を同時出力。中国語字幕焼き付け済み・カバー生成済みです。</div>
+      </details>
+      <details class="faq-item">
+        <summary>本当にオープンソースですか？</summary>
+        <div class="faq-answer">はい。Apache 2.0。コードはすべて <a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a> にあります。自由にフォーク、改造、issue 登録してください。</div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<footer class="foot">
+  <div class="wrap foot-inner">
+    <div>
+      <a href="/ja/" class="brand">
+        <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="3" y="6" width="14" height="12" rx="2" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M17 10l4-2.5v9L17 14" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+        </svg>
+        Lecturecast
+      </a>
+      <div style="margin-top:8px;font-size:13.5px;color:var(--muted);">AgentMesh エコシステム（<a class="link" href="https://agentmesh360.com" style="font-size:inherit">agentmesh360.com</a>）のオープンソースプロジェクト · Apache 2.0</div>
+      <div class="foot-note">機械翻訳支援によるページです。フィードバックは <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/issues">GitHub issues</a> までどうぞ。</div>
+    </div>
+    <div class="foot-meta">
+      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a>
+      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md">ローカルワークフロー</a>
+      <a href="https://agentmesh360.com">AgentMesh360</a>
+      <span>© 2026</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  (function(){
+    const nav = document.getElementById('topnav');
+    const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 8);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+  })();
+</script>
+
+</body>
+</html>

@@ -1,21 +1,22 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Lecturecast — 把一个想法，变成一条课程视频 · 开源本地工具</title>
-<meta name="description" content="Lecturecast 是 AgentMesh360 生态下的开源本地工具：把一个主题交给你的 AI agent，在本机端到端写稿、配音、渲染，同时产出 B 站横版与小红书竖版，烧好中文字幕、配好封面。完全本地运行、不需账户、免费、Apache 2.0 开源。" />
-<meta property="og:title" content="Lecturecast — 把一个想法，变成一条课程视频" />
-<meta property="og:description" content="开源本地工具：AI 写稿 + 配音 + 双平台成片（B 站 16:9 / 小红书 9:16），全程在你自己的机器上跑。一个主题进，两条成片出。" />
+<title>Lecturecast — Turn one idea into a course video · open-source local tool</title>
+<meta name="description" content="Lecturecast is an open-source local tool in the AgentMesh360 ecosystem: hand a topic to your AI agent, and it writes the script, voices it, and renders it on your own machine — producing both Bilibili landscape and Xiaohongshu portrait versions with burned-in subtitles and covers. Fully local, no account, free, Apache 2.0." />
+<meta property="og:title" content="Lecturecast — Turn one idea into a course video" />
+<meta property="og:description" content="Open-source local tool: AI scripting + voiceover + dual-platform rendering (Bilibili 16:9 / Xiaohongshu 9:16), all on your own machine. One topic in, two finished videos out." />
 <meta property="og:type" content="website" />
-<meta property="og:url" content="https://lecturecast.agentmesh360.com/" />
+<meta property="og:url" content="https://lecturecast.agentmesh360.com/en/" />
 <meta property="og:site_name" content="Lecturecast · AgentMesh360" />
+<meta property="og:locale" content="en_US" />
 <meta name="robots" content="index,follow,max-image-preview:large" />
 <meta name="theme-color" content="#0E8A6E" />
 <meta name="twitter:card" content="summary" />
-<meta name="twitter:title" content="Lecturecast — 开源本地课程视频工作流" />
-<meta name="twitter:description" content="Lecturecast 是开源本地工具：把主题交给 AI agent，在本机完成写稿、配音、渲染、烧字幕，并产出 B 站横版和小红书竖版。" />
-<link rel="canonical" href="https://lecturecast.agentmesh360.com/" />
+<meta name="twitter:title" content="Lecturecast — open-source local course-video workflow" />
+<meta name="twitter:description" content="Lecturecast is an open-source local tool: hand a topic to an AI agent and it produces a finished course video in both Bilibili landscape and Xiaohongshu portrait formats." />
+<link rel="canonical" href="https://lecturecast.agentmesh360.com/en/" />
 <link rel="alternate" type="text/markdown" href="/llms.txt" title="Lecturecast LLMs.txt" />
 <link rel="alternate" hreflang="zh-CN" href="https://lecturecast.agentmesh360.com/" />
 <link rel="alternate" hreflang="en" href="https://lecturecast.agentmesh360.com/en/" />
@@ -38,7 +39,8 @@
       "@type": "SoftwareApplication",
       "@id": "https://lecturecast.agentmesh360.com/#software",
       "name": "Lecturecast",
-      "url": "https://lecturecast.agentmesh360.com/",
+      "url": "https://lecturecast.agentmesh360.com/en/",
+      "inLanguage": "en",
       "codeRepository": "https://github.com/jiyangnan/AgentMesh-Lecturecast",
       "license": "https://www.apache.org/licenses/LICENSE-2.0",
       "applicationCategory": "MultimediaApplication",
@@ -46,41 +48,42 @@
       "operatingSystem": "macOS, Windows, Linux",
       "isAccessibleForFree": true,
       "provider": { "@id": "https://agentmesh360.com/#organization" },
-      "description": "Lecturecast 是 AgentMesh360 生态下的开源本地课程视频工作流，让 AI agent 在本机完成写稿、配音、渲染、烧字幕和双平台出片。",
+      "description": "Lecturecast is an open-source local course-video workflow in the AgentMesh360 ecosystem — an AI agent writes the script, voices it, renders it, burns subtitles, and produces dual-platform videos on the user's machine.",
       "featureList": [
-        "本地 AI 课程讲稿生成",
-        "本地配音与时间轴对齐",
-        "B 站 16:9 横版视频",
-        "小红书 9:16 竖版视频",
-        "中文字幕烧录",
-        "封面生成",
-        "Apache 2.0 开源"
+        "Local AI course-script generation",
+        "Local voiceover and timeline alignment",
+        "Bilibili 16:9 landscape video",
+        "Xiaohongshu 9:16 portrait video",
+        "Chinese subtitle burn-in",
+        "Cover image generation",
+        "Apache 2.0 open source"
       ],
       "offers": {
         "@type": "Offer",
         "price": "0",
-        "priceCurrency": "CNY",
+        "priceCurrency": "USD",
         "availability": "https://schema.org/InStock"
       }
     },
     {
       "@type": "FAQPage",
-      "@id": "https://lecturecast.agentmesh360.com/#faq",
+      "@id": "https://lecturecast.agentmesh360.com/en/#faq",
+      "inLanguage": "en",
       "mainEntity": [
         {
           "@type": "Question",
-          "name": "Lecturecast 需要账户或 API key 吗？",
-          "acceptedAnswer": { "@type": "Answer", "text": "不需要。Lecturecast 是本地开源工具，没有 AgentMesh360 账户、云服务或 key 要求。" }
+          "name": "Does Lecturecast require an account or API key?",
+          "acceptedAnswer": { "@type": "Answer", "text": "No. Lecturecast is a local open-source tool — there is no AgentMesh360 account, no cloud service, and no API key required." }
         },
         {
           "@type": "Question",
-          "name": "Lecturecast 处理过程会上云吗？",
-          "acceptedAnswer": { "@type": "Answer", "text": "不会。Lecturecast 的写稿、配音、渲染、烧字幕和封面生成工作流在用户自己的机器上运行。" }
+          "name": "Does Lecturecast upload anything to the cloud?",
+          "acceptedAnswer": { "@type": "Answer", "text": "No. Scripting, voiceover, rendering, subtitle burn-in, and cover generation all run on the user's own machine." }
         },
         {
           "@type": "Question",
-          "name": "Lecturecast 支持哪些视频平台格式？",
-          "acceptedAnswer": { "@type": "Answer", "text": "Lecturecast 同时产出 B 站横版和小红书竖版，适配 16:9 与 9:16 两种比例。" }
+          "name": "Which video platform formats does Lecturecast support?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Lecturecast produces both Bilibili landscape (16:9) and Xiaohongshu portrait (9:16) at the same time." }
         }
       ]
     }
@@ -90,7 +93,7 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Noto+Serif+SC:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
 <style>
   :root {
@@ -98,8 +101,8 @@
     --muted:#786F66; --rule:#E8DCCD; --accent:#0E8A6E; --accent-ink:#075B49;
     --blue:#2E5BFF; --red:#FF2442; --yellow:#FFD400;
     --code-bg:#0B2D27; --code-fg:#F5EFE5; --code-dim:#A7B7AE; --code-acc:#FFD400;
-    --serif:"Source Serif 4","Noto Serif SC","Songti SC","STSong",Georgia,serif;
-    --sans:"Inter",-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
+    --serif:"Source Serif 4",Georgia,serif;
+    --sans:"Inter",-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;
     --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
     --maxw:1120px; --gutter:clamp(20px,4vw,56px);
   }
@@ -150,7 +153,7 @@
   .terminal-bar .title{font-family:var(--mono);font-size:12px;color:var(--code-dim);margin-left:8px}
   pre.code{margin:0;padding:22px 24px 26px;font-family:var(--mono);font-size:13.5px;line-height:1.85;overflow-x:auto;-webkit-overflow-scrolling:touch}
   pre.code .c-prompt{color:var(--code-acc);user-select:none} pre.code .c-cmd{color:var(--code-fg)}
-  pre.code .c-flag{color:var(--blue)} pre.code .c-str{color:var(--yellow)} pre.code .c-dim{color:var(--code-dim)}
+  pre.code .c-dim{color:var(--code-dim)}
 
   section.block{padding:clamp(72px,10vw,128px) 0;border-top:1px solid var(--rule)}
   .kicker{font-size:12.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);font-weight:500;margin-bottom:28px;display:flex;align-items:center;gap:12px}
@@ -171,7 +174,6 @@
   .feat p{margin:0;font-size:15.5px;line-height:1.6;color:var(--ink-soft);text-wrap:pretty}
   @media(max-width:820px){.features{grid-template-columns:1fr}}
 
-  /* dual-platform showcase */
   .platforms{display:grid;grid-template-columns:1fr 1fr;gap:clamp(20px,3vw,32px);margin-top:clamp(48px,6vw,72px)}
   @media(max-width:680px){.platforms{grid-template-columns:1fr}}
   .pf{background:var(--surface);border:1px solid var(--rule);border-radius:16px;padding:clamp(24px,3vw,36px);display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center}
@@ -182,7 +184,6 @@
   .pf p{margin:0;font-size:14.5px;color:var(--ink-soft);line-height:1.55}
   .pf .ratio{font-family:var(--mono);font-size:12px;color:var(--accent-ink)}
 
-  /* local stack triplet */
   .stack{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(20px,3vw,32px);margin-top:clamp(48px,6vw,72px)}
   @media(max-width:680px){.stack{grid-template-columns:1fr}}
   .stk{background:var(--surface);border:1px solid var(--rule);border-radius:14px;padding:clamp(22px,2.6vw,30px)}
@@ -215,13 +216,15 @@
   footer.foot{border-top:1px solid var(--rule);padding:56px 0 72px;font-size:14px;color:var(--muted)}
   .foot-inner{display:flex;flex-wrap:wrap;justify-content:space-between;gap:24px;align-items:flex-end}
   .foot .brand{font-size:16px} .foot-meta{display:flex;flex-wrap:wrap;gap:24px} .foot-meta a:hover{color:var(--accent)}
+  .foot-note{margin-top:14px;font-size:12px;color:var(--muted);opacity:0.85;font-style:italic}
+  .foot-note a{border-bottom:1px dotted currentColor} .foot-note a:hover{color:var(--accent);border-bottom-color:var(--accent)}
 </style>
 </head>
 <body>
 
 <header class="nav" id="topnav">
   <div class="nav-inner">
-    <a href="#" class="brand" aria-label="Lecturecast">
+    <a href="/en/" class="brand" aria-label="Lecturecast">
       <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <rect x="3" y="6" width="14" height="12" rx="2" stroke="currentColor" stroke-width="1.4"/>
         <path d="M17 10l4-2.5v9L17 14" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
@@ -229,46 +232,47 @@
       Lecturecast <small>· AgentMesh360</small>
     </a>
     <nav class="nav-links" aria-label="Primary">
-      <a href="#features" class="nav-section">能力</a>
-      <a href="#platforms" class="nav-section">双平台</a>
-      <a href="#how" class="nav-section">怎么用</a>
+      <a href="#features" class="nav-section">Features</a>
+      <a href="#platforms" class="nav-section">Platforms</a>
+      <a href="#how" class="nav-section">How</a>
       <a href="#faq" class="nav-section">FAQ</a>
       <span class="lang-switch" aria-label="Language">
-        <a class="lang lang-active" aria-current="page">中</a>
+        <a class="lang" href="/" hreflang="zh-CN">中</a>
         <span class="sep"></span>
-        <a class="lang" href="/en/" hreflang="en">EN</a>
+        <a class="lang lang-active" aria-current="page">EN</a>
         <span class="sep"></span>
         <a class="lang" href="/ja/" hreflang="ja">日</a>
         <span class="sep"></span>
         <a class="lang" href="/ko/" hreflang="ko">한</a>
       </span>
-      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="nav-cta">看 GitHub</a>
+      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="nav-cta">See on GitHub</a>
     </nav>
   </div>
 </header>
 
 <section class="hero">
   <div class="wrap">
-    <div class="eyebrow"><span class="dot"></span> OPEN SOURCE · 完全本地运行</div>
-    <h1 class="display">把一个想法，<em>变成</em>一条课程视频。</h1>
+    <div class="eyebrow"><span class="dot"></span> OPEN SOURCE · RUNS FULLY LOCAL</div>
+    <h1 class="display">Turn one idea into <em>a course video</em>.</h1>
     <p class="lede">
-      Lecturecast 是一套<strong>完全本地、开源</strong>的出片工作流：把一个主题交给你的 AI agent，它在你自己的机器上跑完整条流水线——写讲稿、配音、渲染，<strong>同时产出 B 站横版和小红书竖版</strong>，烧好中文字幕、配好封面。不需账户、不上云、免费、Apache 2.0 开源。
+      Lecturecast is a <strong>fully local, open-source</strong> video-production workflow: hand a topic to your AI agent, and it runs the entire pipeline on your own machine — writing the script, voicing it, rendering it, and producing <strong>both Bilibili landscape and Xiaohongshu portrait</strong> videos at once, with burned-in Chinese subtitles and ready-to-post covers. No account, no cloud, free, Apache 2.0.
+      <span style="display:block;margin-top:8px;font-size:0.9em;color:var(--muted);">(Bilibili and Xiaohongshu are the major Chinese video platforms — landscape and portrait respectively. The pipeline produces both formats whether or not you publish to them.)</span>
     </p>
     <div class="hero-ctas">
-      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="btn btn-primary">看 GitHub <span class="arrow">→</span></a>
-      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md" class="btn btn-ghost">看本地工作流</a>
+      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="btn btn-primary">See on GitHub <span class="arrow">→</span></a>
+      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md" class="btn btn-ghost">See the local workflow</a>
     </div>
 
-    <div class="terminal-frame" aria-label="在本地装好，交给你的 agent">
+    <div class="terminal-frame" aria-label="Install locally, then let your agent drive it">
       <div class="terminal-bar">
         <div class="lights"><span></span><span></span><span></span></div>
         <span class="title">~ run-this-locally</span>
       </div>
 <pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
-<span class="c-prompt">$</span> <span class="c-cmd">lecturecast workflow</span>      <span class="c-dim"># 打印本地工作流位置，交给你的 AI agent</span>
+<span class="c-prompt">$</span> <span class="c-cmd">lecturecast workflow</span>      <span class="c-dim"># prints the path of the local workflow, hand it to your AI agent</span>
 
-<span class="c-dim"># 你的 agent 按 AGENTS.md / docs/LOCAL-WORKFLOW.md 在本地端到端跑：</span>
-<span class="c-dim"># 写稿 → 配音（edge-tts / MiniMax）→ Remotion 渲染 → ffmpeg 烧字幕 → 双平台成片</span></pre>
+<span class="c-dim"># Your agent follows AGENTS.md / docs/LOCAL-WORKFLOW.md and runs locally end-to-end:</span>
+<span class="c-dim"># script -> voiceover (edge-tts / MiniMax) -> Remotion render -> ffmpeg subtitle burn-in -> dual-platform mp4s</span></pre>
     </div>
   </div>
 </section>
@@ -276,40 +280,40 @@
 <section class="block">
   <div class="wrap why">
     <div>
-      <div class="kicker">为什么不自己剪</div>
-      <h2 class="section-title">写稿能交给 AI，<em>出片</em>才是真麻烦。</h2>
+      <div class="kicker">Why hand it off</div>
+      <h2 class="section-title">AI can write a script. <em>Production</em> is the actual pain.</h2>
     </div>
     <div class="why-body">
-      <p>让 AI 写个脚本不难，难的是后面——<span class="hi">配音、对轴、渲染、烧字幕、做封面、还要横竖两版各适配一次</span>。</p>
-      <p>Lecturecast 把这条出片流水线整个交到你的 AI agent 手里，全程在你自己的机器上跑，让它真的能交付成片，而不是只给你一段文字。</p>
+      <p>Getting an AI to write a script is easy. What's hard is everything after — <span class="hi">voiceover, timeline alignment, rendering, subtitle burn-in, cover design, and producing landscape + portrait versions each time</span>.</p>
+      <p>Lecturecast hands the whole production pipeline to your AI agent. It runs on your own machine end-to-end, so the agent actually delivers finished videos — not just text.</p>
     </div>
   </div>
 </section>
 
 <section class="block" id="features">
   <div class="wrap">
-    <div class="kicker">产品能力 · 全在本地跑</div>
-    <h2 class="section-title">从一句主题，到<em>两条成片</em>。</h2>
+    <div class="kicker">Capabilities · all local</div>
+    <h2 class="section-title">From one topic to <em>two finished videos</em>.</h2>
     <div class="features">
       <div class="feat">
         <span class="feat-num">i.</span>
-        <h3>AI 写讲稿</h3>
-        <p>把主题交给你的 agent，它生成结构化课程讲稿——分节、有逻辑、口语化。脚本是审批关卡，先给你确认和修改，再进入制作。</p>
+        <h3>AI-written script</h3>
+        <p>Hand the topic to your agent and it produces a structured course script — sectioned, logical, in spoken language. The script is the approval gate: you confirm or edit before production starts.</p>
       </div>
       <div class="feat">
         <span class="feat-num">ii.</span>
-        <h3>本地配音对轴</h3>
-        <p>讲稿在本机转成自然语音，自动切句、对齐时间轴，长段落自动校验时长重试，不会出现声画错位。默认 Edge TTS 免费，可选自带 MiniMax。</p>
+        <h3>Local voiceover and alignment</h3>
+        <p>The script becomes natural speech on your machine, auto-segmented and time-aligned. Long segments are length-checked and retried automatically so audio and video stay in sync. Edge TTS is free by default; MiniMax is optional via your own key.</p>
       </div>
       <div class="feat">
         <span class="feat-num">iii.</span>
-        <h3>双平台渲染</h3>
-        <p>同一份内容，用本机的 Remotion 一次产出 B 站横版（16:9）和小红书竖版（9:16），各自适配排版，不用你二次剪辑。</p>
+        <h3>Dual-platform rendering</h3>
+        <p>One script, rendered locally with Remotion into both Bilibili landscape (16:9) and Xiaohongshu portrait (9:16), each with its own layout. No second pass of editing required.</p>
       </div>
       <div class="feat">
         <span class="feat-num">iv.</span>
-        <h3>字幕 + 封面</h3>
-        <p>本机 ffmpeg 自动烧录中文字幕、生成双平台封面，并跑一遍小红书合规检查。拿到就能直接发，不用再开剪辑软件。</p>
+        <h3>Subtitles + covers</h3>
+        <p>Local ffmpeg burns in Chinese subtitles and generates dual covers. A Xiaohongshu compliance check runs automatically so you can post immediately, no editing software needed.</p>
       </div>
     </div>
   </div>
@@ -317,21 +321,21 @@
 
 <section class="block" id="platforms">
   <div class="wrap">
-    <div class="kicker">一次生成 · 双版本</div>
-    <h2 class="section-title">B 站和小红书，<em>各发各的</em>。</h2>
-    <p class="section-lede">同一个主题、同一份讲稿，在本地一次跑完同时产出两个比例的成片，分别适配横屏与竖屏的排版和字幕，直接发布即可。</p>
+    <div class="kicker">One generation · two versions</div>
+    <h2 class="section-title">Bilibili and Xiaohongshu, <em>each their own</em>.</h2>
+    <p class="section-lede">One topic, one script — Lecturecast produces both aspect ratios at once with platform-appropriate layout and subtitles, ready to publish.</p>
     <div class="platforms">
       <div class="pf land">
         <div class="frame">1920 × 1080</div>
-        <h3>B 站横版</h3>
+        <h3>Bilibili landscape</h3>
         <div class="ratio">16 : 9</div>
-        <p>适合知识讲解、长视频；Remotion 渲染的清晰排版 + 烧录字幕。</p>
+        <p>For knowledge explainers and long videos; clean Remotion layout with burned-in subtitles.</p>
       </div>
       <div class="pf port">
         <div class="frame">1080 × 1920</div>
-        <h3>小红书竖版</h3>
+        <h3>Xiaohongshu portrait</h3>
         <div class="ratio">9 : 16</div>
-        <p>适合手机竖屏、信息流；Remotion 渲染的竖版排版 + 封面。</p>
+        <p>For phone vertical feeds; Remotion portrait layout plus a matching cover.</p>
       </div>
     </div>
   </div>
@@ -339,24 +343,24 @@
 
 <section class="block" id="stack">
   <div class="wrap">
-    <div class="kicker">本地三件套依赖</div>
-    <h2 class="section-title">全部跑在<em>你自己的机器</em>上。</h2>
-    <p class="section-lede">没有云端 worker，没有远程渲染。装好这三样，你的 agent 就能在本机端到端出片。<code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh</code> 会帮你检查缺哪样。</p>
+    <div class="kicker">Local three-piece stack</div>
+    <h2 class="section-title">All on <em>your own machine</em>.</h2>
+    <p class="section-lede">No cloud workers, no remote renderer. Install these three, and your agent can run end-to-end on this machine. <code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh</code> checks what's missing.</p>
     <div class="stack">
       <div class="stk">
         <div class="stk-icon">RENDER</div>
         <h3>Node + Remotion</h3>
-        <p>用代码驱动的动画场景渲染双平台画面。<code>brew install node</code> 后 <code>npm install</code> 即可。</p>
+        <p>Code-driven animated scenes that render both aspect ratios. <code>brew install node</code> then <code>npm install</code>.</p>
       </div>
       <div class="stk">
         <div class="stk-icon">VOICE</div>
         <h3>Python + edge-tts</h3>
-        <p>本地配音、切句、对轴。默认免费 Edge TTS；想升级音色就自带 MiniMax key。</p>
+        <p>Local voiceover, sentence segmentation, and timing alignment. Free Edge TTS by default; upgrade with your own MiniMax key.</p>
       </div>
       <div class="stk">
         <div class="stk-icon">MUX</div>
-        <h3>ffmpeg（带 libass）</h3>
-        <p>烧录中文字幕、合成成片。<code>brew install ffmpeg</code> 一行装好带 libass 的版本。</p>
+        <h3>ffmpeg (with libass)</h3>
+        <p>Burns Chinese subtitles and stitches the final video. <code>brew install ffmpeg</code> gives you a libass-enabled build.</p>
       </div>
     </div>
   </div>
@@ -364,29 +368,29 @@
 
 <section class="block" id="how">
   <div class="wrap">
-    <div class="kicker">怎么用</div>
-    <h2 class="section-title">设计为 <em>agent-friendly</em>。</h2>
-    <p class="section-lede">核心是一套本地工作流，把它交给你的 AI 助理。脚本生成后会停下来等你确认，确认满意才进入配音和渲染。</p>
+    <div class="kicker">How to use</div>
+    <h2 class="section-title">Designed to be <em>agent-friendly</em>.</h2>
+    <p class="section-lede">Lecturecast is a local workflow you hand to your AI assistant. The script always pauses for your confirmation before the production stage runs.</p>
     <div class="steps">
       <div class="step">
         <div class="step-n">01</div>
         <div class="step-body">
-          <h3>装上 CLI</h3>
-          <p>一行 <code>install.sh</code> 装好 <code>lecturecast</code> CLI 和本地工作流；<code>lecturecast workflow</code> 会打印工作流文件的位置。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">看 GitHub →</a></p>
+          <h3>Install the CLI</h3>
+          <p>One <code>install.sh</code> installs the <code>lecturecast</code> CLI and the local workflow files; <code>lecturecast workflow</code> prints where the workflow lives.<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">See on GitHub →</a></p>
         </div>
       </div>
       <div class="step">
         <div class="step-n">02</div>
         <div class="step-body">
-          <h3>把 AGENTS.md 整段交给你的 agent</h3>
-          <p>把仓库里的 <code>AGENTS.md</code> 整段贴给你的 Claude Code / OpenClaw / Cursor / Codex，它就知道如何当导演驱动整条流水线。Claude Code / Codex 还会自动加载内置 skill。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/AGENTS.md">看 AGENTS.md →</a></p>
+          <h3>Hand AGENTS.md to your agent</h3>
+          <p>Paste the repo's <code>AGENTS.md</code> into your Claude Code / OpenClaw / Cursor / Codex — it then knows how to direct the entire pipeline. Claude Code and Codex also auto-load a built-in skill.<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/AGENTS.md">See AGENTS.md →</a></p>
         </div>
       </div>
       <div class="step">
         <div class="step-n">03</div>
         <div class="step-body">
-          <h3>agent 在本地端到端出片</h3>
-          <p>给一个主题，先看 AI 写的讲稿、改到满意；确认后在本机自动配音、双平台渲染、烧字幕、做封面，几分钟后两条成片 + 两张封面落在你的工作目录里。</p>
+          <h3>Agent runs the full pipeline locally</h3>
+          <p>Give it a topic, review the AI-written script and edit until it's right; then it voices, renders both platforms, burns subtitles, and produces covers locally. A few minutes later, two finished videos and two covers land in your working directory.</p>
         </div>
       </div>
     </div>
@@ -395,36 +399,36 @@
 
 <section class="block" id="faq">
   <div class="wrap">
-    <div class="kicker">常见问题</div>
+    <div class="kicker">FAQ</div>
     <h2 class="section-title">FAQ.</h2>
     <div class="faq-list">
       <details class="faq-item">
-        <summary>要钱吗？要注册账户吗？</summary>
-        <div class="faq-answer">都不要。Lecturecast 是完全开源（Apache 2.0）的本地工具，没有账户、没有云服务、没有 key，免费使用。所有处理都在你自己的机器上完成。</div>
+        <summary>Does it cost anything? Do I need an account?</summary>
+        <div class="faq-answer">Neither. Lecturecast is fully open source (Apache 2.0) and runs locally — no account, no cloud, no API key, free to use. Everything happens on your own machine.</div>
       </details>
       <details class="faq-item">
-        <summary>视频会上传到云端吗？</summary>
-        <div class="faq-answer">不会。写稿、配音、渲染、烧字幕全程在本机跑，不需要联网渲染，你的内容不会离开你的电脑。</div>
+        <summary>Does the video get uploaded to the cloud?</summary>
+        <div class="faq-answer">No. Scripting, voicing, rendering, and subtitle burn-in all run locally — no remote render is needed; your content never leaves your computer.</div>
       </details>
       <details class="faq-item">
-        <summary>配音用什么？能换更好的音色吗？</summary>
-        <div class="faq-answer">默认用免费的 Edge TTS，开箱即用、足够出片。如果想要更暖的音色，可以自带（BYOK）一个 <a class="link" href="https://www.minimaxi.com">MiniMax</a> key —— 那是你自己在 minimaxi.com 注册的第三方服务，不是 Lecturecast 提供的 key，只通过环境变量 <code>MINIMAX_API_KEY</code> 传入、绝不写入磁盘。</div>
+        <summary>What does the voiceover use? Can I get a richer voice?</summary>
+        <div class="faq-answer">By default it uses the free Edge TTS — works out of the box and is good enough to ship. For a warmer voice you can bring your own <a class="link" href="https://www.minimaxi.com">MiniMax</a> key — that's a third-party service you register for yourself, not provided by Lecturecast. The key is passed via the <code>MINIMAX_API_KEY</code> environment variable and is never written to disk.</div>
       </details>
       <details class="faq-item">
-        <summary>视频是全自动生成的吗？我能改吗？</summary>
-        <div class="faq-answer">脚本会先给你确认和修改（审批关卡），满意后才进入配音和渲染——你掌控内容，AI 负责出片。</div>
+        <summary>Are the videos generated fully automatically? Can I edit?</summary>
+        <div class="faq-answer">The script always pauses for your confirmation and edits before production starts. You own the content; the AI handles the production.</div>
       </details>
       <details class="faq-item">
-        <summary>需要装什么？</summary>
-        <div class="faq-answer">本地三件套：<code>Node</code> + Remotion（渲染）、<code>Python</code> + edge-tts（配音）、<code>ffmpeg</code> 带 libass（烧字幕）。<code>install.sh</code> 会帮你检查缺哪样，macOS 用 <code>brew install node ffmpeg</code> 即可。</div>
+        <summary>What do I need to install?</summary>
+        <div class="faq-answer">Three local pieces: <code>Node</code> + Remotion (render), <code>Python</code> + edge-tts (voiceover), and <code>ffmpeg</code> with libass (subtitle burn-in). <code>install.sh</code> tells you what's missing; on macOS, <code>brew install node ffmpeg</code> covers it.</div>
       </details>
       <details class="faq-item">
-        <summary>支持哪些平台的成片？</summary>
-        <div class="faq-answer">一次产出 B 站横版（<code>1920×1080</code>）和小红书竖版（<code>1080×1920</code>）两个版本，已烧录中文字幕并生成封面。</div>
+        <summary>Which platforms are the outputs for?</summary>
+        <div class="faq-answer">Both Bilibili landscape (<code>1920×1080</code>) and Xiaohongshu portrait (<code>1080×1920</code>) at once, both with burned-in subtitles and a generated cover.</div>
       </details>
       <details class="faq-item">
-        <summary>真的开源吗？</summary>
-        <div class="faq-answer">是。整套工具 Apache 2.0 开源，代码全在 <a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a>，欢迎自取、改造、提 issue。</div>
+        <summary>Is it actually open source?</summary>
+        <div class="faq-answer">Yes. Apache 2.0. All the code is on <a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a> — fork, modify, file issues.</div>
       </details>
     </div>
   </div>
@@ -433,18 +437,19 @@
 <footer class="foot">
   <div class="wrap foot-inner">
     <div>
-      <a href="#" class="brand">
+      <a href="/en/" class="brand">
         <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <rect x="3" y="6" width="14" height="12" rx="2" stroke="currentColor" stroke-width="1.4"/>
           <path d="M17 10l4-2.5v9L17 14" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
         </svg>
         Lecturecast
       </a>
-      <div style="margin-top:8px;font-size:13.5px;color:var(--muted);">AgentMesh 生态（<a class="link" href="https://agentmesh360.com" style="font-size:inherit">agentmesh360.com</a>）下的开源项目 · Apache 2.0</div>
+      <div style="margin-top:8px;font-size:13.5px;color:var(--muted);">An open-source project in the AgentMesh ecosystem (<a class="link" href="https://agentmesh360.com" style="font-size:inherit">agentmesh360.com</a>) · Apache 2.0</div>
+      <div class="foot-note">Machine-assisted translation. Feedback welcome via <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/issues">GitHub issues</a>.</div>
     </div>
     <div class="foot-meta">
       <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a>
-      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md">本地工作流</a>
+      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md">Local workflow</a>
       <a href="https://agentmesh360.com">AgentMesh360</a>
       <span>© 2026</span>
     </div>
