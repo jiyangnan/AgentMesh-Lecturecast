@@ -17,13 +17,15 @@ Website: **[lecturecast.agentmesh360.com](https://lecturecast.agentmesh360.com)*
 
 <sub>↑ Same script, two visual systems. Left: Bilibili 1920×1080. Right: Xiaohongshu 1080×1920. Played at 12× speed — actual length ~5:21.</sub>
 
-**Everything is local.** There is no cloud service, no account, and no API key. Your agent acts as the director and runs the whole pipeline on your machine using the bundled `templates/`:
+**Community stays fully local.** It needs no account or LectureCast API key. Your agent can run the whole pipeline on your machine using the bundled `templates/`:
 
 - **Remotion** (Node) renders the animated scenes for both aspect ratios.
 - **edge-tts** (Python) does the voiceover — free by default, no setup.
 - **ffmpeg** burns subtitles and stitches audio + video.
 
 **Core loop**: topic → 7-section draft script → your approval → voiceover + scenes + rendering → finished mp4s + covers, all on your machine.
+
+**Director is optional.** It adds structured creative choices and a paid, signed declarative ProductionManifest. It receives only a bounded source summary, your stable choice IDs, the Brief and client capabilities. Original media, voice, subtitles, editing, Remotion, ffmpeg and all outputs remain local.
 
 **Driving this from an AI agent?** Start with **[AGENTS.md](AGENTS.md)** and **[docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)** — the complete, end-to-end how-to for producing a video locally.
 
@@ -62,6 +64,16 @@ lecturecast workflow   # shows where the local workflow lives
 lecturecast version    # installed version
 ```
 
+Optional Director commands use the same local project across Codex, Claude Code and OpenClaw:
+
+```bash
+lecturecast project init ./my-video --name "My video" --json
+lecturecast director start ./my-video --source source-summary.json --adapter codex --json
+lecturecast director next ./my-video --json
+```
+
+Set the credential with the hidden `lecturecast auth login` prompt (or `LECTURECAST_API_KEY`) and set `LECTURECAST_DIRECTOR_URL`. The API key is never written to the project. Run `director generate` only after approving the Brief and the fixed credit deduction.
+
 The real work happens when your AI agent follows the local workflow. In your agent chat:
 
 > 做一条关于 RAG 工作原理的 5 分钟课程视频
@@ -97,11 +109,12 @@ install, the full local workflow, BYOK, and troubleshooting.
 
 ## Use it from your AI agent
 
-Lecturecast ships with an agent skill at `skills/claude-code/SKILL.md`. Drop a symlink:
+The installer registers a host-specific Skill only when that agent's Skill directory already exists. It never overwrites a custom `lecturecast` Skill. Manual links are:
 
 ```bash
 ln -s "$(pwd)/skills/claude-code" ~/.claude/skills/lecturecast
-ln -s "$(pwd)/skills/claude-code" ~/.codex/skills/lecturecast
+ln -s "$(pwd)/skills/codex" ~/.codex/skills/lecturecast
+ln -s "$(pwd)/skills/openclaw" ~/.openclaw/skills/lecturecast
 ```
 
 Then in your agent chat:
@@ -114,7 +127,8 @@ The agent reads the runbook and drives the local pipeline to completion.
 
 ## Privacy
 
-- **Everything runs and stays on your machine.** Audio, rendered mp4s, and covers are produced locally — nothing is uploaded.
+- **Community sends nothing to a LectureCast service.** Audio, rendered mp4s, covers and original media remain local.
+- If you opt into Director, only the bounded summary, stable choices, Brief and capability metadata go to the Director service. Original media, TTS files, local paths and rendered outputs are not uploaded.
 - If you opt into the MiniMax voice (BYOK), your topic + script text are sent to your own MiniMax account over HTTPS for synthesis. The default Edge voice runs without any third-party account.
 - No tracking, no telemetry.
 

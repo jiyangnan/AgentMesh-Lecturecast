@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from .commands.auth import app as auth_app
+from .commands.director import app as director_app
 from .commands.doctor import doctor
 from .commands.manifest import app as manifest_app
 from .commands.project import app as project_app
@@ -18,6 +19,7 @@ from .commands.project import app as project_app
 app = typer.Typer(no_args_is_help=True, add_completion=False, rich_markup_mode="rich")
 console = Console()
 app.add_typer(auth_app, name="auth", help="Manage the optional Director API credential.")
+app.add_typer(director_app, name="director", help="Use the optional cloud creative Director.")
 app.add_typer(project_app, name="project", help="Create and resume durable local projects.")
 app.add_typer(manifest_app, name="manifest", help="Inspect and verify signed manifests.")
 app.command()(doctor)

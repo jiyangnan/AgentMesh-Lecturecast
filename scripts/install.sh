@@ -6,6 +6,13 @@ REPO="${LECTURECAST_REPO:-https://github.com/jiyangnan/AgentMesh-Lecturecast.git
 BRANCH="${LECTURECAST_BRANCH:-main}"
 INSTALL_DIR="${LECTURECAST_DIR:-$HOME/.lecturecast/app}"
 
+case "$INSTALL_DIR" in
+  ""|"/"|"$HOME")
+    printf 'unsafe LECTURECAST_DIR: %s\n' "$INSTALL_DIR" >&2
+    exit 1
+    ;;
+esac
+
 bold() { printf "\033[1m%s\033[0m\n" "$*"; }
 ok()   { printf "  \033[32m✓\033[0m %s\n" "$*"; }
 warn() { printf "  \033[33m⚠\033[0m %s\n" "$*"; }
@@ -32,8 +39,11 @@ if [ -d "$INSTALL_DIR/.git" ]; then
   git -C "$INSTALL_DIR" fetch --quiet origin "$BRANCH"
   git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH" --quiet
 else
+  if [ -e "$INSTALL_DIR" ]; then
+    err "$INSTALL_DIR exists but is not a LectureCast git checkout; left unchanged"
+    exit 1
+  fi
   ok "cloning to $INSTALL_DIR"
-  rm -rf "$INSTALL_DIR"
   mkdir -p "$(dirname "$INSTALL_DIR")"
   git clone --quiet --depth 1 --branch "$BRANCH" "$REPO" "$INSTALL_DIR"
 fi
@@ -44,7 +54,9 @@ if [ ! -d "$VENV" ]; then
   python3 -m venv "$VENV"
   ok "venv created"
 fi
-"$VENV/bin/pip" install --quiet --upgrade pip
+if [ "${LECTURECAST_SKIP_PIP_UPGRADE:-0}" != "1" ]; then
+  "$VENV/bin/pip" install --quiet --upgrade pip
+fi
 "$VENV/bin/pip" install --quiet -e "$INSTALL_DIR"
 ok "lecturecast package installed"
 
@@ -57,6 +69,9 @@ exec "$VENV/bin/lecturecast" "\$@"
 EOF
 chmod +x "$SHIM_DIR/lecturecast"
 ok "shim at $SHIM_DIR/lecturecast"
+
+# --- host-specific skills; never create host dirs or overwrite custom skills ---
+bash "$INSTALL_DIR/scripts/manage_adapters.sh" install
 
 # --- PATH hint ---
 case ":$PATH:" in
@@ -71,7 +86,8 @@ esac
 echo
 bold "Installed. Next:"
 echo "    lecturecast workflow      # where the local workflow lives"
+echo "    lecturecast project resume <project-path> --json"
 echo
-echo "Lecturecast runs fully locally and is driven by an AI agent."
-echo "Read the runbook:  AGENTS.md  +  docs/LOCAL-WORKFLOW.md"
-echo "Then tell your agent:  做一条关于 RAG 工作原理的 5 分钟课程视频"
+echo "Community remains fully local. Director is optional; media and rendering stay local."
+echo "If this agent session started before installation, open a new session and paste:"
+echo "    请读取 LectureCast Skill，并从项目路径 <project-path> 继续。"

@@ -1,10 +1,11 @@
 # AGENTS.md — driving Lecturecast as an AI agent
 
 You are an AI agent (Claude Code / OpenClaw / Cursor / Codex …) running Lecturecast
-on behalf of your human. Lecturecast is **fully local and open source** — there is
-no cloud service, no account, and no API key. You are the director, and everything
-runs on this machine. This file tells you **how to produce the video, what to
-install, and what to ask your human for** — so you don't get stuck.
+on behalf of your human. **LectureCast Community is fully local and open source**:
+no account and no LectureCast API key. The optional **Director** route can provide
+cloud creative decisions and a signed declarative Manifest, while raw media,
+voice, editing and rendering still remain on this machine. This file tells you
+how to produce the video, what to install, and what to ask your human for.
 
 Lecturecast turns one topic into a finished 5-minute course video in **both**
 Bilibili 16:9 and Xiaohongshu 9:16 (script → voiceover → animated scenes → burned
@@ -31,6 +32,20 @@ human gives you their own `MINIMAX_API_KEY` (see [Voiceover & BYOK](#voiceover--
 
 Everything runs on this machine. Two finished videos + two covers land in your
 working dir.
+
+## Optional Director route
+
+Use Director only when the user wants guided choices and explicitly accepts the
+paid Manifest step. Follow [skills/shared/director-workflow.md](skills/shared/director-workflow.md).
+Use the host-specific Skill for native choices:
+
+- [Codex](skills/codex/SKILL.md)
+- [Claude Code](skills/claude-code/SKILL.md)
+- [OpenClaw](skills/openclaw/SKILL.md)
+
+The local project, not conversation history, is the durable state source. Never
+upload original media, never put `LECTURECAST_API_KEY` in arguments or files, and
+never create a second generation ID after a timeout.
 
 ## Voiceover & BYOK — ask your human for a MiniMax key to upgrade the voice
 
@@ -73,4 +88,4 @@ working dir.
 
 - Local pipeline (full): [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)
 - Human-facing docs: [README.md](README.md) · [中文](README.zh.md)
-- Skill (auto-loaded by Claude Code / Codex): [skills/claude-code/SKILL.md](skills/claude-code/SKILL.md)
+- Agent Skills: [Codex](skills/codex/SKILL.md) · [Claude Code](skills/claude-code/SKILL.md) · [OpenClaw](skills/openclaw/SKILL.md)

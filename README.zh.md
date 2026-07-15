@@ -17,13 +17,15 @@
 
 <sub>↑ 同一份脚本，两套视觉系统。左：B 站 1920×1080。右：小红书 1080×1920。12 倍速播放，原片各 ~5:21。</sub>
 
-**全程本地。** 没有云端服务、没有账户、没有 API key。你的 agent 当导演，用仓库自带的 `templates/` 在你本机跑完整条流水线：
+**Community 全程本地。** 不需要账户，也不需要 LectureCast API Key。你的 agent 可以用仓库自带的 `templates/` 在本机跑完整条流水线：
 
 - **Remotion**（Node）渲染两个比例的动画场景。
 - **edge-tts**（Python）配音——默认免费、零配置。
 - **ffmpeg** 烧字幕、拼接音视频。
 
 **核心流程**：你给主题 → 起 7 段草稿脚本 → 你审批 → 配音 + 场景 + 渲染 + 烧字幕 + 封面 → 成片 mp4 + 封面全部落到你本机。
+
+**Director 是可选增值路线。** 它提供结构化创作选择和付 credit 的签名声明式 ProductionManifest，只接收受限的素材摘要、稳定选项 ID、Brief 与客户端能力。原始媒体、配音、字幕、编辑、Remotion、ffmpeg 与所有成片仍留在本机。
 
 **用 AI agent 驱动？** 先看 **[AGENTS.md](AGENTS.md)** 和 **[docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)**——一条完整、端到端的本地出片指南。
 
@@ -62,6 +64,16 @@ lecturecast workflow   # 本地工作流在哪
 lecturecast version    # 当前版本
 ```
 
+可选 Director 在 Codex、Claude Code、OpenClaw 之间共享同一个本地项目：
+
+```bash
+lecturecast project init ./my-video --name "我的视频" --json
+lecturecast director start ./my-video --source source-summary.json --adapter codex --json
+lecturecast director next ./my-video --json
+```
+
+用隐藏输入的 `lecturecast auth login`（或 `LECTURECAST_API_KEY`）配置凭证，并设置 `LECTURECAST_DIRECTOR_URL`。API Key 不会写入项目。只有在确认 Brief，并明确同意下一步扣固定 credit 后才运行 `director generate`。
+
 真正干活的是你的 AI agent 跑本地工作流。跟 agent 说：
 
 > 做一条关于 RAG 工作原理的 5 分钟课程视频
@@ -96,11 +108,12 @@ key 只留在你的环境变量里，出错自动回退免费的 Edge 音色。
 
 ## 让你的 AI agent 来调
 
-仓库自带 agent skill，路径 `skills/claude-code/SKILL.md`。建个软链接：
+安装器只会为已经存在的 Agent Skill 目录注册对应 Skill，遇到用户自定义的同名 Skill 会跳过、不覆盖。手动链接方式：
 
 ```bash
 ln -s "$(pwd)/skills/claude-code" ~/.claude/skills/lecturecast
-ln -s "$(pwd)/skills/claude-code" ~/.codex/skills/lecturecast
+ln -s "$(pwd)/skills/codex" ~/.codex/skills/lecturecast
+ln -s "$(pwd)/skills/openclaw" ~/.openclaw/skills/lecturecast
 ```
 
 然后跟 agent 说：
@@ -113,7 +126,8 @@ Agent 会读 runbook 并驱动本地流水线跑到完成。
 
 ## 隐私
 
-- **全程在你机器上跑、留在你机器上**。音频、成片 mp4、封面都本地生成——不上传任何东西。
+- **Community 不向 LectureCast 服务发送任何内容**。音频、成片、封面和原始媒体都留在本机。
+- 如果选择 Director，只有受限摘要、稳定选项、Brief 和能力元数据进入 Director；原始媒体、TTS 文件、本地路径和成片不上传。
 - 如果你选用 MiniMax 音色（BYOK），你的主题 + 脚本文本会经 HTTPS 发到**你自己的** MiniMax 账户做合成。默认 Edge 音色无需任何第三方账户。
 - 无追踪、无遥测。
 
