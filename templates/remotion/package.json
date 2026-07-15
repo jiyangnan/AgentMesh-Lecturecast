@@ -5,6 +5,8 @@
   "scripts": {
     "catalog:build": "node ../../scripts/build_component_catalog.mjs",
     "catalog:check": "node ../../scripts/build_component_catalog.mjs --check",
+    "test": "npm run catalog:check && npm run typecheck",
+    "test:render-fixture": "mkdir -p out/fixtures && remotion render DirectorVertical out/fixtures/director-vertical.mp4 --frames=0-29 && remotion render DirectorLandscape out/fixtures/director-landscape.mp4 --frames=0-29 && remotion still DirectorCoverVertical out/fixtures/director-cover-vertical.png && remotion still DirectorCoverLandscape out/fixtures/director-cover-landscape.png",
     "start": "remotion studio",
     "typecheck": "tsc --noEmit",
     "render:v": "remotion render VideoVertical out/video.mp4",
