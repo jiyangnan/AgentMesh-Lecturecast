@@ -12,12 +12,16 @@ license = "Apache-2.0"
 authors = [{ name = "jiyangnan", email = "niclolaszhaosi@gmail.com" }]
 keywords = ["lecturecast", "agentmesh", "video", "course", "bilibili", "xiaohongshu", "remotion", "local"]
 dependencies = [
+    "cryptography>=43",
     "jsonschema>=4.23",
     "typer>=0.12",
     "rich>=13.7",
 ]
 
 [project.optional-dependencies]
+auth = [
+    "keyring>=25",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.7",
@@ -34,6 +38,9 @@ Issues = "https://github.com/jiyangnan/AgentMesh-Lecturecast/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/lecturecast"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/lecturecast/signing-keyring.json" = "lecturecast/signing-keyring.json"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

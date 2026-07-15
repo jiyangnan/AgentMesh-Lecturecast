@@ -75,7 +75,7 @@ def test_public_and_server_canonical_manifest_digests_match() -> None:
     assert manifest.payload["brief_digest"] == canonical_digest(brief)
     assert manifest.payload["capability_digest"] == canonical_digest(capabilities)
     assert canonical_digest(manifest) == (
-        "sha256:0b4ce50c7ea75a49fc9e489a84cdc210dcb40d444dabdf03f0fee86462214efc"
+        "sha256:7b1abc12e66dad7172cf70abbbe54d7ef949180366e170ddcd8efe332ce68644"
     )
     assert manifest_signing_digest(manifest) == (
         "sha256:cd3103bad962b4f0a64a523705e364bf64fcf30d6cb1479e4ee135c033aab19d"

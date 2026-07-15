@@ -159,7 +159,7 @@
   "signature": {
     "algorithm": "Ed25519",
     "key_id": "fixture_key_v1",
-    "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+    "value": "H9N9n0k04rUZ5jzedslHNgPgsBQU58EA/HEt15oJiIHnqUl5FgxaK9YGsZ5K83+6y0Ybw3q6f5SSQeO+IQG3DQ=="
   },
   "created_at": "2026-07-15T10:05:00Z",
   "content_expires_at": "2026-08-14T10:05:00Z"

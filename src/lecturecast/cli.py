@@ -1,10 +1,7 @@
-"""lecturecast CLI entrypoint — typer-based.
+"""LectureCast CLI entrypoint.
 
-Lecturecast is a fully local, open-source video workflow for AI agents. There is
-no cloud service, account, or API: the CLI is a thin local helper that points you
-at the agent runbook. The actual pipeline (script -> Edge/MiniMax TTS -> Remotion
-render -> ffmpeg subtitle burn -> covers) runs entirely on your machine and is
-driven by an AI agent following docs/LOCAL-WORKFLOW.md.
+Community creation remains fully local. Director adds an optional cloud decision
+layer while media, voice, rendering, editing, and durable project state stay local.
 """
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from pathlib import Path
@@ -13,8 +10,17 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 
+from .commands.auth import app as auth_app
+from .commands.doctor import doctor
+from .commands.manifest import app as manifest_app
+from .commands.project import app as project_app
+
 app = typer.Typer(no_args_is_help=True, add_completion=False, rich_markup_mode="rich")
 console = Console()
+app.add_typer(auth_app, name="auth", help="Manage the optional Director API credential.")
+app.add_typer(project_app, name="project", help="Create and resume durable local projects.")
+app.add_typer(manifest_app, name="manifest", help="Inspect and verify signed manifests.")
+app.command()(doctor)
 
 
 def _repo_root() -> Path:
@@ -39,8 +45,9 @@ def workflow() -> None:
     agents = root / "AGENTS.md"
     local = root / "docs" / "LOCAL-WORKFLOW.md"
     body = (
-        "Lecturecast is a [bold]fully local[/bold] video workflow — no cloud, no "
-        "account, no API key.\n\n"
+        "LectureCast Community is a [bold]fully local[/bold] video workflow — no cloud, no "
+        "account, no API key. Director is optional and only sends structured creative "
+        "inputs for cloud decisions.\n\n"
         "The pipeline is driven by an AI agent (Claude Code / OpenClaw / Cursor / "
         "Codex) using the bundled [bold]templates/[/bold]:\n"
         "  script -> Edge/MiniMax TTS -> Remotion render -> ffmpeg subtitle burn -> covers\n\n"

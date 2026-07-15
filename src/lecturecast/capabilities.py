@@ -1,0 +1,115 @@
+from __future__ import annotations
+
+import json
+import platform
+import re
+import shutil
+import subprocess
+import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Callable, Sequence
+
+from .config import CLIENT_VERSION
+from .protocol import ClientCapabilities, canonical_digest
+
+
+RunCommand = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
+_SEMVER = re.compile(r"(?P<version>[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?)")
+
+
+def _default_run(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, check=False, capture_output=True, text=True, timeout=5)
+
+
+def _version(command: Sequence[str], *, runner: RunCommand) -> str | None:
+    if shutil.which(command[0]) is None:
+        return None
+    try:
+        result = runner(command)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = _SEMVER.search(f"{result.stdout}\n{result.stderr}")
+    return match.group("version") if match else None
+
+
+def _remotion_version(repo_root: Path | None) -> str | None:
+    if repo_root is None:
+        return None
+    package_path = repo_root / "templates" / "remotion" / "node_modules" / "remotion" / "package.json"
+    try:
+        value = json.loads(package_path.read_text(encoding="utf-8"))["version"]
+    except (FileNotFoundError, OSError, json.JSONDecodeError, KeyError, TypeError):
+        return None
+    return value if isinstance(value, str) and _SEMVER.fullmatch(value) else None
+
+
+def capture_capabilities(
+    *,
+    adapter_kind: str = "text",
+    adapter_version: str = "1.0.0",
+    components: list[str] | None = None,
+    component_catalog_digest: str | None = None,
+    repo_root: Path | None = None,
+    runner: RunCommand = _default_run,
+) -> ClientCapabilities:
+    node_version = _version(["node", "--version"], runner=runner)
+    ffmpeg_version = _version(["ffmpeg", "-version"], runner=runner)
+    remotion_version = _remotion_version(repo_root)
+    has_libass = False
+    if ffmpeg_version is not None:
+        try:
+            build = runner(["ffmpeg", "-buildconf"])
+            has_libass = "--enable-libass" in f"{build.stdout}\n{build.stderr}"
+        except (OSError, subprocess.SubprocessError):
+            has_libass = False
+    installed_components = sorted(set(components or []))
+    catalog_digest = component_catalog_digest or canonical_digest(installed_components)
+    now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return ClientCapabilities.model_validate(
+        {
+            "schema_version": "1.0",
+            "capabilities_id": f"caps_{uuid.uuid4().hex}",
+            "client": {"name": "agentmesh-lecturecast", "version": CLIENT_VERSION},
+            "adapter": {"kind": adapter_kind, "version": adapter_version},
+            "supported_manifest_versions": ["1.0"],
+            "component_catalog_digest": catalog_digest,
+            "components": installed_components,
+            "aspect_ratios": ["16:9", "9:16", "3:4"],
+            "output_formats": ["mp4", "png"],
+            "tts_engines": ["edge", "minimax"],
+            "runtime": {
+                "python_version": platform.python_version(),
+                "node_version": node_version,
+                "remotion_version": remotion_version,
+                "ffmpeg_version": ffmpeg_version,
+                "has_libass": has_libass,
+                "can_render_locally": all(
+                    value is not None for value in (node_version, remotion_version, ffmpeg_version)
+                ),
+            },
+            "captured_at": now,
+        }
+    )
+
+
+def doctor_report(capabilities: ClientCapabilities) -> dict[str, Any]:
+    payload = capabilities.model_dump()
+    runtime = payload["runtime"]
+    missing = [
+        name
+        for name, value in (
+            ("node", runtime["node_version"]),
+            ("remotion", runtime["remotion_version"]),
+            ("ffmpeg", runtime["ffmpeg_version"]),
+        )
+        if value is None
+    ]
+    if not runtime["has_libass"]:
+        missing.append("ffmpeg-libass")
+    return {
+        "ready": runtime["can_render_locally"] and runtime["has_libass"],
+        "missing": missing,
+        "capabilities": payload,
+    }
+

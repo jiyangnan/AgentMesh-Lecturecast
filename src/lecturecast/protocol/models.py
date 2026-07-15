@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 from urllib.parse import urlparse
 
 from jsonschema import Draft202012Validator, FormatChecker
@@ -173,14 +173,14 @@ class ProtocolDocument:
     schema_filename: ClassVar[str]
 
     @classmethod
-    def model_validate(cls, payload: dict[str, Any]) -> "ProtocolDocument":
+    def model_validate(cls, payload: dict[str, Any]) -> Self:
         document = copy.deepcopy(payload)
         _validate_schema(cls.schema_filename, document)
         cls._validate_semantics(document)
         return cls(document)
 
     @classmethod
-    def model_validate_json(cls, content: str | bytes) -> "ProtocolDocument":
+    def model_validate_json(cls, content: str | bytes) -> Self:
         payload = json.loads(content)
         if not isinstance(payload, dict):
             raise ProtocolValidationError("protocol document must be a JSON object")
