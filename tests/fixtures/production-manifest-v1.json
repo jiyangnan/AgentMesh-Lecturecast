@@ -38,6 +38,19 @@
       "duration_frames": 300
     }
   ],
+  "voice": {
+    "engine": "edge",
+    "language": "zh-CN",
+    "voice_id": "zh-CN-YunjianNeural",
+    "rate_percent": 8
+  },
+  "subtitles": {
+    "language": "zh-CN",
+    "style_id": "keyword_highlight_v1",
+    "burn_in": true,
+    "keyword_highlights": ["精准投递", "个性化策略", "批量执行"],
+    "safe_area_bottom_percent": 18
+  },
   "scenes": [
     {
       "scene_id": "hook_outcome",

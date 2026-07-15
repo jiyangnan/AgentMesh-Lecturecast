@@ -55,18 +55,32 @@
           "type": "boolean"
         },
         "ffmpeg_version": {
-          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$",
-          "title": "Ffmpeg Version",
-          "type": "string"
+          "anyOf": [
+            {
+              "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ffmpeg Version"
         },
         "has_libass": {
           "title": "Has Libass",
           "type": "boolean"
         },
         "node_version": {
-          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$",
-          "title": "Node Version",
-          "type": "string"
+          "anyOf": [
+            {
+              "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Node Version"
         },
         "python_version": {
           "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$",
@@ -74,9 +88,16 @@
           "type": "string"
         },
         "remotion_version": {
-          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$",
-          "title": "Remotion Version",
-          "type": "string"
+          "anyOf": [
+            {
+              "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Remotion Version"
         }
       },
       "required": [
@@ -137,7 +158,6 @@
         "type": "string"
       },
       "maxItems": 256,
-      "minItems": 1,
       "title": "Components",
       "type": "array"
     },

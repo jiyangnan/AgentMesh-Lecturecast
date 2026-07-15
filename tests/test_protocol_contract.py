@@ -16,6 +16,7 @@ from lecturecast.protocol import (
     ProductionManifest,
     ProtocolValidationError,
     canonical_digest,
+    manifest_signing_digest,
 )
 from lecturecast.protocol.update import ProtocolImportError, update_protocol
 
@@ -74,11 +75,22 @@ def test_public_and_server_canonical_manifest_digests_match() -> None:
     assert manifest.payload["brief_digest"] == canonical_digest(brief)
     assert manifest.payload["capability_digest"] == canonical_digest(capabilities)
     assert canonical_digest(manifest) == (
-        "sha256:16eaeb9dd156c0636f4c6eaac62f17140a963c9da65174d9a5e7aec77b430263"
+        "sha256:0b4ce50c7ea75a49fc9e489a84cdc210dcb40d444dabdf03f0fee86462214efc"
     )
-    assert canonical_digest(manifest, exclude_top_level={"signature"}) == (
-        "sha256:1aacf90909da89b2c0cd504f6afdb18f16f52c3cd82b64ec8c250894fad29edf"
+    assert manifest_signing_digest(manifest) == (
+        "sha256:cd3103bad962b4f0a64a523705e364bf64fcf30d6cb1479e4ee135c033aab19d"
     )
+
+
+def test_signing_payload_keeps_key_metadata_but_not_signature_value() -> None:
+    original = _fixture("production-manifest-v1.json")
+    changed_value = copy.deepcopy(original)
+    changed_value["signature"]["value"] = "B" * 86 + "=="
+    changed_key = copy.deepcopy(original)
+    changed_key["signature"]["key_id"] = "different_key_v1"
+
+    assert manifest_signing_digest(original) == manifest_signing_digest(changed_value)
+    assert manifest_signing_digest(original) != manifest_signing_digest(changed_key)
 
 
 def test_validated_public_document_does_not_expose_mutable_internal_state() -> None:

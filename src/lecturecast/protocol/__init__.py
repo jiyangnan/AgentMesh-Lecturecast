@@ -1,6 +1,11 @@
 """LectureCast Director v1 protocol validation and canonicalization."""
 
-from .canonical import canonical_bytes, canonical_digest
+from .canonical import (
+    canonical_bytes,
+    canonical_digest,
+    manifest_signing_bytes,
+    manifest_signing_digest,
+)
 from .models import (
     ClientCapabilities,
     CreativeBrief,
@@ -17,4 +22,6 @@ __all__ = [
     "ProtocolValidationError",
     "canonical_bytes",
     "canonical_digest",
+    "manifest_signing_bytes",
+    "manifest_signing_digest",
 ]

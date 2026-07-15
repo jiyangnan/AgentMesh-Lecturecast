@@ -312,6 +312,53 @@
       "title": "SignatureMetadata",
       "type": "object"
     },
+    "SubtitlePlan": {
+      "additionalProperties": false,
+      "properties": {
+        "burn_in": {
+          "title": "Burn In",
+          "type": "boolean"
+        },
+        "keyword_highlights": {
+          "items": {
+            "maxLength": 40,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Keyword Highlights",
+          "type": "array"
+        },
+        "language": {
+          "maxLength": 12,
+          "pattern": "^[a-z]{2}(?:-[A-Z]{2})?$",
+          "title": "Language",
+          "type": "string"
+        },
+        "safe_area_bottom_percent": {
+          "maximum": 50,
+          "minimum": 0,
+          "title": "Safe Area Bottom Percent",
+          "type": "integer"
+        },
+        "style_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Style Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "language",
+        "style_id",
+        "burn_in",
+        "keyword_highlights",
+        "safe_area_bottom_percent"
+      ],
+      "title": "SubtitlePlan",
+      "type": "object"
+    },
     "TransitionSpec": {
       "additionalProperties": false,
       "properties": {
@@ -337,6 +384,47 @@
         "duration_frames"
       ],
       "title": "TransitionSpec",
+      "type": "object"
+    },
+    "VoicePlan": {
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "enum": [
+            "edge",
+            "minimax",
+            "system",
+            "none"
+          ],
+          "title": "Engine",
+          "type": "string"
+        },
+        "language": {
+          "maxLength": 12,
+          "pattern": "^[a-z]{2}(?:-[A-Z]{2})?$",
+          "title": "Language",
+          "type": "string"
+        },
+        "rate_percent": {
+          "maximum": 100,
+          "minimum": -50,
+          "title": "Rate Percent",
+          "type": "integer"
+        },
+        "voice_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Voice Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "engine",
+        "language",
+        "voice_id",
+        "rate_percent"
+      ],
+      "title": "VoicePlan",
       "type": "object"
     }
   },
@@ -458,10 +546,16 @@
     "signature": {
       "$ref": "#/$defs/SignatureMetadata"
     },
+    "subtitles": {
+      "$ref": "#/$defs/SubtitlePlan"
+    },
     "total_frames": {
       "exclusiveMinimum": 0,
       "title": "Total Frames",
       "type": "integer"
+    },
+    "voice": {
+      "$ref": "#/$defs/VoicePlan"
     }
   },
   "required": [
@@ -479,6 +573,8 @@
     "fps",
     "total_frames",
     "script",
+    "voice",
+    "subtitles",
     "scenes",
     "outputs",
     "quality",
