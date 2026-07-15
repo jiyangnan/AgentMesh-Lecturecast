@@ -22,14 +22,18 @@ def _fixture(name: str) -> dict[str, object]:
 def test_project_persists_brief_manifest_and_resumes_across_processes(tmp_path: Path) -> None:
     store = ProjectStore(tmp_path)
     initialized = store.init(name="Agent handoff project", project_id="project_handoff")
+    with_capabilities = store.save_capabilities(
+        _fixture("client-capabilities-v1.json"), expected_revision=initialized.revision
+    )
     with_brief = store.save_brief(
-        _fixture("creative-brief-v1.json"), expected_revision=initialized.revision
+        _fixture("creative-brief-v1.json"), expected_revision=with_capabilities.revision
     )
     with_manifest = store.save_manifest(
         _fixture("production-manifest-v1.json"), expected_revision=with_brief.revision
     )
 
     assert with_manifest.payload["status"] == "manifest_ready"
+    assert store.capabilities_path.is_file()
     assert os.stat(store.manifest_path).st_mode & 0o222 == 0
 
     command = [

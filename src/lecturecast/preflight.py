@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
+from jsonschema import Draft202012Validator
+
+from .assets import local_asset_errors
+from .capabilities import load_component_catalog
 from .errors import LectureCastError
 from .manifest import PublicKeyRing, VerificationResult, verify_manifest
 from .protocol import ClientCapabilities, ProductionManifest, canonical_digest
@@ -38,6 +43,7 @@ def run_preflight(
     capabilities: ClientCapabilities | dict[str, Any],
     *,
     keyring: PublicKeyRing | None = None,
+    project_root: Path | None = None,
 ) -> PreflightResult:
     document = (
         manifest if isinstance(manifest, ProductionManifest) else ProductionManifest.model_validate(manifest)
@@ -51,6 +57,8 @@ def run_preflight(
     available = client.model_dump()
     verification = verify_manifest(document, keyring=keyring)
     checks: list[PreflightCheck] = []
+    catalog, local_catalog_digest = load_component_catalog()
+    catalog_entries = {item["component_id"]: item for item in catalog["components"]}
 
     def check(check_id: str, passed: bool, message: str) -> None:
         checks.append(PreflightCheck(check_id=check_id, passed=passed, message=message))
@@ -67,15 +75,55 @@ def run_preflight(
     )
     check(
         "component_catalog",
-        payload["component_catalog_digest"] == available["component_catalog_digest"],
+        payload["component_catalog_digest"]
+        == available["component_catalog_digest"]
+        == local_catalog_digest,
         "组件目录 digest 一致。",
     )
     component_ids = {scene["component_id"] for scene in payload["scenes"]}
     check(
         "components",
-        component_ids.issubset(set(available["components"])),
+        component_ids.issubset(set(available["components"]))
+        and component_ids.issubset(catalog_entries),
         "所有 Scene 组件均已安装。",
     )
+    video_aspects = {
+        output["aspect_ratio"] for output in payload["outputs"] if output["kind"] == "video"
+    }
+    contract_errors: list[str] = []
+    for scene in payload["scenes"]:
+        entry = catalog_entries.get(scene["component_id"])
+        if entry is None:
+            contract_errors.append(f"{scene['scene_id']}:unknown_component")
+            continue
+        validator = Draft202012Validator(entry["props_schema"])
+        if next(validator.iter_errors(scene["props"]), None) is not None:
+            contract_errors.append(f"{scene['scene_id']}:invalid_props")
+        supported = set(entry["supported_aspect_ratios"])
+        if not video_aspects.issubset(supported):
+            contract_errors.append(f"{scene['scene_id']}:unsupported_aspect")
+        requirements = entry["asset_requirements"]
+        if len(scene["assets"]) < requirements["min_assets"]:
+            contract_errors.append(f"{scene['scene_id']}:missing_asset")
+        allowed_media = set(requirements["allowed_media_types"])
+        if allowed_media and any(
+            asset["media_type"] not in allowed_media for asset in scene["assets"]
+        ):
+            contract_errors.append(f"{scene['scene_id']}:unsupported_asset")
+    check(
+        "component_contracts",
+        not contract_errors,
+        "Scene Props、比例和素材需求满足本地组件契约。"
+        + (f" 失败：{', '.join(contract_errors)}" if contract_errors else ""),
+    )
+    if project_root is not None:
+        asset_errors = local_asset_errors(payload, project_root)
+        check(
+            "local_assets",
+            not asset_errors,
+            "所有必需的 asset:// 素材均存在于本地项目素材目录。"
+            + (f" 失败：{', '.join(asset_errors)}" if asset_errors else ""),
+        )
     check(
         "aspect_ratios",
         all(output["aspect_ratio"] in available["aspect_ratios"] for output in payload["outputs"]),
@@ -117,4 +165,3 @@ def run_preflight(
             next_action="升级本地组件或重新提交最新 ClientCapabilities 后生成 Manifest。",
         )
     return result
-

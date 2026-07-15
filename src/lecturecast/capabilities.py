@@ -16,6 +16,19 @@ from .protocol import ClientCapabilities, canonical_digest
 
 RunCommand = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 _SEMVER = re.compile(r"(?P<version>[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?)")
+COMPONENT_CATALOG_PATH = Path(__file__).with_name("component-catalog.json")
+COMPONENT_CATALOG_LOCK_PATH = Path(__file__).with_name("component-catalog.lock")
+
+
+def load_component_catalog() -> tuple[dict[str, Any], str]:
+    catalog = json.loads(COMPONENT_CATALOG_PATH.read_text(encoding="utf-8"))
+    lock = json.loads(COMPONENT_CATALOG_LOCK_PATH.read_text(encoding="utf-8"))
+    actual_digest = canonical_digest(catalog)
+    if lock.get("catalog_digest") != actual_digest:
+        raise ValueError("component catalog lock does not match exact catalog bytes")
+    if lock.get("component_count") != len(catalog.get("components", [])):
+        raise ValueError("component catalog count does not match lock")
+    return catalog, actual_digest
 
 
 def _default_run(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -63,8 +76,10 @@ def capture_capabilities(
             has_libass = "--enable-libass" in f"{build.stdout}\n{build.stderr}"
         except (OSError, subprocess.SubprocessError):
             has_libass = False
-    installed_components = sorted(set(components or []))
-    catalog_digest = component_catalog_digest or canonical_digest(installed_components)
+    catalog, locked_digest = load_component_catalog()
+    catalog_components = [item["component_id"] for item in catalog["components"]]
+    installed_components = sorted(set(catalog_components if components is None else components))
+    catalog_digest = component_catalog_digest or locked_digest
     now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     return ClientCapabilities.model_validate(
         {
@@ -112,4 +127,3 @@ def doctor_report(capabilities: ClientCapabilities) -> dict[str, Any]:
         "missing": missing,
         "capabilities": payload,
     }
-

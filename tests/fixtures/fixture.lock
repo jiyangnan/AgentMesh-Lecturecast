@@ -1,10 +1,10 @@
 {
   "bundle_version": "1.0",
-  "bundle_digest": "sha256:f11afad4a05b9724588717cf082cdba9a7fdcca3bb9b107c5c158a1ad56977ee",
+  "bundle_digest": "sha256:c3b5a1b0fbd3dd5a9de9f6fca7d0968ea79b701c94178db80598b1fefa110c49",
   "files": {
-    "client-capabilities-v1.json": "sha256:1aaf5d0c0a90139df3a60eea21eac595ff07ba2866780164ebbe928a23b23a2d",
+    "client-capabilities-v1.json": "sha256:73a6f73478aff7ac171730ceab763f6156ec6f9678a20d664ecb811539b25cff",
     "creative-brief-v1.json": "sha256:cb54fe5939f088963ee0c671819c6e66dc0b515b8626e6f533cc647c1c5653b7",
     "decision-card-set-v1.json": "sha256:c8f7dfbda73ce61768d2909c4ffc4d27b6b3c33bae59089bccb40c65295e7ec7",
-    "production-manifest-v1.json": "sha256:5d019d0583aeeb8e8ffbeeda15523ba79125e7289ed7fd7fa60b6ed4bf86e0cb"
+    "production-manifest-v1.json": "sha256:5267897ba1e64d534466da035cc827bfebc9d6c463614f53cf4daff641b868b6"
   }
 }

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import typer
 
+from ..capabilities import capture_capabilities
 from ..errors import LectureCastError
 from ..project import ProjectStore
 from .output import emit, fail
@@ -62,3 +63,41 @@ def resume(
     """Resume from disk; conversation history is not used as project state."""
     _show_project(directory, json_output)
 
+
+@app.command("capabilities")
+def capabilities(
+    directory: Path = typer.Argument(Path(".")),
+    adapter: str = typer.Option("text", "--adapter"),
+    adapter_version: str = typer.Option("1.0.0", "--adapter-version"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Capture and persist the exact capability snapshot later bound to a Manifest."""
+    try:
+        store = ProjectStore(directory)
+        state = store.load()
+        document = capture_capabilities(
+            adapter_kind=adapter,
+            adapter_version=adapter_version,
+            repo_root=Path(__file__).resolve().parents[3],
+        )
+        updated = store.save_capabilities(document, expected_revision=state.revision)
+        emit(
+            {
+                "project": updated.to_dict(),
+                "capabilities": document.model_dump(),
+            },
+            json_output=json_output,
+            message=f"ClientCapabilities 已保存（revision {updated.revision}）。",
+        )
+    except LectureCastError as error:
+        fail(error, json_output=json_output)
+    except Exception as exc:
+        fail(
+            LectureCastError(
+                code="manifest_incompatible",
+                message="无法采集本机能力。",
+                next_action="运行 lecturecast doctor 检查 Node、Remotion 与 ffmpeg。",
+                cause=type(exc).__name__,
+            ),
+            json_output=json_output,
+        )

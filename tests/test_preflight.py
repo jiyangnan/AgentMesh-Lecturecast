@@ -48,8 +48,7 @@ def test_capability_capture_can_truthfully_report_not_ready(
     capabilities = capture_capabilities(repo_root=tmp_path)
     payload = capabilities.model_dump()
 
-    assert payload["components"] == []
+    assert len(payload["components"]) == 11
     assert payload["runtime"]["can_render_locally"] is False
     assert payload["runtime"]["node_version"] is None
     assert payload["runtime"]["ffmpeg_version"] is None
-

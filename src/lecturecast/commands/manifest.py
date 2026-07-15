@@ -50,6 +50,7 @@ def verify(
 def preflight(
     manifest_path: Path,
     capabilities_path: Path | None = typer.Option(None, "--capabilities"),
+    project_root: Path | None = typer.Option(None, "--project-root"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Verify that this client can execute a signed Manifest without rendering."""
@@ -59,7 +60,12 @@ def preflight(
             if capabilities_path is not None
             else capture_capabilities(repo_root=Path(__file__).resolve().parents[3])
         )
-        result = run_preflight(load_manifest(manifest_path), capabilities).to_dict()
+        root = project_root
+        if root is None and manifest_path.parent.name == ".lecturecast":
+            root = manifest_path.parent.parent
+        result = run_preflight(
+            load_manifest(manifest_path), capabilities, project_root=root
+        ).to_dict()
         emit(result, json_output=json_output, message="Manifest preflight 已通过。")
     except LectureCastError as error:
         fail(error, json_output=json_output)
@@ -73,4 +79,3 @@ def preflight(
             ),
             json_output=json_output,
         )
-

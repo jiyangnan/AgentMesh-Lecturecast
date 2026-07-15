@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "catalog:build": "node ../../scripts/build_component_catalog.mjs",
+    "catalog:check": "node ../../scripts/build_component_catalog.mjs --check",
     "start": "remotion studio",
     "typecheck": "tsc --noEmit",
     "render:v": "remotion render VideoVertical out/video.mp4",

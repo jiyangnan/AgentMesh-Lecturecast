@@ -10,11 +10,19 @@
     "version": "1.0.0"
   },
   "supported_manifest_versions": ["1.0"],
-  "component_catalog_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "component_catalog_digest": "sha256:b492db83fd70a307520ef0bb123bb455682620b1a556e05d303850f8ffd11a76",
   "components": [
+    "code.walkthrough.v1",
+    "comparison.before_after.v1",
+    "concept.cards.v1",
+    "data.metric_change.v1",
+    "diagram.process_flow.v1",
+    "ending.summary_cta.v1",
     "hook.outcome.v1",
+    "hook.question.v1",
     "product.ui_focus.v1",
-    "ending.summary_cta.v1"
+    "section.title.v1",
+    "tutorial.step_focus.v1"
   ],
   "aspect_ratios": ["16:9", "9:16", "3:4"],
   "output_formats": ["mp4", "png"],

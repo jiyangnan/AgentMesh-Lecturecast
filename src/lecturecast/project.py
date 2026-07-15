@@ -16,7 +16,7 @@ from typing import Any, Iterator, Mapping
 from .config import PROJECT_DIRECTORY, PROJECT_SCHEMA_VERSION
 from .errors import LectureCastError
 from .manifest import verify_manifest
-from .protocol import CreativeBrief, ProductionManifest, canonical_digest
+from .protocol import ClientCapabilities, CreativeBrief, ProductionManifest, canonical_digest
 
 
 PROJECT_REQUIRED_FIELDS = {
@@ -26,6 +26,7 @@ PROJECT_REQUIRED_FIELDS = {
     "project_revision",
     "status",
     "creative_brief_digest",
+    "capability_digest",
     "production_manifest_digest",
     "created_at",
     "updated_at",
@@ -131,8 +132,10 @@ class ProjectStore:
         self.directory = self.root / PROJECT_DIRECTORY
         self.project_path = self.directory / "project.json"
         self.brief_path = self.directory / "creative-brief.json"
+        self.capabilities_path = self.directory / "client-capabilities.json"
         self.manifest_path = self.directory / "production-manifest.json"
         self.overrides_path = self.directory / "local-overrides.json"
+        self.assets_directory = self.directory / "assets"
         self.lock_path = self.directory / ".project.lock"
 
     @contextmanager
@@ -169,6 +172,7 @@ class ProjectStore:
                 "project_revision": 1,
                 "status": "initialized",
                 "creative_brief_digest": None,
+                "capability_digest": None,
                 "production_manifest_digest": None,
                 "created_at": now,
                 "updated_at": now,
@@ -183,6 +187,7 @@ class ProjectStore:
                     "overrides": {},
                 },
             )
+            self.assets_directory.mkdir(mode=0o700, exist_ok=True)
             return ProjectState(payload)
 
     def _load_unlocked(self) -> ProjectState:
@@ -235,6 +240,15 @@ class ProjectStore:
                     message="ProductionManifest 原件已被修改。",
                     next_action="请恢复云端签发的原始 Manifest；本地修改应写入 local-overrides.json。",
                 )
+        expected_capabilities = state.payload["capability_digest"]
+        if expected_capabilities is not None:
+            capabilities = ClientCapabilities.model_validate(_read_object(self.capabilities_path))
+            if canonical_digest(capabilities) != expected_capabilities:
+                raise LectureCastError(
+                    code="manifest_incompatible",
+                    message="ClientCapabilities 与项目索引不一致。",
+                    next_action="重新采集能力，并用新的 capability digest 请求 Manifest。",
+                )
 
     @staticmethod
     def _check_revision(state: ProjectState, expected_revision: int) -> None:
@@ -263,6 +277,23 @@ class ProjectStore:
                 creative_brief_digest=canonical_digest(document),
             )
 
+    def save_capabilities(
+        self,
+        capabilities: ClientCapabilities | dict[str, Any],
+        *,
+        expected_revision: int,
+    ) -> ProjectState:
+        document = (
+            capabilities
+            if isinstance(capabilities, ClientCapabilities)
+            else ClientCapabilities.model_validate(capabilities)
+        )
+        with self._locked():
+            state = self._load_unlocked()
+            self._check_revision(state, expected_revision)
+            atomic_write_json(self.capabilities_path, document.model_dump())
+            return self._advance(state, capability_digest=canonical_digest(document))
+
     def save_manifest(
         self,
         manifest: ProductionManifest | dict[str, Any],
@@ -283,6 +314,13 @@ class ProjectStore:
                     code="generation_conflict",
                     message="ProductionManifest 原件不可覆盖。",
                     next_action="保留原件，并把时间线或样式调整写入 local-overrides.json。",
+                )
+            capability_digest = state.payload["capability_digest"]
+            if capability_digest is not None and document.payload["capability_digest"] != capability_digest:
+                raise LectureCastError(
+                    code="manifest_incompatible",
+                    message="Manifest 没有绑定当前保存的 ClientCapabilities。",
+                    next_action="用当前 capability digest 重新请求 ProductionManifest。",
                 )
             verify_manifest(document)
             atomic_write_json(self.manifest_path, document.model_dump(), mode=0o444)

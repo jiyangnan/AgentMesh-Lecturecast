@@ -1,0 +1,178 @@
+{
+  "catalog_version": "1.0",
+  "components": [
+    {
+      "component_id": "hook.outcome.v1",
+      "supported_aspect_ratios": ["16:9", "9:16"],
+      "props_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["headline", "before", "after"],
+        "properties": {
+          "eyebrow": {"type": "string", "maxLength": 40},
+          "headline": {"type": "string", "minLength": 1, "maxLength": 64},
+          "before": {"type": "string", "minLength": 1, "maxLength": 80},
+          "after": {"type": "string", "minLength": 1, "maxLength": 80}
+        }
+      },
+      "asset_requirements": {"min_assets": 0, "allowed_media_types": []},
+      "preview_fixture": {"eyebrow": "AI 效率课", "headline": "先看结果", "before": "重复劳动", "after": "精准执行"}
+    },
+    {
+      "component_id": "hook.question.v1",
+      "supported_aspect_ratios": ["16:9", "9:16"],
+      "props_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "promise"],
+        "properties": {
+          "question": {"type": "string", "minLength": 1, "maxLength": 96},
+          "promise": {"type": "string", "minLength": 1, "maxLength": 96}
+        }
+      },
+      "asset_requirements": {"min_assets": 0, "allowed_media_types": []},
+      "preview_fixture": {"question": "为什么投入很多时间，结果仍不稳定？", "promise": "三分钟拆清真正的瓶颈"}
+    },
+    {
+      "component_id": "section.title.v1",
+      "supported_aspect_ratios": ["16:9", "9:16"],
+      "props_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title"],
+        "properties": {
+          "kicker": {"type": "string", "maxLength": 40},
+          "title": {"type": "string", "minLength": 1, "maxLength": 80},
+          "subtitle": {"type": "string", "maxLength": 120}
+        }
+      },
+      "asset_requirements": {"min_assets": 0, "allowed_media_types": []},
+      "preview_fixture": {"kicker": "STEP 01", "title": "先建立判断标准", "subtitle": "再决定具体动作"}
+    },
+    {
+      "component_id": "concept.cards.v1",
+      "supported_aspect_ratios": ["16:9", "9:16"],
+      "props_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "cards"],
+        "properties": {
+          "title": {"type": "string", "minLength": 1, "maxLength": 72},
+          "cards": {"type": "array", "minItems": 2, "maxItems": 4, "items": {"type": "string", "minLength": 1, "maxLength": 64}}
+        }
+      },
+      "asset_requirements": {"min_assets": 0, "allowed_media_types": []},
+      "preview_fixture": {"title": "三个核心概念", "cards": ["目标", "约束", "反馈"]}
+    },
+    {
+      "component_id": "comparison.before_after.v1",
+      "supported_aspect_ratios": ["16:9", "9:16"],
+      "props_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "before", "after"],
+        "properties": {
+          "title": {"type": "string", "minLength": 1, "maxLength": 72},
+          "before": {"type": "string", "minLength": 1, "maxLength": 120},
+          "after": {"type": "string", "minLength": 1, "maxLength": 120}
+        }
+      },
+      "asset_requirements": {"min_assets": 0, "allowed_media_types": []},
+      "preview_fixture": {"title": "从海投到精准投递", "before": "同一份简历发给所有岗位", "after": "每个岗位都有针对性策略"}
+    },
+    {
+      "component_id": "diagram.process_flow.v1",
+      "supported_aspect_ratios": ["16:9", "9:16"],
+      "props_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "steps"],
+        "properties": {
+          "title": {"type": "string", "minLength": 1, "maxLength": 72},
+          "steps": {"type": "array", "minItems": 2, "maxItems": 5, "items": {"type": "string", "minLength": 1, "maxLength": 56}}
+        }
+      },
+      "asset_requirements": {"min_assets": 0, "allowed_media_types": []},
+      "preview_fixture": {"title": "完整流程", "steps": ["筛选", "分析", "生成", "执行"]}
+    },
+    {
+      "component_id": "tutorial.step_focus.v1",
+      "supported_aspect_ratios": ["16:9", "9:16"],
+      "props_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["step_number", "title", "instruction"],
+        "properties": {
+          "step_number": {"type": "integer", "minimum": 1, "maximum": 20},
+          "title": {"type": "string", "minLength": 1, "maxLength": 64},
+          "instruction": {"type": "string", "minLength": 1, "maxLength": 160}
+        }
+      },
+      "asset_requirements": {"min_assets": 0, "allowed_media_types": []},
+      "preview_fixture": {"step_number": 2, "title": "确认约束", "instruction": "先明确不能改变的条件，再比较可选方案。"}
+    },
+    {
+      "component_id": "product.ui_focus.v1",
+      "supported_aspect_ratios": ["16:9", "9:16"],
+      "props_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "steps"],
+        "properties": {
+          "title": {"type": "string", "minLength": 1, "maxLength": 72},
+          "steps": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "string", "minLength": 1, "maxLength": 56}}
+        }
+      },
+      "asset_requirements": {"min_assets": 1, "allowed_media_types": ["image", "video"]},
+      "preview_fixture": {"title": "三步完成投递", "steps": ["筛选岗位", "生成策略", "批量执行"]}
+    },
+    {
+      "component_id": "data.metric_change.v1",
+      "supported_aspect_ratios": ["16:9", "9:16"],
+      "props_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "before", "after"],
+        "properties": {
+          "label": {"type": "string", "minLength": 1, "maxLength": 56},
+          "before": {"type": "string", "minLength": 1, "maxLength": 32},
+          "after": {"type": "string", "minLength": 1, "maxLength": 32},
+          "unit": {"type": "string", "maxLength": 16}
+        }
+      },
+      "asset_requirements": {"min_assets": 0, "allowed_media_types": []},
+      "preview_fixture": {"label": "有效投递效率", "before": "1x", "after": "4x", "unit": "提升"}
+    },
+    {
+      "component_id": "code.walkthrough.v1",
+      "supported_aspect_ratios": ["16:9", "9:16"],
+      "props_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "code_lines"],
+        "properties": {
+          "title": {"type": "string", "minLength": 1, "maxLength": 72},
+          "language": {"type": "string", "maxLength": 24},
+          "code_lines": {"type": "array", "minItems": 1, "maxItems": 10, "items": {"type": "string", "minLength": 1, "maxLength": 96}}
+        }
+      },
+      "asset_requirements": {"min_assets": 0, "allowed_media_types": []},
+      "preview_fixture": {"title": "把选择写进 Brief", "language": "json", "code_lines": ["{", "  \"pace\": \"compact\"", "}"]}
+    },
+    {
+      "component_id": "ending.summary_cta.v1",
+      "supported_aspect_ratios": ["16:9", "9:16"],
+      "props_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["summary", "cta"],
+        "properties": {
+          "summary": {"type": "string", "minLength": 1, "maxLength": 160},
+          "cta": {"type": "string", "minLength": 1, "maxLength": 96}
+        }
+      },
+      "asset_requirements": {"min_assets": 0, "allowed_media_types": []},
+      "preview_fixture": {"summary": "把时间留给真正值得准备的机会。", "cta": "从一个最想去的岗位开始"}
+    }
+  ]
+}
