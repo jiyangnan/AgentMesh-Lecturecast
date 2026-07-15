@@ -415,3 +415,46 @@ def delete(
         fail(error, json_output=json_output)
     except Exception as exc:
         _unexpected(exc, json_output=json_output)
+
+
+@app.command("handoff")
+def handoff(
+    directory: Path = typer.Argument(Path(".")),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Build a credential-free payload for a fresh agent task."""
+    try:
+        project = ProjectStore(directory).load()
+        project_path = str(Path(directory).expanduser().resolve())
+        try:
+            director = DirectorStateStore(directory).load().to_dict()
+        except LectureCastError as error:
+            if error.code != "session_not_found":
+                raise
+            director = None
+        payload = {
+            "schema_version": "1.0",
+            "project_path": project_path,
+            "project_id": project.payload["project_id"],
+            "resume_argv": [
+                "lecturecast",
+                "project",
+                "resume",
+                project_path,
+                "--json",
+            ],
+            "prompt": (
+                "请读取 LectureCast Skill，并从这个本地项目继续："
+                f"{project_path}。先运行 project resume；如存在 Director 状态，再运行 director next/status。"
+            ),
+            "director": director,
+        }
+        emit(
+            payload,
+            json_output=json_output,
+            message=payload["prompt"],
+        )
+    except LectureCastError as error:
+        fail(error, json_output=json_output)
+    except Exception as exc:
+        _unexpected(exc, json_output=json_output)

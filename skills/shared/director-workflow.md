@@ -26,7 +26,7 @@ lecturecast director start <project-path> \
   --json
 ```
 
-`LECTURECAST_DIRECTOR_URL` supplies the server. A one-time `--server` is also accepted and then persisted without credentials. If this agent task started before installation, open a new task with the project path when the host supports it; otherwise give the user one short copyable resume command.
+`LECTURECAST_DIRECTOR_URL` supplies the server. A one-time `--server` is also accepted and then persisted without credentials. If this agent task started before installation, run `lecturecast director handoff <project-path> --json`. When the host exposes a task-creation tool, use the returned `prompt` to create the new task; otherwise give the user that exact prompt as the one short copyable fallback. Do not claim a new task was created unless the host confirms it.
 
 ## Decision cards
 

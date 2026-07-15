@@ -243,6 +243,15 @@ def test_full_director_cli_flow_is_machine_readable_and_resumable(
     assert started["director"]["server_url"] == "https://director.example.test/v1"
     assert started["decision_card_set"] == client.card
 
+    handoff = runner.invoke(
+        app, ["director", "handoff", str(tmp_path), "--json"]
+    )
+    assert handoff.exit_code == 0, handoff.output
+    handoff_payload = json.loads(handoff.stdout)
+    assert handoff_payload["resume_argv"][-1] == "--json"
+    assert handoff_payload["project_path"] == str(tmp_path.resolve())
+    assert "api_key" not in handoff.stdout.lower()
+
     resumed = runner.invoke(
         app, ["director", "next", str(tmp_path), "--json"]
     )

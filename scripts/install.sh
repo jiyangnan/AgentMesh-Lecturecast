@@ -91,3 +91,4 @@ echo
 echo "Community remains fully local. Director is optional; media and rendering stay local."
 echo "If this agent session started before installation, open a new session and paste:"
 echo "    请读取 LectureCast Skill，并从项目路径 <project-path> 继续。"
+echo "Or generate an exact handoff payload: lecturecast director handoff <project-path> --json"
