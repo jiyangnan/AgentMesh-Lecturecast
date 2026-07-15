@@ -25,6 +25,8 @@ export const COLORS = {
   codeFg: '#D6D6E0',
   codeGreen: '#7EE787',
   codeOrange: '#FAB387',
+  codePink: '#F38BA8',
+  codeBlue: '#89B4FA',
   codeYellow: '#FEBC2E',
   codeRed: '#FF7B72',
   codeGray: '#7A7A92',

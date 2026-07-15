@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "start": "remotion studio",
+    "typecheck": "tsc --noEmit",
     "render:v": "remotion render VideoVertical out/video.mp4",
     "render:h": "remotion render VideoLandscape out/videoH.mp4",
     "shot": "remotion still"
