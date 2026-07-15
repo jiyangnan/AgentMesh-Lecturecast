@@ -1,0 +1,189 @@
+{
+  "$defs": {
+    "DecisionOption": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "option_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Option Id",
+          "type": "string"
+        },
+        "preview_ref": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_-]*/[a-z0-9._-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Preview Ref"
+        }
+      },
+      "required": [
+        "option_id",
+        "label",
+        "description"
+      ],
+      "title": "DecisionOption",
+      "type": "object"
+    },
+    "DecisionQuestion": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "max_selections": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Max Selections",
+          "type": "integer"
+        },
+        "min_selections": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Min Selections",
+          "type": "integer"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/DecisionOption"
+          },
+          "maxItems": 3,
+          "minItems": 2,
+          "title": "Options",
+          "type": "array"
+        },
+        "other_allowed": {
+          "title": "Other Allowed",
+          "type": "boolean"
+        },
+        "question_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Question Id",
+          "type": "string"
+        },
+        "selection_mode": {
+          "enum": [
+            "single",
+            "multiple"
+          ],
+          "title": "Selection Mode",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "question_id",
+        "selection_mode",
+        "title",
+        "options",
+        "other_allowed",
+        "min_selections",
+        "max_selections"
+      ],
+      "title": "DecisionQuestion",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "card_set_id": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Card Set Id",
+      "type": "string"
+    },
+    "catalog_version": {
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(?:\\.[0-9]+)?$",
+      "title": "Catalog Version",
+      "type": "string"
+    },
+    "questions": {
+      "items": {
+        "$ref": "#/$defs/DecisionQuestion"
+      },
+      "maxItems": 3,
+      "minItems": 1,
+      "title": "Questions",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "session_id": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Session Id",
+      "type": "string"
+    },
+    "stage": {
+      "enum": [
+        "audience",
+        "narrative",
+        "visual",
+        "delivery",
+        "confirmation"
+      ],
+      "title": "Stage",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "card_set_id",
+    "session_id",
+    "catalog_version",
+    "stage",
+    "title",
+    "questions"
+  ],
+  "title": "DecisionCardSet",
+  "type": "object"
+}

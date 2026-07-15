@@ -1,0 +1,207 @@
+{
+  "$defs": {
+    "AdapterIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "codex",
+            "claude-code",
+            "openclaw",
+            "text"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "version"
+      ],
+      "title": "AdapterIdentity",
+      "type": "object"
+    },
+    "ClientIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "agentmesh-lecturecast",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "ClientIdentity",
+      "type": "object"
+    },
+    "RuntimeCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "can_render_locally": {
+          "title": "Can Render Locally",
+          "type": "boolean"
+        },
+        "ffmpeg_version": {
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$",
+          "title": "Ffmpeg Version",
+          "type": "string"
+        },
+        "has_libass": {
+          "title": "Has Libass",
+          "type": "boolean"
+        },
+        "node_version": {
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$",
+          "title": "Node Version",
+          "type": "string"
+        },
+        "python_version": {
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$",
+          "title": "Python Version",
+          "type": "string"
+        },
+        "remotion_version": {
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$",
+          "title": "Remotion Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "python_version",
+        "node_version",
+        "remotion_version",
+        "ffmpeg_version",
+        "has_libass",
+        "can_render_locally"
+      ],
+      "title": "RuntimeCapabilities",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "adapter": {
+      "$ref": "#/$defs/AdapterIdentity"
+    },
+    "aspect_ratios": {
+      "items": {
+        "enum": [
+          "16:9",
+          "9:16",
+          "3:4"
+        ],
+        "type": "string"
+      },
+      "maxItems": 3,
+      "minItems": 1,
+      "title": "Aspect Ratios",
+      "type": "array"
+    },
+    "capabilities_id": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Capabilities Id",
+      "type": "string"
+    },
+    "captured_at": {
+      "format": "date-time",
+      "title": "Captured At",
+      "type": "string"
+    },
+    "client": {
+      "$ref": "#/$defs/ClientIdentity"
+    },
+    "component_catalog_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Component Catalog Digest",
+      "type": "string"
+    },
+    "components": {
+      "items": {
+        "maxLength": 128,
+        "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z0-9_]+)+\\.v[1-9][0-9]*$",
+        "type": "string"
+      },
+      "maxItems": 256,
+      "minItems": 1,
+      "title": "Components",
+      "type": "array"
+    },
+    "output_formats": {
+      "items": {
+        "enum": [
+          "mp4",
+          "png"
+        ],
+        "type": "string"
+      },
+      "maxItems": 2,
+      "minItems": 1,
+      "title": "Output Formats",
+      "type": "array"
+    },
+    "runtime": {
+      "$ref": "#/$defs/RuntimeCapabilities"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "supported_manifest_versions": {
+      "items": {
+        "const": "1.0",
+        "type": "string"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "Supported Manifest Versions",
+      "type": "array"
+    },
+    "tts_engines": {
+      "items": {
+        "enum": [
+          "edge",
+          "minimax",
+          "system",
+          "none"
+        ],
+        "type": "string"
+      },
+      "maxItems": 4,
+      "minItems": 1,
+      "title": "Tts Engines",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "capabilities_id",
+    "client",
+    "adapter",
+    "supported_manifest_versions",
+    "component_catalog_digest",
+    "components",
+    "aspect_ratios",
+    "output_formats",
+    "tts_engines",
+    "runtime",
+    "captured_at"
+  ],
+  "title": "ClientCapabilities",
+  "type": "object"
+}

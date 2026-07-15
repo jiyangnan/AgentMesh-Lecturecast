@@ -1,0 +1,12 @@
+{
+  "bundle_digest": "sha256:617450398ce7ea393b55a5411679ba00d2c73569bbefdc416e41fb8dc0cc1ccc",
+  "bundle_version": "1.0",
+  "files": {
+    "client-capabilities.schema.json": "sha256:fd9a3bfadc6e14d43a903b3f99dd17a4e961d363ba194b7e648b64cb736f7063",
+    "creative-brief.schema.json": "sha256:838979b4c75ac2563904c74e68e34355d83b177379882c7e476df58c122e8ecf",
+    "decision-card-set.schema.json": "sha256:3b6896325547250ca994b22508dbb61df4453d9c993d8a32158f28aee860084b",
+    "error-envelope.schema.json": "sha256:fb508b9f799db217f8a8080cb35e51a7a1cb5b83273d946e87cb61998b9ae480",
+    "production-manifest.schema.json": "sha256:fdc7ef7cd355e825dd6bdbba36a3c6a6afb682b5879fc8bdfdf160ef43550d2a"
+  },
+  "generated_by": "lecturecast-server"
+}

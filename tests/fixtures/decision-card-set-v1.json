@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "card_set_id": "dcs_visual_demo_v1",
+  "session_id": "dir_demo_001",
+  "catalog_version": "2026-07-15",
+  "stage": "visual",
+  "title": "选择课程视频的视觉语言",
+  "questions": [
+    {
+      "question_id": "visual_style",
+      "selection_mode": "single",
+      "title": "这条课程视频采用什么视觉语言？",
+      "description": "选择最符合受众与内容密度的一种。",
+      "options": [
+        {
+          "option_id": "cream_knowledge_cards",
+          "label": "奶油知识卡片",
+          "description": "柔和、亲切，适合概念讲解。",
+          "preview_ref": "style/cream-v1"
+        },
+        {
+          "option_id": "product_ui_focus",
+          "label": "产品界面演示",
+          "description": "突出操作路径和关键界面。",
+          "preview_ref": "style/product-ui-v1"
+        },
+        {
+          "option_id": "whiteboard_explainer",
+          "label": "白板图解",
+          "description": "用流程和关系图解释复杂原理。",
+          "preview_ref": "style/whiteboard-v1"
+        }
+      ],
+      "other_allowed": true,
+      "min_selections": 1,
+      "max_selections": 1
+    }
+  ]
+}

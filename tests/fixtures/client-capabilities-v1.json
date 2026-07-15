@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "capabilities_id": "caps_demo_v1",
+  "client": {
+    "name": "agentmesh-lecturecast",
+    "version": "0.3.0"
+  },
+  "adapter": {
+    "kind": "codex",
+    "version": "1.0.0"
+  },
+  "supported_manifest_versions": ["1.0"],
+  "component_catalog_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "components": [
+    "hook.outcome.v1",
+    "product.ui_focus.v1",
+    "ending.summary_cta.v1"
+  ],
+  "aspect_ratios": ["16:9", "9:16", "3:4"],
+  "output_formats": ["mp4", "png"],
+  "tts_engines": ["edge", "minimax"],
+  "runtime": {
+    "python_version": "3.12.0",
+    "node_version": "22.0.0",
+    "remotion_version": "4.0.0",
+    "ffmpeg_version": "8.0.1",
+    "has_libass": true,
+    "can_render_locally": true
+  },
+  "captured_at": "2026-07-15T10:02:00Z"
+}

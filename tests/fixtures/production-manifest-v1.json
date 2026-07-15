@@ -1,0 +1,153 @@
+{
+  "schema_version": "1.0",
+  "manifest_id": "manifest_demo_v1",
+  "generation_id": "generation_demo_v1",
+  "session_id": "dir_demo_001",
+  "brief_id": "brief_demo_v1",
+  "brief_version": 1,
+  "brief_digest": "sha256:8ab66ff5434cf525d908e46eae5ff6c01f7ae5739f2659103dd6640ff68b6e14",
+  "capability_digest": "sha256:53902499f0b1889134a45b41b97c8ff1eed31052b04b38795a21ee7e40d2dbac",
+  "component_catalog_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "model_policy_version": "fixture_policy_v1",
+  "prompt_version": "fixture_prompt_v1",
+  "fps": 30,
+  "total_frames": 1800,
+  "script": [
+    {
+      "section_id": "hook",
+      "title": "从海投到精准投递",
+      "learning_objective": "让观众立即理解产品带来的结果变化。",
+      "narration": "过去是同一份简历批量海投，现在可以针对每个岗位快速生成个性化投递策略。",
+      "start_frame": 0,
+      "duration_frames": 300
+    },
+    {
+      "section_id": "demo",
+      "title": "三步完成个性化批量投递",
+      "learning_objective": "演示从职位筛选到投递执行的完整路径。",
+      "narration": "先筛选目标岗位，再生成针对性策略，最后批量完成投递并保留每个岗位的差异。",
+      "start_frame": 300,
+      "duration_frames": 1200
+    },
+    {
+      "section_id": "ending",
+      "title": "效率和精准度同时提升",
+      "learning_objective": "总结产品价值并给出下一步。",
+      "narration": "把时间留给真正值得准备的岗位，让每一次投递都更有针对性。",
+      "start_frame": 1500,
+      "duration_frames": 300
+    }
+  ],
+  "scenes": [
+    {
+      "scene_id": "hook_outcome",
+      "section_id": "hook",
+      "component_id": "hook.outcome.v1",
+      "start_frame": 0,
+      "duration_frames": 300,
+      "props": {
+        "eyebrow": "AI 求职效率课",
+        "headline": "海投，不如精准投",
+        "before": "同一份简历批量发送",
+        "after": "每个岗位都有个性化策略"
+      },
+      "assets": [],
+      "transition_in": {"transition_id": "cut", "duration_frames": 0}
+    },
+    {
+      "scene_id": "demo_ui",
+      "section_id": "demo",
+      "component_id": "product.ui_focus.v1",
+      "start_frame": 300,
+      "duration_frames": 1200,
+      "props": {
+        "title": "三步完成投递",
+        "steps": ["筛选目标岗位", "生成针对性策略", "批量执行并检查"]
+      },
+      "assets": [
+        {
+          "asset_id": "screen_home",
+          "uri": "asset://screen/home.png",
+          "media_type": "image",
+          "required": true
+        }
+      ],
+      "transition_in": {"transition_id": "fade", "duration_frames": 12}
+    },
+    {
+      "scene_id": "ending_summary",
+      "section_id": "ending",
+      "component_id": "ending.summary_cta.v1",
+      "start_frame": 1500,
+      "duration_frames": 300,
+      "props": {
+        "summary": "从批量海投，升级为精准、个性化的快速批量投递。",
+        "cta": "从一个真正想去的岗位开始。"
+      },
+      "assets": [],
+      "transition_in": {"transition_id": "slide", "duration_frames": 12}
+    }
+  ],
+  "outputs": [
+    {
+      "output_id": "video_landscape",
+      "kind": "video",
+      "aspect_ratio": "16:9",
+      "width": 1920,
+      "height": 1080,
+      "format": "mp4",
+      "filename": "demo-bilibili.mp4"
+    },
+    {
+      "output_id": "video_vertical",
+      "kind": "video",
+      "aspect_ratio": "9:16",
+      "width": 1080,
+      "height": 1920,
+      "format": "mp4",
+      "filename": "demo-xiaohongshu.mp4"
+    },
+    {
+      "output_id": "cover_landscape",
+      "kind": "cover",
+      "aspect_ratio": "16:9",
+      "width": 1920,
+      "height": 1080,
+      "format": "png",
+      "filename": "demo-cover-landscape.png"
+    },
+    {
+      "output_id": "cover_vertical",
+      "kind": "cover",
+      "aspect_ratio": "3:4",
+      "width": 1242,
+      "height": 1660,
+      "format": "png",
+      "filename": "demo-cover-vertical.png"
+    }
+  ],
+  "quality": {
+    "passed": true,
+    "checks": [
+      {
+        "check_id": "schema_valid",
+        "passed": true,
+        "severity": "error",
+        "message": "Manifest satisfies the v1 schema."
+      },
+      {
+        "check_id": "components_supported",
+        "passed": true,
+        "severity": "error",
+        "message": "All component IDs are present in ClientCapabilities."
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "Ed25519",
+    "key_id": "fixture_key_v1",
+    "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+  },
+  "created_at": "2026-07-15T10:05:00Z",
+  "content_expires_at": "2026-08-14T10:05:00Z"
+}

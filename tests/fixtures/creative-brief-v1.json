@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0",
+  "brief_id": "brief_demo_v1",
+  "session_id": "dir_demo_001",
+  "catalog_version": "2026-07-15",
+  "brief_version": 1,
+  "source": {
+    "source_type": "screen_recording",
+    "title": "AI 求职产品演示",
+    "summary": "展示如何把批量海投简历改造成精准、个性化的快速批量投递。",
+    "language": "zh-CN"
+  },
+  "audience": {
+    "option_id": "job_seekers",
+    "description": "正在高频投递简历、希望提升效率和精准度的求职者。",
+    "assumed_knowledge": ["了解常见招聘平台", "已经准备个人简历"]
+  },
+  "goal": {
+    "option_id": "complete_task",
+    "statement": "观众能够理解并复现一次个性化批量投递流程。",
+    "success_criteria": ["识别目标职位", "生成个性化投递策略", "完成批量投递"]
+  },
+  "depth": "practical",
+  "narrative": {
+    "option_id": "problem_solution_demo",
+    "chapter_count": 3,
+    "include_demo": true
+  },
+  "visual": {
+    "option_id": "cream_knowledge_cards",
+    "palette": ["#FFF7F0", "#D9CBBF", "#8FA3A0"],
+    "motion_intensity": "medium"
+  },
+  "pace": {
+    "option_id": "professional_compact",
+    "words_per_minute": 220
+  },
+  "voice": {
+    "option_id": "confident_natural",
+    "language": "zh-CN",
+    "tone": "可信、清晰、有行动感。"
+  },
+  "hook": {
+    "option_id": "outcome_first",
+    "text": "把海投简历，变成每个岗位都有针对性的精准投递。"
+  },
+  "outputs": [
+    {"output_id": "video_landscape", "kind": "video", "aspect_ratio": "16:9"},
+    {"output_id": "video_vertical", "kind": "video", "aspect_ratio": "9:16"},
+    {"output_id": "cover_landscape", "kind": "cover", "aspect_ratio": "16:9"},
+    {"output_id": "cover_vertical", "kind": "cover", "aspect_ratio": "3:4"}
+  ],
+  "series": {
+    "series_id": "ai_job_search",
+    "name": "AI 求职效率课",
+    "episode_label": "EP1"
+  },
+  "constraints": [
+    {
+      "constraint_id": "raw_media_local",
+      "kind": "privacy",
+      "value": "原始录屏、配音和成片不得上传到 Director。"
+    }
+  ],
+  "confirmed_at": "2026-07-15T10:00:00Z"
+}

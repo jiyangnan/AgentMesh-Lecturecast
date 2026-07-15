@@ -1,0 +1,491 @@
+{
+  "$defs": {
+    "AssetRequirement": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "media_type": {
+          "enum": [
+            "image",
+            "video",
+            "audio",
+            "document"
+          ],
+          "title": "Media Type",
+          "type": "string"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "uri": {
+          "maxLength": 2048,
+          "minLength": 9,
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "uri",
+        "media_type",
+        "required"
+      ],
+      "title": "AssetRequirement",
+      "type": "object"
+    },
+    "ManifestOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "aspect_ratio": {
+          "enum": [
+            "16:9",
+            "9:16",
+            "3:4"
+          ],
+          "title": "Aspect Ratio",
+          "type": "string"
+        },
+        "filename": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.(?:mp4|png)$",
+          "title": "Filename",
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "mp4",
+            "png"
+          ],
+          "title": "Format",
+          "type": "string"
+        },
+        "height": {
+          "maximum": 7680,
+          "minimum": 320,
+          "title": "Height",
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "video",
+            "cover"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "output_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Output Id",
+          "type": "string"
+        },
+        "width": {
+          "maximum": 7680,
+          "minimum": 320,
+          "title": "Width",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "output_id",
+        "kind",
+        "aspect_ratio",
+        "width",
+        "height",
+        "format",
+        "filename"
+      ],
+      "title": "ManifestOutput",
+      "type": "object"
+    },
+    "QualityCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "check_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Check Id",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "severity": {
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ],
+          "title": "Severity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "check_id",
+        "passed",
+        "severity",
+        "message"
+      ],
+      "title": "QualityCheck",
+      "type": "object"
+    },
+    "QualityResult": {
+      "additionalProperties": false,
+      "properties": {
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/QualityCheck"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Checks",
+          "type": "array"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "passed",
+        "checks"
+      ],
+      "title": "QualityResult",
+      "type": "object"
+    },
+    "SceneNode": {
+      "additionalProperties": false,
+      "properties": {
+        "assets": {
+          "items": {
+            "$ref": "#/$defs/AssetRequirement"
+          },
+          "maxItems": 24,
+          "title": "Assets",
+          "type": "array"
+        },
+        "component_id": {
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z0-9_]+)+\\.v[1-9][0-9]*$",
+          "title": "Component Id",
+          "type": "string"
+        },
+        "duration_frames": {
+          "exclusiveMinimum": 0,
+          "title": "Duration Frames",
+          "type": "integer"
+        },
+        "props": {
+          "additionalProperties": true,
+          "title": "Props",
+          "type": "object"
+        },
+        "scene_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Scene Id",
+          "type": "string"
+        },
+        "section_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Section Id",
+          "type": "string"
+        },
+        "start_frame": {
+          "minimum": 0,
+          "title": "Start Frame",
+          "type": "integer"
+        },
+        "transition_in": {
+          "$ref": "#/$defs/TransitionSpec"
+        }
+      },
+      "required": [
+        "scene_id",
+        "section_id",
+        "component_id",
+        "start_frame",
+        "duration_frames",
+        "props",
+        "assets",
+        "transition_in"
+      ],
+      "title": "SceneNode",
+      "type": "object"
+    },
+    "ScriptSection": {
+      "additionalProperties": false,
+      "properties": {
+        "duration_frames": {
+          "exclusiveMinimum": 0,
+          "title": "Duration Frames",
+          "type": "integer"
+        },
+        "learning_objective": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Learning Objective",
+          "type": "string"
+        },
+        "narration": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Narration",
+          "type": "string"
+        },
+        "section_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Section Id",
+          "type": "string"
+        },
+        "start_frame": {
+          "minimum": 0,
+          "title": "Start Frame",
+          "type": "integer"
+        },
+        "title": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "section_id",
+        "title",
+        "learning_objective",
+        "narration",
+        "start_frame",
+        "duration_frames"
+      ],
+      "title": "ScriptSection",
+      "type": "object"
+    },
+    "SignatureMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "const": "Ed25519",
+          "title": "Algorithm",
+          "type": "string"
+        },
+        "key_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Key Id",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 88,
+          "minLength": 88,
+          "pattern": "^[A-Za-z0-9+/]{86}==$",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "algorithm",
+        "key_id",
+        "value"
+      ],
+      "title": "SignatureMetadata",
+      "type": "object"
+    },
+    "TransitionSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "duration_frames": {
+          "maximum": 90,
+          "minimum": 0,
+          "title": "Duration Frames",
+          "type": "integer"
+        },
+        "transition_id": {
+          "enum": [
+            "cut",
+            "fade",
+            "slide",
+            "wipe"
+          ],
+          "title": "Transition Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "transition_id",
+        "duration_frames"
+      ],
+      "title": "TransitionSpec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "brief_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Brief Digest",
+      "type": "string"
+    },
+    "brief_id": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Brief Id",
+      "type": "string"
+    },
+    "brief_version": {
+      "minimum": 1,
+      "title": "Brief Version",
+      "type": "integer"
+    },
+    "capability_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Capability Digest",
+      "type": "string"
+    },
+    "component_catalog_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Component Catalog Digest",
+      "type": "string"
+    },
+    "content_expires_at": {
+      "format": "date-time",
+      "title": "Content Expires At",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "fps": {
+      "maximum": 60,
+      "minimum": 24,
+      "title": "Fps",
+      "type": "integer"
+    },
+    "generation_id": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Generation Id",
+      "type": "string"
+    },
+    "manifest_id": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Manifest Id",
+      "type": "string"
+    },
+    "model_policy_version": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Model Policy Version",
+      "type": "string"
+    },
+    "outputs": {
+      "items": {
+        "$ref": "#/$defs/ManifestOutput"
+      },
+      "maxItems": 6,
+      "minItems": 1,
+      "title": "Outputs",
+      "type": "array"
+    },
+    "prompt_version": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "quality": {
+      "$ref": "#/$defs/QualityResult"
+    },
+    "scenes": {
+      "items": {
+        "$ref": "#/$defs/SceneNode"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "title": "Scenes",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "script": {
+      "items": {
+        "$ref": "#/$defs/ScriptSection"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Script",
+      "type": "array"
+    },
+    "session_id": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Session Id",
+      "type": "string"
+    },
+    "signature": {
+      "$ref": "#/$defs/SignatureMetadata"
+    },
+    "total_frames": {
+      "exclusiveMinimum": 0,
+      "title": "Total Frames",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "manifest_id",
+    "generation_id",
+    "session_id",
+    "brief_id",
+    "brief_version",
+    "brief_digest",
+    "capability_digest",
+    "component_catalog_digest",
+    "model_policy_version",
+    "prompt_version",
+    "fps",
+    "total_frames",
+    "script",
+    "scenes",
+    "outputs",
+    "quality",
+    "signature",
+    "created_at",
+    "content_expires_at"
+  ],
+  "title": "ProductionManifest",
+  "type": "object"
+}

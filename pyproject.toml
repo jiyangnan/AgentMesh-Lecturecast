@@ -12,6 +12,7 @@ license = "Apache-2.0"
 authors = [{ name = "jiyangnan", email = "niclolaszhaosi@gmail.com" }]
 keywords = ["lecturecast", "agentmesh", "video", "course", "bilibili", "xiaohongshu", "remotion", "local"]
 dependencies = [
+    "jsonschema>=4.23",
     "typer>=0.12",
     "rich>=13.7",
 ]
@@ -21,6 +22,7 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.7",
     "mypy>=1.13",
+    "types-jsonschema>=4.23",
 ]
 
 [project.scripts]

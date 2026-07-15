@@ -1,0 +1,67 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "cause": {
+      "anyOf": [
+        {
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cause"
+    },
+    "code": {
+      "enum": [
+        "missing_credential",
+        "invalid_api_key",
+        "product_scope_denied",
+        "core_unavailable",
+        "session_not_found",
+        "session_expired",
+        "stale_catalog",
+        "brief_not_ready",
+        "brief_version_conflict",
+        "client_upgrade_required",
+        "insufficient_credits",
+        "generation_conflict",
+        "generation_in_progress",
+        "manifest_generation_failed",
+        "credit_return_pending",
+        "manifest_signature_invalid",
+        "manifest_incompatible",
+        "project_revision_conflict"
+      ],
+      "title": "Code",
+      "type": "string"
+    },
+    "message": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Message",
+      "type": "string"
+    },
+    "next_action": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Next Action",
+      "type": "string"
+    },
+    "retryable": {
+      "title": "Retryable",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "code",
+    "message",
+    "next_action",
+    "retryable"
+  ],
+  "title": "ErrorEnvelope",
+  "type": "object"
+}
