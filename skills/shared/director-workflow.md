@@ -16,7 +16,7 @@ Read `.lecturecast/project.json` and `.lecturecast/director-state.json` through 
 ## Start
 
 1. Create or resume a local project.
-2. Write a bounded UTF-8 source-summary JSON containing exactly `source_type`, `title`, `summary`, and `language`. Do not include media, transcripts, local paths or credentials.
+2. Write a bounded UTF-8 source-summary JSON containing exactly `source_type`, `title`, `summary`, and `language`. The user-confirmed summary must contain at least 20 characters of concrete facts or explicitly state the intended general framework. Do not include media, transcripts, local paths or credentials.
 3. Run:
 
 ```bash
@@ -46,6 +46,8 @@ lecturecast director answer <project-path> \
 ```
 
 For `other`, place the user's bounded text in a temporary UTF-8 file and use `--custom-text-file`; do not expose it in shell history. If the host has no native choice control, show numbered choices and map the selected number back to the exact option ID.
+
+For `source_readiness`, preserve the user's exact stable option ID. `facts_confirmed` means the summary is the factual boundary; `framework_only` forbids product-specific or technical details that are absent from the summary. If the user selects `need_more_source`, do not confirm or generate: tell them to supplement the local summary and start a new Director Session. This path never deducts credit.
 
 ## Brief and paid generation
 

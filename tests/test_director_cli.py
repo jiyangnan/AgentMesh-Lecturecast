@@ -439,6 +439,26 @@ def test_source_summary_rejects_media_paths_and_extra_content(tmp_path: Path) ->
         load_source_file(source)
 
 
+def test_source_summary_rejects_title_only_material_before_network(tmp_path: Path) -> None:
+    source = tmp_path / "source.json"
+    source.write_text(
+        json.dumps(
+            {
+                "source_type": "screen_recording",
+                "title": "产品演示",
+                "summary": "产品演示",
+                "language": "zh-CN",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(LectureCastError) as captured:
+        load_source_file(source)
+
+    assert "至少 20 字" in captured.value.next_action
+
+
 def test_director_state_revision_detects_cross_agent_overwrite(tmp_path: Path) -> None:
     _init_project(tmp_path)
     store = DirectorStateStore(tmp_path)

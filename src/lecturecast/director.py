@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -19,6 +20,8 @@ from .protocol import CreativeBrief, DecisionCardSet, ProductionManifest
 DIRECTOR_STATE_SCHEMA_VERSION = "1.0"
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 MAX_SOURCE_BYTES = 64 * 1024
+_SOURCE_TYPES = {"topic", "script", "slides", "screen_recording", "mixed"}
+_LANGUAGE = re.compile(r"^[a-z]{2}(?:-[A-Z]{2})?$")
 
 
 def normalize_server_url(value: str) -> str:
@@ -558,5 +561,19 @@ def load_source_file(path: Path) -> dict[str, Any]:
             code="manifest_incompatible",
             message="Source summary JSON 字段必须是非空文本。",
             next_action="修复 source summary 后重试。",
+        )
+    if (
+        payload["source_type"] not in _SOURCE_TYPES
+        or len(payload["title"].strip()) > 160
+        or not 20 <= len(payload["summary"].strip()) <= 4000
+        or not _LANGUAGE.fullmatch(payload["language"].strip())
+    ):
+        raise LectureCastError(
+            code="manifest_incompatible",
+            message="Source summary 不满足 Director 的素材事实门禁。",
+            next_action=(
+                "提供 1～160 字标题、至少 20 字且不超过 4000 字的已核对 summary，"
+                "并使用支持的 source_type/language。"
+            ),
         )
     return payload
