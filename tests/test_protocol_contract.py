@@ -58,6 +58,15 @@ def test_protocol_lock_covers_exact_schema_bytes() -> None:
         assert _sha256((SCHEMA_DIR / filename).read_bytes()) == expected_digest
 
 
+def test_error_envelope_exposes_stable_rollout_rejection_code() -> None:
+    schema = json.loads(
+        (SCHEMA_DIR / "error-envelope.schema.json").read_text(encoding="utf-8")
+    )
+    error_codes = schema["properties"]["code"]["enum"]
+
+    assert "director_not_available" in error_codes
+
+
 def test_golden_fixture_lock_covers_exact_bytes() -> None:
     lock = _fixture("fixture.lock")
 

@@ -20,6 +20,7 @@
         "missing_credential",
         "invalid_api_key",
         "product_scope_denied",
+        "director_not_available",
         "core_unavailable",
         "session_not_found",
         "session_expired",
