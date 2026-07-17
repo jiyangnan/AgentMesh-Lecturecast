@@ -12,6 +12,13 @@ Choose the route explicitly:
 
 For each Director question, use the current OpenClaw channel's native choice/form capability when exposed. Keep the server label/description and exact stable `option_id`. Submit one answer and refresh server state before asking the next. When a channel has no reliable choice control, use the shared numbered-text fallback; do not invent channel-specific IDs.
 
+In an official release dogfood run, pass `--interaction-mode native_choice` for
+every OpenClaw choice answer. For the cross-host run, enter through the handoff
+payload in a fresh task, run `director resume --adapter openclaw --fresh-task`,
+then perform generation, wait for ready, and complete local rendering. Follow
+[the release dogfood gate](../../docs/RELEASE-DOGFOOD.md); do not simulate the
+other hosts.
+
 When continuing an existing Director project, first run `lecturecast director resume <project-path> --adapter openclaw --json`. This is an offline, zero-credit rebind; run it before any further Director operation.
 
 Never treat chat memory as project state. Resume from the supplied project path. Never create a second generation ID after a timeout. Never expose `LECTURECAST_API_KEY` in messages, tool arguments or memory.

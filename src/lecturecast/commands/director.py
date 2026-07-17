@@ -16,6 +16,12 @@ from ..director import (
     normalize_adapter_identity,
     resolve_server_url,
 )
+from ..dogfood import (
+    handoff_requires_fresh_task,
+    record_event_if_active,
+    require_fresh_task_if_active,
+    require_interaction_mode_if_active,
+)
 from ..errors import LectureCastError
 from ..project import ProjectStore
 from ..protocol import ClientCapabilities, canonical_digest
@@ -129,6 +135,13 @@ def start(
             adapter_kind=adapter,
             adapter_version=adapter_version,
         )
+        record_event_if_active(
+            directory,
+            "director_start",
+            adapter=adapter,
+            session_id=state.session_id,
+            status=str(session["status"]),
+        )
         emit(
             _result(state=state, session=session),
             json_output=json_output,
@@ -151,6 +164,13 @@ def next_step(
         state = store.load()
         session = _make_client(state.payload["server_url"]).get_session(state.session_id)
         state = store.update(state, session=session)
+        record_event_if_active(
+            directory,
+            "decision_next",
+            adapter=str(state.payload["adapter_kind"]),
+            session_id=state.session_id,
+            status=str(session["status"]),
+        )
         emit(
             _result(state=state, session=session),
             json_output=json_output,
@@ -167,6 +187,7 @@ def resume(
     directory: Path = typer.Argument(Path(".")),
     adapter: str = typer.Option(..., "--adapter"),
     adapter_version: str = typer.Option("1.0.0", "--adapter-version"),
+    fresh_task: bool = typer.Option(False, "--fresh-task"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Rebind an existing Director project to the current agent without network use."""
@@ -179,10 +200,25 @@ def resume(
             previous.payload["adapter_kind"],
             previous.payload["adapter_version"],
         ) != (adapter, adapter_version)
+        require_fresh_task_if_active(
+            directory,
+            adapter_changed=changed,
+            fresh_task=fresh_task,
+        )
         state = store.bind_adapter(
             previous,
             adapter_kind=adapter,
             adapter_version=adapter_version,
+        )
+        record_event_if_active(
+            directory,
+            "director_resume",
+            adapter=adapter,
+            session_id=state.session_id,
+            generation_id=state.generation_id,
+            status=str(state.payload["session_status"]),
+            adapter_changed=changed,
+            fresh_task=fresh_task,
         )
         payload = _result(state=state, project=project.to_dict())
         payload["resume"] = {
@@ -209,12 +245,18 @@ def answer(
     option_id: str = typer.Option(..., "--option-id"),
     catalog_version: str | None = typer.Option(None, "--catalog-version"),
     custom_text_file: Path | None = typer.Option(None, "--custom-text-file"),
+    interaction_mode: str | None = typer.Option(None, "--interaction-mode"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Submit stable IDs; display labels are never interpreted as IDs."""
     try:
         store = DirectorStateStore(directory)
         state = store.load()
+        interaction_mode = require_interaction_mode_if_active(
+            directory,
+            interaction_mode,
+            adapter=str(state.payload["adapter_kind"]),
+        )
         session = _make_client(state.payload["server_url"]).answer(
             state.session_id,
             question_id=question_id,
@@ -223,6 +265,14 @@ def answer(
             custom_text=_read_custom_text(custom_text_file),
         )
         state = store.update(state, session=session)
+        record_event_if_active(
+            directory,
+            "decision_answer",
+            adapter=str(state.payload["adapter_kind"]),
+            session_id=state.session_id,
+            status=str(session["status"]),
+            interaction_mode=interaction_mode,
+        )
         emit(
             _result(state=state, session=session),
             json_output=json_output,
@@ -251,6 +301,13 @@ def show_brief(
                 message="Creative Brief 尚未形成。",
                 next_action="继续处理 decision_card_set 后重试。",
             )
+        record_event_if_active(
+            directory,
+            "brief_show",
+            adapter=str(state.payload["adapter_kind"]),
+            session_id=state.session_id,
+            status=str(session["status"]),
+        )
         emit(
             _result(state=state, session=session),
             json_output=json_output,
@@ -292,6 +349,14 @@ def confirm_brief(
         if project.payload["creative_brief_digest"] != canonical_digest(brief):
             project = project_store.save_brief(brief, expected_revision=project.revision)
         state = state_store.update(state, session=session)
+        record_event_if_active(
+            directory,
+            "brief_confirm",
+            adapter=str(state.payload["adapter_kind"]),
+            session_id=state.session_id,
+            status=str(session["status"]),
+            capability_digest=project.payload["capability_digest"],
+        )
         emit(
             _result(state=state, session=session, project=project.to_dict()),
             json_output=json_output,
@@ -392,6 +457,16 @@ def generate(
             capabilities=capabilities.model_dump(),
         )
         state = state_store.update(state, generation=generation)
+        project = project_store.load()
+        record_event_if_active(
+            directory,
+            "generation_request",
+            adapter=str(state.payload["adapter_kind"]),
+            session_id=state.session_id,
+            generation_id=state.generation_id,
+            status=str(generation["status"]),
+            capability_digest=project.payload["capability_digest"],
+        )
         emit(
             _result(state=state, generation=generation),
             json_output=json_output,
@@ -435,6 +510,16 @@ def status(
             project = project_store.save_manifest(
                 manifest, expected_revision=project.revision
             )
+        record_event_if_active(
+            directory,
+            "generation_status",
+            adapter=str(state.payload["adapter_kind"]),
+            session_id=state.session_id,
+            generation_id=state.generation_id,
+            status=str(generation["status"]),
+            capability_digest=project.payload["capability_digest"],
+            manifest_digest=project.payload["production_manifest_digest"],
+        )
         emit(
             _result(state=state, generation=generation, project=project.to_dict()),
             json_output=json_output,
@@ -462,6 +547,14 @@ def delete(
             state,
             session_status="deleted",
             updated_at=str(result["content_deleted_at"]),
+        )
+        record_event_if_active(
+            directory,
+            "cloud_delete",
+            adapter=str(state.payload["adapter_kind"]),
+            session_id=state.session_id,
+            generation_id=state.generation_id,
+            status="deleted",
         )
         emit(
             {"director": state.to_dict(), "deletion": result},
@@ -508,6 +601,7 @@ def handoff(
                     project_path,
                     "--adapter",
                     adapter,
+                    *(["--fresh-task"] if handoff_requires_fresh_task(directory) else []),
                     "--json",
                 ]
                 for adapter in sorted(DIRECTOR_ADAPTER_KINDS)
@@ -519,6 +613,15 @@ def handoff(
             ),
             "director": director,
         }
+        if director is not None:
+            record_event_if_active(
+                directory,
+                "director_handoff",
+                adapter=str(director["adapter_kind"]),
+                session_id=str(director["session_id"]),
+                generation_id=director["generation_id"],
+                status=str(director["session_status"]),
+            )
         emit(
             payload,
             json_output=json_output,
