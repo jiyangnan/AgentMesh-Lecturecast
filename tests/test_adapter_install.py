@@ -85,3 +85,8 @@ def test_three_host_skills_reference_one_shared_director_workflow() -> None:
         assert content.startswith("---\nname: lecturecast\n")
         assert "../shared/director-workflow.md" in content
         assert "option_id" in content
+
+    shared_content = shared.read_text(encoding="utf-8")
+    assert "Do not record, export, or transmit outcome evidence automatically" in shared_content
+    assert "share-anonymous-outcome" in shared_content
+    assert "Never upload the file" in shared_content

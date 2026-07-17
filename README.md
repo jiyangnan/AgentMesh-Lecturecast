@@ -137,7 +137,9 @@ The agent reads the runbook and drives the local pipeline to completion.
 - **Community sends nothing to a LectureCast service.** Audio, rendered mp4s, covers and original media remain local.
 - If you opt into Director, only the bounded summary, stable choices, Brief and capability metadata go to the Director service. Original media, TTS files, local paths and rendered outputs are not uploaded.
 - If you opt into the MiniMax voice (BYOK), your topic + script text are sent to your own MiniMax account over HTTPS for synthesis. The default Edge voice runs without any third-party account.
-- No tracking, no telemetry.
+- No tracking, no telemetry. An invited limited-cohort participant may
+  [explicitly create a local outcome receipt](docs/LOCAL-OUTCOME-EVIDENCE.md)
+  and manually export a bounded anonymous report; the CLI never uploads it.
 
 ---
 

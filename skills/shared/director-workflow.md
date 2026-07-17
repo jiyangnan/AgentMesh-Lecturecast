@@ -97,6 +97,35 @@ To remove retained cloud content while keeping local work:
 lecturecast director delete <project-path> --json
 ```
 
+## Optional local outcome evidence
+
+Do not record, export, or transmit outcome evidence automatically. Only after
+the user explicitly opts into limited-cohort evidence, ask bounded questions
+with the host's native choice control:
+
+1. Render result: `completed`, `partial`, or `failed/not_attempted`; split the
+   last choice into a second two-option question when selected.
+2. Adoption: `published`, `exported`, or `not adopted`; split the last choice
+   into `discarded` or `undecided` when selected.
+3. For `partial` or `failed`, ask for one bounded `failure_reason` from the CLI
+   help. Never collect free text.
+
+Record the answer locally with `lecturecast outcome record`. The private
+receipt is marked `shareable: false`. Only if the user separately agrees to
+share an anonymous report may you run:
+
+```bash
+lecturecast outcome export <project-path> \
+  --report-out <new-local-file> \
+  --consent share-anonymous-outcome \
+  --json
+```
+
+Show the exported JSON to the user before they decide how to share it. This
+command makes no network request. Never upload the file, infer consent, include
+source/path/media/free text, or claim it was sent. Full contract:
+`docs/LOCAL-OUTCOME-EVIDENCE.md`.
+
 ## Output discipline
 
 - With `--json`, parse stdout as exactly one JSON document.

@@ -15,6 +15,7 @@ from .commands.director import app as director_app
 from .commands.dogfood import app as dogfood_app
 from .commands.doctor import doctor
 from .commands.manifest import app as manifest_app
+from .commands.outcome import app as outcome_app
 from .commands.project import app as project_app
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, rich_markup_mode="rich")
@@ -28,6 +29,11 @@ app.add_typer(
 )
 app.add_typer(project_app, name="project", help="Create and resume durable local projects.")
 app.add_typer(manifest_app, name="manifest", help="Inspect and verify signed manifests.")
+app.add_typer(
+    outcome_app,
+    name="outcome",
+    help="Create explicit local outcome evidence without tracking or upload.",
+)
 app.command()(doctor)
 
 
