@@ -4,10 +4,20 @@
 Director Manifests. It contains public Ed25519 keys only. Private seeds belong
 exclusively to `lecturecast-server` operations and must never enter this repo.
 
-Before the first production key is approved, the packaged keyring is
-intentionally empty. Director Manifest verification therefore fails closed.
-Fixture keys live only under `tests/fixtures/` and are injected by tests; a
-release keyring rejects fixture/test IDs.
+An empty keyring is allowed only during pre-release development, before the
+first production key is approved. It makes Director Manifest verification fail
+closed and cannot pass the release check. Every customer-facing release must
+instead package exactly one `current` `lecturecast-prod-*` key; inspect the
+actual release state with:
+
+```bash
+python scripts/update_signing_keyring.py --check
+```
+
+The command validates and prints the packaged keyring, which is the source of
+truth across initial publication and later rotations. Fixture keys live only
+under `tests/fixtures/` and are injected by tests; a release keyring rejects
+fixture/test IDs.
 
 ## Import a reviewed public envelope
 
