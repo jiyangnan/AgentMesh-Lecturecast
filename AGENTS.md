@@ -1,5 +1,18 @@
 # AGENTS.md — driving Lecturecast as an AI agent
 
+## System boundary — read before any change
+
+Before changing product scope, hosting, DNS, Caddy, deployment, credits, or
+media handling, read
+[`docs/LECTURECAST-SYSTEM-BOUNDARY.md`](docs/LECTURECAST-SYSTEM-BOUNDARY.md).
+
+- The official site is served through the existing AgentMesh360
+  `jobagent-caddy`; GitHub Pages is not a production origin.
+- `site/` is the canonical website source, while `agentmesh-core` owns
+  production publishing, gateway credentials, verification, and rollback.
+- Never add a production `CNAME`, production SSH Secret, second Caddy, media
+  upload, or cloud rendering path here.
+
 You are an AI agent (Claude Code / OpenClaw / Cursor / Codex …) running Lecturecast
 on behalf of your human. **LectureCast Community is fully local and open source**:
 no account and no LectureCast API key. The optional **Director** route can provide

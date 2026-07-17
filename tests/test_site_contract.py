@@ -6,7 +6,8 @@ import subprocess
 import sys
 
 
-SCRIPT = Path(__file__).parents[1] / "scripts" / "validate_site.py"
+ROOT = Path(__file__).parents[1]
+SCRIPT = ROOT / "scripts" / "validate_site.py"
 
 
 def _validate(
@@ -167,3 +168,14 @@ def test_community_director_contract_requires_machine_readable_boundary(
     errors = result["errors"]
     assert isinstance(errors, list)
     assert any("llms.txt" in error for error in errors)
+
+
+def test_production_hosting_stays_behind_agentmesh_caddy() -> None:
+    boundary = (ROOT / "docs/LECTURECAST-SYSTEM-BOUNDARY.md").read_text()
+
+    assert not (ROOT / ".github/workflows/pages.yml").exists()
+    assert not (ROOT / "site/CNAME").exists()
+    assert "jobagent-caddy" in boundary
+    assert "agentmesh-core" in boundary
+    assert "GitHub Pages is not a production origin" in boundary
+    assert (ROOT / ".github/workflows/site-contract.yml").exists()
