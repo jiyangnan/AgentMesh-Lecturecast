@@ -8,10 +8,12 @@ import typer
 
 from ..capabilities import capture_capabilities
 from ..director import (
+    DIRECTOR_ADAPTER_KINDS,
     DirectorClient,
     DirectorState,
     DirectorStateStore,
     load_source_file,
+    normalize_adapter_identity,
     resolve_server_url,
 )
 from ..errors import LectureCastError
@@ -42,19 +44,20 @@ def _unexpected(exc: Exception, *, json_output: bool) -> None:
 
 
 def _adapter(kind: str, version: str) -> tuple[str, str]:
-    if kind not in {"codex", "claude-code", "openclaw", "text"}:
+    if kind.strip() not in DIRECTOR_ADAPTER_KINDS:
         raise LectureCastError(
             code="manifest_incompatible",
             message="未知的 Agent Adapter。",
             next_action="使用 codex、claude-code、openclaw 或 text。",
         )
-    if not version.strip():
+    try:
+        return normalize_adapter_identity(kind, version)
+    except ValueError:
         raise LectureCastError(
             code="manifest_incompatible",
-            message="Adapter version 不能为空。",
+            message="Adapter version 无效。",
             next_action="提供语义版本，例如 1.0.0。",
-        )
-    return kind, version.strip()
+        ) from None
 
 
 def _result(
@@ -152,6 +155,46 @@ def next_step(
             _result(state=state, session=session),
             json_output=json_output,
             message=f"Session 状态：{session['status']}。",
+        )
+    except LectureCastError as error:
+        fail(error, json_output=json_output)
+    except Exception as exc:
+        _unexpected(exc, json_output=json_output)
+
+
+@app.command("resume")
+def resume(
+    directory: Path = typer.Argument(Path(".")),
+    adapter: str = typer.Option(..., "--adapter"),
+    adapter_version: str = typer.Option("1.0.0", "--adapter-version"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Rebind an existing Director project to the current agent without network use."""
+    try:
+        project = ProjectStore(directory).load()
+        adapter, adapter_version = _adapter(adapter, adapter_version)
+        store = DirectorStateStore(directory)
+        previous = store.load()
+        changed = (
+            previous.payload["adapter_kind"],
+            previous.payload["adapter_version"],
+        ) != (adapter, adapter_version)
+        state = store.bind_adapter(
+            previous,
+            adapter_kind=adapter,
+            adapter_version=adapter_version,
+        )
+        payload = _result(state=state, project=project.to_dict())
+        payload["resume"] = {
+            "adapter_changed": changed,
+            "network_requested": False,
+            "credit_deducted": False,
+            "capabilities_policy": "refresh_before_generate_on_adapter_mismatch",
+        }
+        emit(
+            payload,
+            json_output=json_output,
+            message=f"Director 已绑定当前 Agent：{adapter} {adapter_version}。",
         )
     except LectureCastError as error:
         fail(error, json_output=json_output)
@@ -260,7 +303,12 @@ def confirm_brief(
         _unexpected(exc, json_output=json_output)
 
 
-def _stored_capabilities(store: ProjectStore) -> ClientCapabilities | None:
+def _stored_capabilities(
+    store: ProjectStore,
+    *,
+    adapter_kind: str,
+    adapter_version: str,
+) -> ClientCapabilities | None:
     project = store.load()
     if project.payload["capability_digest"] is None:
         return None
@@ -281,6 +329,9 @@ def _stored_capabilities(store: ProjectStore) -> ClientCapabilities | None:
             message="ClientCapabilities 与项目 digest 不一致。",
             next_action="恢复项目文件或重新采集能力。",
         )
+    saved_adapter = document.model_dump()["adapter"]
+    if saved_adapter != {"kind": adapter_kind, "version": adapter_version}:
+        return None
     return document
 
 
@@ -316,11 +367,17 @@ def generate(
             )
 
         project_store = ProjectStore(directory)
-        capabilities = _stored_capabilities(project_store)
+        adapter_kind = str(state.payload["adapter_kind"])
+        adapter_version = str(state.payload["adapter_version"])
+        capabilities = _stored_capabilities(
+            project_store,
+            adapter_kind=adapter_kind,
+            adapter_version=adapter_version,
+        )
         if capabilities is None:
             capabilities = capture_capabilities(
-                adapter_kind=str(state.payload["adapter_kind"]),
-                adapter_version=str(state.payload["adapter_version"]),
+                adapter_kind=adapter_kind,
+                adapter_version=adapter_version,
                 repo_root=Path(__file__).resolve().parents[3],
             )
             project = project_store.load()
@@ -443,9 +500,22 @@ def handoff(
                 project_path,
                 "--json",
             ],
+            "director_resume_argv_by_adapter": {
+                adapter: [
+                    "lecturecast",
+                    "director",
+                    "resume",
+                    project_path,
+                    "--adapter",
+                    adapter,
+                    "--json",
+                ]
+                for adapter in sorted(DIRECTOR_ADAPTER_KINDS)
+            },
             "prompt": (
                 "请读取 LectureCast Skill，并从这个本地项目继续："
-                f"{project_path}。先运行 project resume；如存在 Director 状态，再运行 director next/status。"
+                f"{project_path}。先运行 project resume；如存在 Director 状态，"
+                "再运行当前宿主对应的 director resume 命令，然后运行 director next/status。"
             ),
             "director": director,
         }

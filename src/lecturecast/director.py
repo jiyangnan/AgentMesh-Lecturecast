@@ -22,6 +22,18 @@ MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 MAX_SOURCE_BYTES = 64 * 1024
 _SOURCE_TYPES = {"topic", "script", "slides", "screen_recording", "mixed"}
 _LANGUAGE = re.compile(r"^[a-z]{2}(?:-[A-Z]{2})?$")
+DIRECTOR_ADAPTER_KINDS = frozenset({"codex", "claude-code", "openclaw", "text"})
+_ADAPTER_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$")
+
+
+def normalize_adapter_identity(kind: str, version: str) -> tuple[str, str]:
+    clean_kind = kind.strip()
+    clean_version = version.strip()
+    if clean_kind not in DIRECTOR_ADAPTER_KINDS:
+        raise ValueError("unknown Director adapter kind")
+    if _ADAPTER_VERSION.fullmatch(clean_version) is None:
+        raise ValueError("invalid Director adapter version")
+    return clean_kind, clean_version
 
 
 def normalize_server_url(value: str) -> str:
@@ -399,6 +411,16 @@ class DirectorStateStore:
         if not isinstance(revision, int) or revision < 1:
             raise ValueError("invalid Director state revision")
         normalize_server_url(str(payload["server_url"]))
+        adapter_kind = payload.get("adapter_kind")
+        adapter_version = payload.get("adapter_version")
+        if not isinstance(adapter_kind, str) or not isinstance(adapter_version, str):
+            raise ValueError("invalid Director adapter identity")
+        if (
+            adapter_kind not in DIRECTOR_ADAPTER_KINDS
+            or not adapter_version
+            or adapter_version != adapter_version.strip()
+        ):
+            raise ValueError("Director adapter identity is not normalized")
         return DirectorState(payload)
 
     def _load_unlocked(self) -> DirectorState:
@@ -465,6 +487,49 @@ class DirectorStateStore:
             state = self._validate(payload)
             atomic_write_json(self.path, state.payload)
             return state
+
+    def bind_adapter(
+        self,
+        state: DirectorState,
+        *,
+        adapter_kind: str,
+        adapter_version: str,
+    ) -> DirectorState:
+        try:
+            normalized_kind, normalized_version = normalize_adapter_identity(
+                adapter_kind, adapter_version
+            )
+        except ValueError:
+            raise LectureCastError(
+                code="manifest_incompatible",
+                message="Agent Adapter 身份无效。",
+                next_action="使用受支持的 Adapter 和语义版本，例如 openclaw 1.0.0。",
+            ) from None
+        with self.project._locked():
+            current = self._load_unlocked()
+            if current.revision != state.revision:
+                raise LectureCastError(
+                    code="project_revision_conflict",
+                    message="Director 状态已被另一个 Agent 更新。",
+                    next_action="重新运行 director resume 后再继续。",
+                    retryable=True,
+                )
+            if (
+                current.payload["adapter_kind"],
+                current.payload["adapter_version"],
+            ) == (normalized_kind, normalized_version):
+                return current
+            payload = current.to_dict()
+            payload.update(
+                {
+                    "state_revision": current.revision + 1,
+                    "adapter_kind": normalized_kind,
+                    "adapter_version": normalized_version,
+                }
+            )
+            next_state = self._validate(payload)
+            atomic_write_json(self.path, next_state.payload)
+            return next_state
 
     def update(
         self,

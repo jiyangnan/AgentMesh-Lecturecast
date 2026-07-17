@@ -65,6 +65,7 @@ class FakeDirectorClient:
             brief_version=0,
         )
         self.generation_ids: list[str] = []
+        self.generation_capabilities: list[dict[str, Any]] = []
         self.fail_first_generation = fail_first_generation
         self.generation_failures = 0
 
@@ -129,6 +130,7 @@ class FakeDirectorClient:
             "openclaw",
             "text",
         }
+        self.generation_capabilities.append(capabilities)
         self.generation_ids.append(generation_id)
         if self.fail_first_generation and self.generation_failures == 0:
             self.generation_failures += 1
@@ -250,6 +252,15 @@ def test_full_director_cli_flow_is_machine_readable_and_resumable(
     handoff_payload = json.loads(handoff.stdout)
     assert handoff_payload["resume_argv"][-1] == "--json"
     assert handoff_payload["project_path"] == str(tmp_path.resolve())
+    assert handoff_payload["director_resume_argv_by_adapter"]["openclaw"] == [
+        "lecturecast",
+        "director",
+        "resume",
+        str(tmp_path.resolve()),
+        "--adapter",
+        "openclaw",
+        "--json",
+    ]
     assert "api_key" not in handoff.stdout.lower()
 
     resumed = runner.invoke(
@@ -326,6 +337,154 @@ def test_all_agent_adapters_receive_identical_stable_option_ids(
         )
 
     assert option_sets[0] == option_sets[1] == option_sets[2]
+
+
+def test_same_project_rebinds_across_agents_and_refreshes_capabilities_before_credit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = FakeDirectorClient()
+    monkeypatch.setattr(
+        "lecturecast.commands.director._make_client", lambda _url: client
+    )
+    source = _init_project(tmp_path)
+    started = _start(tmp_path, source, adapter="codex")
+    assert started["director"]["adapter_kind"] == "codex"
+
+    def unexpected_network(_url: str) -> FakeDirectorClient:
+        raise AssertionError("director resume must stay offline")
+
+    monkeypatch.setattr(
+        "lecturecast.commands.director._make_client", unexpected_network
+    )
+    resumed_by_claude = runner.invoke(
+        app,
+        [
+            "director",
+            "resume",
+            str(tmp_path),
+            "--adapter",
+            "claude-code",
+            "--adapter-version",
+            "2.3.4",
+            "--json",
+        ],
+    )
+    assert resumed_by_claude.exit_code == 0, resumed_by_claude.output
+    claude_payload = json.loads(resumed_by_claude.stdout)
+    assert claude_payload["director"]["adapter_kind"] == "claude-code"
+    assert claude_payload["resume"] == {
+        "adapter_changed": True,
+        "network_requested": False,
+        "credit_deducted": False,
+        "capabilities_policy": "refresh_before_generate_on_adapter_mismatch",
+    }
+
+    monkeypatch.setattr(
+        "lecturecast.commands.director._make_client", lambda _url: client
+    )
+    _confirm(tmp_path, client)
+    _save_fixture_capabilities(tmp_path)
+
+    resumed_by_openclaw = runner.invoke(
+        app,
+        [
+            "director",
+            "resume",
+            str(tmp_path),
+            "--adapter",
+            "openclaw",
+            "--adapter-version",
+            "3.1.0",
+            "--json",
+        ],
+    )
+    assert resumed_by_openclaw.exit_code == 0, resumed_by_openclaw.output
+    openclaw_state = json.loads(resumed_by_openclaw.stdout)["director"]
+    resumed_again = runner.invoke(
+        app,
+        [
+            "director",
+            "resume",
+            str(tmp_path),
+            "--adapter",
+            "openclaw",
+            "--adapter-version",
+            "3.1.0",
+            "--json",
+        ],
+    )
+    assert resumed_again.exit_code == 0, resumed_again.output
+    resumed_again_payload = json.loads(resumed_again.stdout)
+    assert resumed_again_payload["resume"]["adapter_changed"] is False
+    assert resumed_again_payload["director"]["state_revision"] == openclaw_state[
+        "state_revision"
+    ]
+
+    captured: list[tuple[str, str]] = []
+
+    def capture_current_adapter(**kwargs: Any) -> ClientCapabilities:
+        adapter_kind = str(kwargs["adapter_kind"])
+        adapter_version = str(kwargs["adapter_version"])
+        captured.append((adapter_kind, adapter_version))
+        payload = _fixture("client-capabilities-v1.json")
+        payload["capabilities_id"] = "caps_openclaw_rebound"
+        payload["adapter"] = {
+            "kind": adapter_kind,
+            "version": adapter_version,
+        }
+        return ClientCapabilities.model_validate(payload)
+
+    monkeypatch.setattr(
+        "lecturecast.commands.director.capture_capabilities", capture_current_adapter
+    )
+    generated = runner.invoke(
+        app,
+        [
+            "director",
+            "generate",
+            str(tmp_path),
+            "--generation-id",
+            "generation_demo_001",
+            "--json",
+        ],
+    )
+    assert generated.exit_code == 0, generated.output
+    assert captured == [("openclaw", "3.1.0")]
+    assert client.generation_capabilities[-1]["adapter"] == {
+        "kind": "openclaw",
+        "version": "3.1.0",
+    }
+
+
+def test_director_resume_rejects_invalid_adapter_without_changing_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = FakeDirectorClient()
+    monkeypatch.setattr(
+        "lecturecast.commands.director._make_client", lambda _url: client
+    )
+    source = _init_project(tmp_path)
+    _start(tmp_path, source)
+    state_path = tmp_path / ".lecturecast" / "director-state.json"
+    before = state_path.read_bytes()
+
+    invalid = runner.invoke(
+        app,
+        [
+            "director",
+            "resume",
+            str(tmp_path),
+            "--adapter",
+            "openclaw",
+            "--adapter-version",
+            "latest",
+            "--json",
+        ],
+    )
+
+    assert invalid.exit_code == 1
+    assert json.loads(invalid.stderr)["code"] == "manifest_incompatible"
+    assert state_path.read_bytes() == before
 
 
 def test_failed_generation_retry_reuses_reserved_id(
@@ -479,3 +638,18 @@ def test_director_state_revision_detects_cross_agent_overwrite(tmp_path: Path) -
     with pytest.raises(LectureCastError) as captured:
         store.update(stale, session_status="deleted")
     assert captured.value.code == "project_revision_conflict"
+
+    rebound = store.load()
+    stale_rebind = store.load()
+    store.bind_adapter(
+        rebound,
+        adapter_kind="claude-code",
+        adapter_version="1.0.0",
+    )
+    with pytest.raises(LectureCastError) as rebind_conflict:
+        store.bind_adapter(
+            stale_rebind,
+            adapter_kind="openclaw",
+            adapter_version="1.0.0",
+        )
+    assert rebind_conflict.value.code == "project_revision_conflict"

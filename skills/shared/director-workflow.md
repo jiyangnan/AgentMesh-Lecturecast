@@ -8,10 +8,15 @@ The local project is the durable state source. Never reconstruct IDs from chat h
 
 ```bash
 lecturecast project resume <project-path> --json
+lecturecast director resume <project-path> \
+  --adapter <codex|claude-code|openclaw|text> \
+  --json
 lecturecast director next <project-path> --json
 ```
 
 Read `.lecturecast/project.json` and `.lecturecast/director-state.json` through the CLI. Never write them by hand. Never put an API key in an argument, project file, prompt, log or stdout.
+
+On every existing Director project, run `director resume` with the current host before `next`, `answer`, `brief`, `generate`, or `status`. This local command makes no network request and deducts no credit. If the host changed, the CLI refreshes its saved ClientCapabilities before the paid generation request, so the server receives the current host identity instead of stale handoff state.
 
 ## Start
 
@@ -26,7 +31,7 @@ lecturecast director start <project-path> \
   --json
 ```
 
-`LECTURECAST_DIRECTOR_URL` supplies the server. A one-time `--server` is also accepted and then persisted without credentials. If this agent task started before installation, run `lecturecast director handoff <project-path> --json`. When the host exposes a task-creation tool, use the returned `prompt` to create the new task; otherwise give the user that exact prompt as the one short copyable fallback. Do not claim a new task was created unless the host confirms it.
+`LECTURECAST_DIRECTOR_URL` supplies the server. A one-time `--server` is also accepted and then persisted without credentials. If this agent task started before installation, run `lecturecast director handoff <project-path> --json`. The payload keeps the generic `resume_argv` and also returns `director_resume_argv_by_adapter`; the new task must run the exact entry for its current host before continuing Director work. When the host exposes a task-creation tool, use the returned `prompt` to create the new task; otherwise give the user that exact prompt as the one short copyable fallback. Do not claim a new task was created unless the host confirms it.
 
 ## Decision cards
 

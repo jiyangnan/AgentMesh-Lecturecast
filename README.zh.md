@@ -69,10 +69,11 @@ lecturecast version    # 当前版本
 ```bash
 lecturecast project init ./my-video --name "我的视频" --json
 lecturecast director start ./my-video --source source-summary.json --adapter codex --json
+lecturecast director resume ./my-video --adapter openclaw --json  # 切换宿主后
 lecturecast director next ./my-video --json
 ```
 
-用隐藏输入的 `lecturecast auth login`（或 `LECTURECAST_API_KEY`）配置凭证，并设置 `LECTURECAST_DIRECTOR_URL`。API Key 不会写入项目。只有在确认 Brief，并明确同意下一步扣固定 credit 后才运行 `director generate`。
+用隐藏输入的 `lecturecast auth login`（或 `LECTURECAST_API_KEY`）配置凭证，并设置 `LECTURECAST_DIRECTOR_URL`。API Key 不会写入项目。`director resume` 只在本地重新绑定，不扣 credit，并保证付费请求使用当前宿主的真实能力。只有在确认 Brief，并明确同意下一步扣固定 credit 后才运行 `director generate`。
 
 真正干活的是你的 AI agent 跑本地工作流。跟 agent 说：
 

@@ -69,10 +69,11 @@ Optional Director commands use the same local project across Codex, Claude Code 
 ```bash
 lecturecast project init ./my-video --name "My video" --json
 lecturecast director start ./my-video --source source-summary.json --adapter codex --json
+lecturecast director resume ./my-video --adapter openclaw --json  # after a host handoff
 lecturecast director next ./my-video --json
 ```
 
-Set the credential with the hidden `lecturecast auth login` prompt (or `LECTURECAST_API_KEY`) and set `LECTURECAST_DIRECTOR_URL`. The API key is never written to the project. Run `director generate` only after approving the Brief and the fixed credit deduction.
+Set the credential with the hidden `lecturecast auth login` prompt (or `LECTURECAST_API_KEY`) and set `LECTURECAST_DIRECTOR_URL`. The API key is never written to the project. `director resume` is local and deducts no credit; it ensures the paid request uses the current host's capabilities. Run `director generate` only after approving the Brief and the fixed credit deduction.
 
 The real work happens when your AI agent follows the local workflow. In your agent chat:
 
