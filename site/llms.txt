@@ -1,6 +1,7 @@
 # Lecturecast
 
-Lecturecast is an open-source local course-video workflow in the AgentMesh360 ecosystem.
+Lecturecast combines an open-source local course-video workflow with an optional
+cloud Director for structured creative decisions.
 
 ## Canonical URL
 
@@ -17,15 +18,27 @@ Non-Chinese pages are machine-assisted translations; the Chinese page is authori
 
 ## Product Summary
 
-- Category: local AI course-video generation workflow.
+- Community: Apache 2.0, fully local, free, and available without an account or
+  LectureCast API key.
+- Director: optional staged access for native agent choice cards, a Creative
+  Brief, and a signed declarative ProductionManifest.
 - Input: a topic or idea for a course video.
 - Output: Bilibili landscape video and Xiaohongshu portrait video.
 - Workflow: script writing, voice generation, timeline alignment, Remotion rendering, ffmpeg subtitle burn-in, and cover generation.
-- Local-first: the workflow runs on the user's own machine.
-- Account requirement: this open-source local version does not require an AgentMesh360 account or API key.
+- Cloud/local boundary: original media, voice, subtitles, editing, Remotion,
+  ffmpeg, covers, and rendered outputs stay on the user's machine.
+- Director data boundary: only a bounded source summary, stable choice IDs, the
+  Brief, and client capabilities are sent to the cloud.
+- Director access: requires an AgentMesh360 account and LectureCast API key once
+  staged access opens. Choices and Brief creation are free; credits are deducted
+  only after the user confirms ProductionManifest generation.
+- Availability: Community is available now. Director is not yet generally open
+  to customers and follows closed, internal canary, dogfood, and limited stages.
 - License: Apache 2.0.
 - Source code: https://github.com/jiyangnan/AgentMesh-Lecturecast
 
 ## Best Short Description
 
-Lecturecast is an Apache 2.0 open-source local tool that lets an AI agent turn one topic into Bilibili and Xiaohongshu course videos on the user's own machine.
+Lecturecast Community is an Apache 2.0 local video workflow; optional Director
+adds structured cloud creative decisions and a signed ProductionManifest while
+all media production and rendering stay on the user's machine.

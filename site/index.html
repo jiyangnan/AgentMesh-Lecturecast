@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Lecturecast — 把一个想法，变成一条课程视频 · 开源本地工具</title>
-<meta name="description" content="Lecturecast 是 AgentMesh360 生态下的开源本地工具：把一个主题交给你的 AI agent，在本机端到端写稿、配音、渲染，同时产出 B 站横版与小红书竖版，烧好中文字幕、配好封面。完全本地运行、不需账户、免费、Apache 2.0 开源。" />
+<meta name="description" content="Lecturecast Community 是开源、完全本地的视频工作流；可选 Director 通过结构化选择提供云端创作决策与签名 ProductionManifest，原始素材、配音、编辑和渲染仍留在本机。" />
 <meta property="og:title" content="Lecturecast — 把一个想法，变成一条课程视频" />
 <meta property="og:description" content="开源本地工具：AI 写稿 + 配音 + 双平台成片（B 站 16:9 / 小红书 9:16），全程在你自己的机器上跑。一个主题进，两条成片出。" />
 <meta property="og:type" content="website" />
@@ -46,7 +46,7 @@
       "operatingSystem": "macOS, Windows, Linux",
       "isAccessibleForFree": true,
       "provider": { "@id": "https://agentmesh360.com/#organization" },
-      "description": "Lecturecast 是 AgentMesh360 生态下的开源本地课程视频工作流，让 AI agent 在本机完成写稿、配音、渲染、烧字幕和双平台出片。",
+      "description": "Lecturecast Community 是开源本地课程视频工作流；可选 Director 提供结构化创作选择与签名 ProductionManifest，媒体制作和渲染仍在用户本机完成。",
       "featureList": [
         "本地 AI 课程讲稿生成",
         "本地配音与时间轴对齐",
@@ -54,6 +54,8 @@
         "小红书 9:16 竖版视频",
         "中文字幕烧录",
         "封面生成",
+        "可选 Director 结构化创作选择",
+        "签名声明式 ProductionManifest",
         "Apache 2.0 开源"
       ],
       "offers": {
@@ -70,12 +72,12 @@
         {
           "@type": "Question",
           "name": "Lecturecast 需要账户或 API key 吗？",
-          "acceptedAnswer": { "@type": "Answer", "text": "不需要。Lecturecast 是本地开源工具，没有 AgentMesh360 账户、云服务或 key 要求。" }
+          "acceptedAnswer": { "@type": "Answer", "text": "Community 不需要账户或 LectureCast API key，永久免费本地运行。可选 Director 在分阶段开放后需要 AgentMesh360 账户和 API key，并只在用户确认生成时消耗 credit。" }
         },
         {
           "@type": "Question",
           "name": "Lecturecast 处理过程会上云吗？",
-          "acceptedAnswer": { "@type": "Answer", "text": "不会。Lecturecast 的写稿、配音、渲染、烧字幕和封面生成工作流在用户自己的机器上运行。" }
+          "acceptedAnswer": { "@type": "Answer", "text": "Community 不向 LectureCast 服务发送内容。选择 Director 时，只有受限素材摘要、稳定选项、Brief 和客户端能力进入云端；原始媒体、配音、编辑、渲染和成片仍留在本机。" }
         },
         {
           "@type": "Question",
@@ -142,6 +144,17 @@
   .btn-primary{background:var(--ink);color:var(--surface)} .btn-primary:hover{background:var(--accent);color:var(--surface)}
   .btn-ghost{background:transparent;color:var(--ink);border-color:var(--rule)} .btn-ghost:hover{border-color:var(--ink)}
   .btn .arrow{transition:transform .15s} .btn:hover .arrow{transform:translateX(3px)}
+
+  .routes{margin-top:40px;display:grid;grid-template-columns:1fr 1fr;background:var(--surface);border:1px solid var(--rule);border-radius:16px;overflow:hidden}
+  .route{padding:clamp(22px,3vw,32px);position:relative}
+  .route + .route{border-left:1px solid var(--rule)}
+  .route-director{background:linear-gradient(135deg,color-mix(in oklab,var(--accent) 9%,var(--surface)),var(--surface) 72%)}
+  .route-top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:18px}
+  .route-label{font-family:var(--mono);font-size:11px;letter-spacing:.07em;color:var(--accent-ink);text-transform:uppercase}
+  .route-status{font-size:11px;color:var(--muted);border:1px solid var(--rule);border-radius:999px;padding:4px 9px;white-space:nowrap}
+  .route h3{font-family:var(--serif);font-size:clamp(21px,2.2vw,27px);font-weight:500;line-height:1.18;letter-spacing:-.01em;margin:0 0 12px}
+  .route p{font-size:14.5px;line-height:1.62;color:var(--ink-soft);margin:0;text-wrap:pretty}
+  @media(max-width:680px){.routes{grid-template-columns:1fr}.route + .route{border-left:0;border-top:1px solid var(--rule)}}
 
   .terminal-frame{margin-top:64px;background:var(--code-bg);color:var(--code-fg);border-radius:14px;overflow:hidden;box-shadow:0 1px 0 rgba(255,255,255,0.04) inset,0 30px 60px -30px rgba(31,29,24,0.4),0 12px 24px -16px rgba(31,29,24,0.25)}
   .terminal-bar{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.06)}
@@ -230,6 +243,7 @@
       Lecturecast <small>· AgentMesh360</small>
     </a>
     <nav class="nav-links" aria-label="Primary">
+      <a href="#routes" class="nav-section">两种路线</a>
       <a href="#features" class="nav-section">能力</a>
       <a href="#platforms" class="nav-section">双平台</a>
       <a href="#how" class="nav-section">怎么用</a>
@@ -250,14 +264,27 @@
 
 <section class="hero">
   <div class="wrap">
-    <div class="eyebrow"><span class="dot"></span> OPEN SOURCE · 完全本地运行</div>
+    <div class="eyebrow"><span class="dot"></span> COMMUNITY LOCAL · DIRECTOR OPTIONAL</div>
     <h1 class="display">把一个想法，<em>变成</em>一条课程视频。</h1>
     <p class="lede">
-      Lecturecast 是一套<strong>完全本地、开源</strong>的出片工作流：把一个主题交给你的 AI agent，它在你自己的机器上跑完整条流水线——写讲稿、配音、渲染，<strong>同时产出 B 站横版和小红书竖版</strong>，烧好中文字幕、配好封面。不需账户、不上云、免费、Apache 2.0 开源。
+      Lecturecast Community 是一套<strong>完全本地、开源</strong>的出片工作流：把一个主题交给你的 AI agent，它在你自己的机器上写讲稿、配音、渲染，<strong>同时产出 B 站横版和小红书竖版</strong>。需要更明确的创作方向时，可选 Director 用结构化选项生成签名制作方案；原始素材和整条媒体流水线仍留在本机。
     </p>
     <div class="hero-ctas">
       <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="btn btn-primary">看 GitHub <span class="arrow">→</span></a>
       <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md" class="btn btn-ghost">看本地工作流</a>
+    </div>
+
+    <div class="routes" id="routes" aria-label="Lecturecast 两种使用路线">
+      <article class="route route-community">
+        <div class="route-top"><span class="route-label">Community</span><span class="route-status">现在可用</span></div>
+        <h3>完全本地，永久免费</h3>
+        <p>不需要账户或 LectureCast API key。Agent 在你的机器上完成写稿、配音、字幕、动画、双版渲染与封面，原始内容不发送给 LectureCast。</p>
+      </article>
+      <article class="route route-director">
+        <div class="route-top"><span class="route-label">Director</span><span class="route-status">分阶段开放</span></div>
+        <h3>云端导演，本地制片</h3>
+        <p>通过 Agent 原生选项卡完成受众、叙事、视觉和交付选择，云端返回签名 ProductionManifest。只有确认生成才消耗 credit；素材、配音、编辑和渲染不上云。</p>
+      </article>
     </div>
 
     <div class="terminal-frame" aria-label="在本地装好，交给你的 agent">
@@ -342,7 +369,7 @@
   <div class="wrap">
     <div class="kicker">本地三件套依赖</div>
     <h2 class="section-title">全部跑在<em>你自己的机器</em>上。</h2>
-    <p class="section-lede">没有云端 worker，没有远程渲染。装好这三样，你的 agent 就能在本机端到端出片。<code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh</code> 会帮你检查缺哪样。</p>
+    <p class="section-lede">没有云端媒体 worker，也没有远程渲染。即使选择 Director，云端也只负责创作决策与签名 Manifest；装好这三样，你的 agent 就能在本机端到端出片。<code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh</code> 会帮你检查缺哪样。</p>
     <div class="stack">
       <div class="stk">
         <div class="stk-icon">RENDER</div>
@@ -401,11 +428,11 @@
     <div class="faq-list">
       <details class="faq-item">
         <summary>要钱吗？要注册账户吗？</summary>
-        <div class="faq-answer">都不要。Lecturecast 是完全开源（Apache 2.0）的本地工具，没有账户、没有云服务、没有 key，免费使用。所有处理都在你自己的机器上完成。</div>
+        <div class="faq-answer"><strong>Community</strong> 永久免费，不需要账户或 LectureCast API key。可选 <strong>Director</strong> 在分阶段开放后需要 AgentMesh360 账户与 API key；结构化选择和 Brief 免费，只有你确认生成 ProductionManifest 时才按固定 credit 扣除。</div>
       </details>
       <details class="faq-item">
         <summary>视频会上传到云端吗？</summary>
-        <div class="faq-answer">不会。写稿、配音、渲染、烧字幕全程在本机跑，不需要联网渲染，你的内容不会离开你的电脑。</div>
+        <div class="faq-answer">不会。Community 不向 LectureCast 服务发送任何内容。选择 Director 时，只有受限素材摘要、稳定选项 ID、Brief 和客户端能力进入云端；原始媒体、配音、字幕、编辑、渲染与成片始终留在本机。</div>
       </details>
       <details class="faq-item">
         <summary>配音用什么？能换更好的音色吗？</summary>

@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Lecturecast — Turn one idea into a course video · open-source local tool</title>
-<meta name="description" content="Lecturecast is an open-source local tool in the AgentMesh360 ecosystem: hand a topic to your AI agent, and it writes the script, voices it, and renders it on your own machine — producing both Bilibili landscape and Xiaohongshu portrait versions with burned-in subtitles and covers. Fully local, no account, free, Apache 2.0." />
+<meta name="description" content="Lecturecast Community is an open-source, fully local video workflow. Optional Director adds structured cloud creative decisions and a signed ProductionManifest while media, editing, and rendering stay local." />
 <meta property="og:title" content="Lecturecast — Turn one idea into a course video" />
 <meta property="og:description" content="Open-source local tool: AI scripting + voiceover + dual-platform rendering (Bilibili 16:9 / Xiaohongshu 9:16), all on your own machine. One topic in, two finished videos out." />
 <meta property="og:type" content="website" />
@@ -48,7 +48,7 @@
       "operatingSystem": "macOS, Windows, Linux",
       "isAccessibleForFree": true,
       "provider": { "@id": "https://agentmesh360.com/#organization" },
-      "description": "Lecturecast is an open-source local course-video workflow in the AgentMesh360 ecosystem — an AI agent writes the script, voices it, renders it, burns subtitles, and produces dual-platform videos on the user's machine.",
+      "description": "Lecturecast Community is an open-source local course-video workflow. Optional Director adds structured creative choices and a signed ProductionManifest while media production and rendering stay on the user's machine.",
       "featureList": [
         "Local AI course-script generation",
         "Local voiceover and timeline alignment",
@@ -56,6 +56,8 @@
         "Xiaohongshu 9:16 portrait video",
         "Chinese subtitle burn-in",
         "Cover image generation",
+        "Optional Director structured creative choices",
+        "Signed declarative ProductionManifest",
         "Apache 2.0 open source"
       ],
       "offers": {
@@ -73,12 +75,12 @@
         {
           "@type": "Question",
           "name": "Does Lecturecast require an account or API key?",
-          "acceptedAnswer": { "@type": "Answer", "text": "No. Lecturecast is a local open-source tool — there is no AgentMesh360 account, no cloud service, and no API key required." }
+          "acceptedAnswer": { "@type": "Answer", "text": "Community is free and requires no account or LectureCast API key. Optional Director will require an AgentMesh360 account and API key when staged access opens, and deducts credits only after the user confirms generation." }
         },
         {
           "@type": "Question",
           "name": "Does Lecturecast upload anything to the cloud?",
-          "acceptedAnswer": { "@type": "Answer", "text": "No. Scripting, voiceover, rendering, subtitle burn-in, and cover generation all run on the user's own machine." }
+          "acceptedAnswer": { "@type": "Answer", "text": "Community sends nothing to a LectureCast service. With Director, only a bounded source summary, stable choices, the Brief, and client capabilities go to the cloud; original media, voice, editing, rendering, and outputs stay local." }
         },
         {
           "@type": "Question",
@@ -145,6 +147,17 @@
   .btn-primary{background:var(--ink);color:var(--surface)} .btn-primary:hover{background:var(--accent);color:var(--surface)}
   .btn-ghost{background:transparent;color:var(--ink);border-color:var(--rule)} .btn-ghost:hover{border-color:var(--ink)}
   .btn .arrow{transition:transform .15s} .btn:hover .arrow{transform:translateX(3px)}
+
+  .routes{margin-top:40px;display:grid;grid-template-columns:1fr 1fr;background:var(--surface);border:1px solid var(--rule);border-radius:16px;overflow:hidden}
+  .route{padding:clamp(22px,3vw,32px);position:relative}
+  .route + .route{border-left:1px solid var(--rule)}
+  .route-director{background:linear-gradient(135deg,color-mix(in oklab,var(--accent) 9%,var(--surface)),var(--surface) 72%)}
+  .route-top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:18px}
+  .route-label{font-family:var(--mono);font-size:11px;letter-spacing:.07em;color:var(--accent-ink);text-transform:uppercase}
+  .route-status{font-size:11px;color:var(--muted);border:1px solid var(--rule);border-radius:999px;padding:4px 9px;white-space:nowrap}
+  .route h3{font-family:var(--serif);font-size:clamp(21px,2.2vw,27px);font-weight:500;line-height:1.18;letter-spacing:-.01em;margin:0 0 12px}
+  .route p{font-size:14.5px;line-height:1.62;color:var(--ink-soft);margin:0;text-wrap:pretty}
+  @media(max-width:680px){.routes{grid-template-columns:1fr}.route + .route{border-left:0;border-top:1px solid var(--rule)}}
 
   .terminal-frame{margin-top:64px;background:var(--code-bg);color:var(--code-fg);border-radius:14px;overflow:hidden;box-shadow:0 1px 0 rgba(255,255,255,0.04) inset,0 30px 60px -30px rgba(31,29,24,0.4),0 12px 24px -16px rgba(31,29,24,0.25)}
   .terminal-bar{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.06)}
@@ -233,6 +246,7 @@
       Lecturecast <small>· AgentMesh360</small>
     </a>
     <nav class="nav-links" aria-label="Primary">
+      <a href="#routes" class="nav-section">Routes</a>
       <a href="#features" class="nav-section">Features</a>
       <a href="#platforms" class="nav-section">Platforms</a>
       <a href="#how" class="nav-section">How</a>
@@ -253,15 +267,28 @@
 
 <section class="hero">
   <div class="wrap">
-    <div class="eyebrow"><span class="dot"></span> OPEN SOURCE · RUNS FULLY LOCAL</div>
+    <div class="eyebrow"><span class="dot"></span> COMMUNITY LOCAL · DIRECTOR OPTIONAL</div>
     <h1 class="display">Turn one idea into <em>a course video</em>.</h1>
     <p class="lede">
-      Lecturecast is a <strong>fully local, open-source</strong> video-production workflow: hand a topic to your AI agent, and it runs the entire pipeline on your own machine — writing the script, voicing it, rendering it, and producing <strong>both Bilibili landscape and Xiaohongshu portrait</strong> videos at once, with burned-in Chinese subtitles and ready-to-post covers. No account, no cloud, free, Apache 2.0.
+      Lecturecast Community is a <strong>fully local, open-source</strong> video-production workflow: hand a topic to your AI agent and it scripts, voices, and renders <strong>both Bilibili landscape and Xiaohongshu portrait</strong> videos on your machine. When you want firmer creative direction, optional Director turns structured choices into a signed production plan; original media and the entire media pipeline still stay local.
       <span style="display:block;margin-top:8px;font-size:0.9em;color:var(--muted);">(Bilibili and Xiaohongshu are the major Chinese video platforms — landscape and portrait respectively. The pipeline produces both formats whether or not you publish to them.)</span>
     </p>
     <div class="hero-ctas">
       <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="btn btn-primary">See on GitHub <span class="arrow">→</span></a>
       <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md" class="btn btn-ghost">See the local workflow</a>
+    </div>
+
+    <div class="routes" id="routes" aria-label="Two ways to use Lecturecast">
+      <article class="route route-community">
+        <div class="route-top"><span class="route-label">Community</span><span class="route-status">Available now</span></div>
+        <h3>Fully local. Free forever.</h3>
+        <p>No account or LectureCast API key. Your agent handles script, voice, subtitles, motion, dual-format rendering, and covers on your machine, without sending original content to LectureCast.</p>
+      </article>
+      <article class="route route-director">
+        <div class="route-top"><span class="route-label">Director</span><span class="route-status">Staged access</span></div>
+        <h3>Cloud direction, local production.</h3>
+        <p>Use native agent choice cards for audience, narrative, visual, and delivery decisions. The cloud returns a signed ProductionManifest; credits are used only after confirmed generation, while media, voice, editing, and rendering stay local.</p>
+      </article>
     </div>
 
     <div class="terminal-frame" aria-label="Install locally, then let your agent drive it">
@@ -346,7 +373,7 @@
   <div class="wrap">
     <div class="kicker">Local three-piece stack</div>
     <h2 class="section-title">All on <em>your own machine</em>.</h2>
-    <p class="section-lede">No cloud workers, no remote renderer. Install these three, and your agent can run end-to-end on this machine. <code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh</code> checks what's missing.</p>
+    <p class="section-lede">No cloud media workers and no remote renderer. Even with Director, the cloud handles only creative decisions and a signed Manifest. Install these three, and your agent can run media production end-to-end on this machine. <code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh</code> checks what's missing.</p>
     <div class="stack">
       <div class="stk">
         <div class="stk-icon">RENDER</div>
@@ -405,11 +432,11 @@
     <div class="faq-list">
       <details class="faq-item">
         <summary>Does it cost anything? Do I need an account?</summary>
-        <div class="faq-answer">Neither. Lecturecast is fully open source (Apache 2.0) and runs locally — no account, no cloud, no API key, free to use. Everything happens on your own machine.</div>
+        <div class="faq-answer"><strong>Community</strong> is free forever and needs no account or LectureCast API key. Optional <strong>Director</strong> will require an AgentMesh360 account and API key when staged access opens. Choices and Brief creation are free; only a confirmed ProductionManifest generation deducts fixed credits.</div>
       </details>
       <details class="faq-item">
         <summary>Does the video get uploaded to the cloud?</summary>
-        <div class="faq-answer">No. Scripting, voicing, rendering, and subtitle burn-in all run locally — no remote render is needed; your content never leaves your computer.</div>
+        <div class="faq-answer">No. Community sends nothing to a LectureCast service. If you choose Director, only a bounded source summary, stable option IDs, the Brief, and client capabilities go to the cloud. Original media, voice, subtitles, editing, rendering, and finished outputs always stay local.</div>
       </details>
       <details class="faq-item">
         <summary>What does the voiceover use? Can I get a richer voice?</summary>

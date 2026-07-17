@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Lecturecast — 一つのアイデアから、講座動画を一本 · オープンソースのローカルツール</title>
-<meta name="description" content="Lecturecast は AgentMesh360 エコシステムのオープンソース・ローカルツール：テーマを AI エージェントに渡せば、ローカルで脚本作成・配音・レンダリングを行い、B 站横版と小红书縦版を同時に出力し、中国語字幕を焼き付け、カバーまで用意します。完全ローカル動作、アカウント不要、無料、Apache 2.0。" />
+<meta name="description" content="Lecturecast Community はオープンソースで完全ローカルの動画ワークフロー。任意の Director は構造化されたクラウド創作判断と署名付き ProductionManifest を提供し、素材・編集・レンダリングはローカルに残します。" />
 <meta property="og:title" content="Lecturecast — 一つのアイデアから、講座動画を一本" />
 <meta property="og:description" content="オープンソースのローカルツール：AI 脚本 + 配音 + 2 プラットフォーム同時出力（B 站 16:9 / 小红书 9:16）、すべてあなたのマシン上で。テーマ 1 つ、成片 2 本。" />
 <meta property="og:type" content="website" />
@@ -48,7 +48,7 @@
       "operatingSystem": "macOS, Windows, Linux",
       "isAccessibleForFree": true,
       "provider": { "@id": "https://agentmesh360.com/#organization" },
-      "description": "Lecturecast は AgentMesh360 エコシステムのオープンソース・ローカル講座動画ワークフロー。AI エージェントがローカルで脚本・配音・レンダリング・字幕焼き付け・2 プラットフォーム出力までを完了させます。",
+      "description": "Lecturecast Community はオープンソースのローカル講座動画ワークフロー。任意の Director は構造化された創作選択と署名付き ProductionManifest を提供し、メディア制作とレンダリングはユーザーのマシン上に残ります。",
       "featureList": [
         "ローカル AI 講座脚本生成",
         "ローカル配音とタイムライン整合",
@@ -56,6 +56,8 @@
         "小红书 9:16 縦版動画",
         "中国語字幕焼き付け",
         "カバー生成",
+        "任意の Director による構造化された創作選択",
+        "署名付き宣言型 ProductionManifest",
         "Apache 2.0 オープンソース"
       ],
       "offers": {
@@ -73,12 +75,12 @@
         {
           "@type": "Question",
           "name": "Lecturecast にアカウントや API キーは必要ですか？",
-          "acceptedAnswer": { "@type": "Answer", "text": "不要です。Lecturecast はローカルなオープンソースツールで、AgentMesh360 アカウント・クラウドサービス・キーは要りません。" }
+          "acceptedAnswer": { "@type": "Answer", "text": "Community は無料で、アカウントも LectureCast API キーも不要です。任意の Director は段階的アクセス開始後に AgentMesh360 アカウントと API キーが必要となり、ユーザーが生成を確認した場合のみ credit を消費します。" }
         },
         {
           "@type": "Question",
           "name": "Lecturecast の処理過程でクラウドにアップロードされますか？",
-          "acceptedAnswer": { "@type": "Answer", "text": "アップロードされません。Lecturecast の脚本作成・配音・レンダリング・字幕焼き付け・カバー生成のワークフローはユーザーのマシン上で実行されます。" }
+          "acceptedAnswer": { "@type": "Answer", "text": "Community は LectureCast サービスへ何も送信しません。Director では限定された素材要約、安定した選択肢、Brief、クライアント能力だけがクラウドへ送られ、元のメディア・配音・編集・レンダリング・出力はローカルに残ります。" }
         },
         {
           "@type": "Question",
@@ -145,6 +147,17 @@
   .btn-primary{background:var(--ink);color:var(--surface)} .btn-primary:hover{background:var(--accent);color:var(--surface)}
   .btn-ghost{background:transparent;color:var(--ink);border-color:var(--rule)} .btn-ghost:hover{border-color:var(--ink)}
   .btn .arrow{transition:transform .15s} .btn:hover .arrow{transform:translateX(3px)}
+
+  .routes{margin-top:40px;display:grid;grid-template-columns:1fr 1fr;background:var(--surface);border:1px solid var(--rule);border-radius:16px;overflow:hidden}
+  .route{padding:clamp(22px,3vw,32px);position:relative}
+  .route + .route{border-left:1px solid var(--rule)}
+  .route-director{background:linear-gradient(135deg,color-mix(in oklab,var(--accent) 9%,var(--surface)),var(--surface) 72%)}
+  .route-top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:18px}
+  .route-label{font-family:var(--mono);font-size:11px;letter-spacing:.07em;color:var(--accent-ink);text-transform:uppercase}
+  .route-status{font-size:11px;color:var(--muted);border:1px solid var(--rule);border-radius:999px;padding:4px 9px;white-space:nowrap}
+  .route h3{font-family:var(--serif);font-size:clamp(21px,2.2vw,27px);font-weight:500;line-height:1.18;letter-spacing:-.01em;margin:0 0 12px}
+  .route p{font-size:14.5px;line-height:1.62;color:var(--ink-soft);margin:0;text-wrap:pretty}
+  @media(max-width:680px){.routes{grid-template-columns:1fr}.route + .route{border-left:0;border-top:1px solid var(--rule)}}
 
   .terminal-frame{margin-top:64px;background:var(--code-bg);color:var(--code-fg);border-radius:14px;overflow:hidden;box-shadow:0 1px 0 rgba(255,255,255,0.04) inset,0 30px 60px -30px rgba(31,29,24,0.4),0 12px 24px -16px rgba(31,29,24,0.25)}
   .terminal-bar{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.06)}
@@ -233,6 +246,7 @@
       Lecturecast <small>· AgentMesh360</small>
     </a>
     <nav class="nav-links" aria-label="Primary">
+      <a href="#routes" class="nav-section">2 つの経路</a>
       <a href="#features" class="nav-section">機能</a>
       <a href="#platforms" class="nav-section">2 プラットフォーム</a>
       <a href="#how" class="nav-section">使い方</a>
@@ -253,15 +267,28 @@
 
 <section class="hero">
   <div class="wrap">
-    <div class="eyebrow"><span class="dot"></span> OPEN SOURCE · 完全ローカル動作</div>
+    <div class="eyebrow"><span class="dot"></span> COMMUNITY LOCAL · DIRECTOR OPTIONAL</div>
     <h1 class="display">一つのアイデアから、<em>講座動画を一本</em>。</h1>
     <p class="lede">
-      Lecturecast は<strong>完全ローカル・オープンソース</strong>の動画制作ワークフローです。テーマをあなたの AI エージェントに渡せば、ローカル環境でパイプライン全体を実行します——脚本作成、配音、レンダリング、そして<strong>B 站横版と小红书縦版を同時出力</strong>、中国語字幕の焼き付けと公開用カバーまで仕上げます。アカウント不要、クラウド不要、無料、Apache 2.0。
+      Lecturecast Community は<strong>完全ローカル・オープンソース</strong>の動画制作ワークフローです。テーマを AI エージェントに渡せば、あなたのマシンで脚本、配音、レンダリングを行い、<strong>B 站横版と小红书縦版を同時出力</strong>します。より明確な創作方針が必要な場合、任意の Director が構造化された選択を署名付き制作計画へ変換し、元の素材とメディア工程は引き続きローカルに残ります。
       <span style="display:block;margin-top:8px;font-size:0.9em;color:var(--muted);">（B 站と小红书は中国の主要動画プラットフォーム——それぞれ横向き／縦向き）。利用しない場合でも、両フォーマットが揃って出力されます。）</span>
     </p>
     <div class="hero-ctas">
       <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="btn btn-primary">GitHub を見る <span class="arrow">→</span></a>
       <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md" class="btn btn-ghost">ローカルワークフローを見る</a>
+    </div>
+
+    <div class="routes" id="routes" aria-label="Lecturecast の 2 つの利用経路">
+      <article class="route route-community">
+        <div class="route-top"><span class="route-label">Community</span><span class="route-status">現在利用可能</span></div>
+        <h3>完全ローカル。永久無料。</h3>
+        <p>アカウントも LectureCast API キーも不要。エージェントが脚本、配音、字幕、モーション、2 形式のレンダリング、カバーをあなたのマシン上で処理し、元の内容を LectureCast へ送りません。</p>
+      </article>
+      <article class="route route-director">
+        <div class="route-top"><span class="route-label">Director</span><span class="route-status">段階的アクセス</span></div>
+        <h3>クラウドで演出、ローカルで制作。</h3>
+        <p>エージェント固有の選択 UI で対象者、物語、ビジュアル、納品方針を決定。クラウドは署名付き ProductionManifest を返し、credit は生成確認後のみ消費。素材、配音、編集、レンダリングはローカルです。</p>
+      </article>
     </div>
 
     <div class="terminal-frame" aria-label="ローカルにインストールしてエージェントに渡す">
@@ -346,7 +373,7 @@
   <div class="wrap">
     <div class="kicker">ローカル 3 点セット依存</div>
     <h2 class="section-title">すべて<em>あなたのマシン</em>上で。</h2>
-    <p class="section-lede">クラウド worker もリモートレンダラもありません。3 点をインストールすれば、エージェントがローカルでエンドツーエンド実行できます。<code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh</code> が不足を確認します。</p>
+    <p class="section-lede">クラウドのメディア worker もリモートレンダラもありません。Director を選んでも、クラウドは創作判断と署名付き Manifest のみを担当します。3 点をインストールすれば、エージェントがメディア制作をローカルでエンドツーエンド実行できます。<code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh</code> が不足を確認します。</p>
     <div class="stack">
       <div class="stk">
         <div class="stk-icon">RENDER</div>
@@ -405,11 +432,11 @@
     <div class="faq-list">
       <details class="faq-item">
         <summary>有料ですか？アカウント登録は必要？</summary>
-        <div class="faq-answer">どちらも不要です。Lecturecast は完全オープンソース（Apache 2.0）のローカルツールで、アカウントもクラウドサービスも key も不要、無料で使えます。すべてあなたのマシン上で処理が完結します。</div>
+        <div class="faq-answer"><strong>Community</strong> は永久無料で、アカウントも LectureCast API キーも不要です。任意の <strong>Director</strong> は段階的アクセス開始後に AgentMesh360 アカウントと API キーが必要です。選択と Brief 作成は無料で、ProductionManifest の生成を確認した場合のみ固定 credit を消費します。</div>
       </details>
       <details class="faq-item">
         <summary>動画はクラウドにアップロードされますか？</summary>
-        <div class="faq-answer">されません。脚本作成、配音、レンダリング、字幕焼き付けはすべてローカルで動作——リモートレンダリングは不要で、コンテンツがマシンから出ることはありません。</div>
+        <div class="faq-answer">されません。Community は LectureCast サービスへ何も送りません。Director では限定された素材要約、安定した選択肢 ID、Brief、クライアント能力だけがクラウドへ送られます。元のメディア、配音、字幕、編集、レンダリング、完成品は常にローカルです。</div>
       </details>
       <details class="faq-item">
         <summary>配音は何を使いますか？もっと良い声に変えられますか？</summary>
