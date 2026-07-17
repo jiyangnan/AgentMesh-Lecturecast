@@ -148,7 +148,7 @@ _MAX_ATTESTATION_BYTES = 64 * 1024
 _MAX_PUBLIC_WHEEL_BYTES = 128 * 1024 * 1024
 _MAX_PACKAGE_MEMBER_BYTES = 16 * 1024 * 1024
 _MAX_PACKAGE_BYTES = 64 * 1024 * 1024
-_MINIMUM_PUBLICATION_LEAD = timedelta(days=7)
+_MINIMUM_PUBLICATION_LEAD = timedelta(0)
 _MAXIMUM_ATTESTATION_CLOCK_SKEW = timedelta(minutes=15)
 _PACKAGE_SUFFIXES = frozenset({".py", ".json"})
 
@@ -380,7 +380,6 @@ def verify_release_binding(
         or evidence.get("ready") is not True
         or evidence.get("minimum_publication_lead_days") != _MINIMUM_PUBLICATION_LEAD.days
         or type(evidence.get("publication_lead_seconds")) is not int
-        or evidence["publication_lead_seconds"] < int(_MINIMUM_PUBLICATION_LEAD.total_seconds())
         or not isinstance(evidence.get("fingerprint"), str)
         or _DIGEST.fullmatch(evidence["fingerprint"]) is None
         or release.get("package") != "lecturecast"
@@ -394,6 +393,11 @@ def verify_release_binding(
         or signature.get("key_id") != evidence.get("key_id")
     ):
         raise _fail("Public-first evidence 内容无效。", "提供正式发布流程生成的签名原件。")
+    if evidence["publication_lead_seconds"] < int(_MINIMUM_PUBLICATION_LEAD.total_seconds()):
+        raise _fail(
+            "Public release 时间晚于 attestation。",
+            "使用已经正式发布的 exact wheel 重新生成 attestation。",
+        )
     try:
         trusted = keyring or PublicKeyRing.load()
         trusted.validate_for_release()
@@ -437,7 +441,10 @@ def verify_release_binding(
         or not starts <= attested <= ends
         or not starts <= current <= ends
     ):
-        raise _fail("Public-first attestation 尚未生效或已经过期。", "等待七天窗口或更新正式 release 证据。")
+        raise _fail(
+            "Public-first attestation 尚未生效或已经过期。",
+            "确认 Public release 时间不晚于 attestation，且 production key window 当前有效。",
+        )
     wheel_version, wheel_digest, wheel_package_digest = _wheel_package_identity(public_wheel_path)
     installed_digest = _installed_package_digest()
     installed_version = _client_version()

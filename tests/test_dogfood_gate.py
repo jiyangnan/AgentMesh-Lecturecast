@@ -104,6 +104,7 @@ def _release_files(
     *,
     keyring: PublicKeyRing,
     private_key: Ed25519PrivateKey,
+    publication_offset: timedelta = timedelta(seconds=1),
 ) -> tuple[Path, Path]:
     root.mkdir(parents=True, exist_ok=True)
     wheel = root / "lecturecast-0.3.0-py3-none-any.whl"
@@ -119,7 +120,7 @@ def _release_files(
         )
     wheel_digest = f"sha256:{hashlib.sha256(wheel.read_bytes()).hexdigest()}"
     current = datetime.now(UTC)
-    published = current - timedelta(days=8)
+    published = current - publication_offset
     key = keyring.keys[0]
     evidence = {
         "schema_version": "signing-public-first-check.v1",
@@ -127,7 +128,7 @@ def _release_files(
         "key_id": key.key_id,
         "fingerprint": PublicKeyRing.public_key_fingerprint(key),
         "checked_at": current.isoformat().replace("+00:00", "Z"),
-        "minimum_publication_lead_days": 7,
+        "minimum_publication_lead_days": 0,
         "publication_lead_seconds": int((current - published).total_seconds()),
         "key_window": {
             "not_before": key.not_before,
@@ -653,6 +654,27 @@ def test_release_binding_rejects_tampered_wheel_and_attestation(
     tampered_attestation.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(LectureCastError, match="签名无效"):
         verify_release_binding(tampered_attestation, wheel, keyring=keyring)
+
+
+def test_release_binding_rejects_publication_after_attestation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, keyring, private_key = _production_documents(
+        tmp_path / "release-source",
+        monkeypatch,
+        adapter="codex",
+        suffix="future-publication",
+    )
+    attestation, wheel = _release_files(
+        tmp_path / "release",
+        keyring=keyring,
+        private_key=private_key,
+        publication_offset=timedelta(days=-1),
+    )
+
+    with pytest.raises(LectureCastError, match="晚于 attestation"):
+        verify_release_binding(attestation, wheel, keyring=keyring)
 
 
 def test_real_remotion_four_output_fixture_passes_capture_gate(

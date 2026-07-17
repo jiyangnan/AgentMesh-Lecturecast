@@ -15,9 +15,10 @@ release:
 - the exact released `lecturecast-<version>-py3-none-any.whl`.
 
 `dogfood begin` fails closed unless the attestation signature matches the
-packaged current production key, the seven-day Public-first window is active,
-the wheel hash and version match the attestation, and the running LectureCast
-package content matches the wheel's `lecturecast/**/*.py|json` content exactly.
+packaged current production key, the Public release time is not later than the
+attestation, the production key window is active, the wheel hash and version
+match the attestation, and the running LectureCast package content matches the
+wheel's `lecturecast/**/*.py|json` content exactly.
 The session stores only non-secret release IDs and digests, never local paths.
 
 ```bash
