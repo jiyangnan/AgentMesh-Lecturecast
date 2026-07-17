@@ -16,6 +16,15 @@ from lecturecast.manifest import PublicKeyRing, SigningKey
 
 ROOT = Path(__file__).parents[1]
 PACKAGED_KEYRING = ROOT / "src" / "lecturecast" / "signing-keyring.json"
+TEST_FIRST_KEY_ID = "lecturecast-prod-209901-v1"
+TEST_SECOND_KEY_ID = "lecturecast-prod-209907-v1"
+
+
+def _empty_keyring(path: Path) -> None:
+    path.write_text(
+        json.dumps({"keyring_version": "1.0", "keys": []}),
+        encoding="utf-8",
+    )
 
 
 def _envelope(path: Path, key_id: str) -> dict[str, object]:
@@ -39,17 +48,18 @@ def _envelope(path: Path, key_id: str) -> dict[str, object]:
     return payload
 
 
-def test_packaged_prelaunch_keyring_trusts_no_fixture_key() -> None:
+def test_packaged_release_keyring_trusts_one_current_production_key() -> None:
     ring = PublicKeyRing.load(PACKAGED_KEYRING)
 
-    assert ring.keys == ()
-    with pytest.raises(ValueError, match="exactly one current"):
-        ring.validate_for_release()
+    ring.validate_for_release()
+    assert len(ring.keys) == 1
+    assert ring.keys[0].key_id == "lecturecast-prod-202607-v1"
+    assert ring.keys[0].status == "current"
 
 
 def test_keyring_rejects_invalid_public_key_status_window_and_duplicates() -> None:
     valid = SigningKey(
-        key_id="lecturecast-prod-202607-v1",
+        key_id=TEST_FIRST_KEY_ID,
         algorithm="Ed25519",
         public_key=base64.b64encode(b"p" * 32).decode(),
         status="current",
@@ -81,11 +91,11 @@ def test_publication_adds_current_key_and_demotes_old_key_without_deleting_it(
     tmp_path: Path,
 ) -> None:
     keyring = tmp_path / "signing-keyring.json"
-    keyring.write_text(PACKAGED_KEYRING.read_text(encoding="utf-8"), encoding="utf-8")
+    _empty_keyring(keyring)
     first = tmp_path / "first.json"
     second = tmp_path / "second.json"
-    _envelope(first, "lecturecast-prod-202607-v1")
-    _envelope(second, "lecturecast-prod-202701-v1")
+    _envelope(first, TEST_FIRST_KEY_ID)
+    _envelope(second, TEST_SECOND_KEY_ID)
 
     update_keyring(keyring_path=keyring, entry_path=first)
     first_payload = json.loads(keyring.read_text(encoding="utf-8"))
@@ -93,8 +103,8 @@ def test_publication_adds_current_key_and_demotes_old_key_without_deleting_it(
     rotated = PublicKeyRing.load(keyring)
 
     assert first_payload["keys"][0]["status"] == "current"
-    assert rotated.get("lecturecast-prod-202607-v1").status == "previous"  # type: ignore[union-attr]
-    assert rotated.get("lecturecast-prod-202701-v1").status == "current"  # type: ignore[union-attr]
+    assert rotated.get(TEST_FIRST_KEY_ID).status == "previous"  # type: ignore[union-attr]
+    assert rotated.get(TEST_SECOND_KEY_ID).status == "current"  # type: ignore[union-attr]
     assert len(rotated.keys) == 2
     rotated.validate_for_release()
 
@@ -103,9 +113,9 @@ def test_publication_rejects_fingerprint_mismatch_and_key_id_mutation(
     tmp_path: Path,
 ) -> None:
     keyring = tmp_path / "signing-keyring.json"
-    keyring.write_text(PACKAGED_KEYRING.read_text(encoding="utf-8"), encoding="utf-8")
+    _empty_keyring(keyring)
     entry = tmp_path / "entry.json"
-    payload = _envelope(entry, "lecturecast-prod-202607-v1")
+    payload = _envelope(entry, TEST_FIRST_KEY_ID)
 
     broken = copy.deepcopy(payload)
     broken["fingerprint"] = "sha256:" + "0" * 64
@@ -124,19 +134,19 @@ def test_publication_rejects_fingerprint_mismatch_and_key_id_mutation(
 
 def test_revocation_requires_a_replacement_and_is_idempotent(tmp_path: Path) -> None:
     keyring = tmp_path / "signing-keyring.json"
-    keyring.write_text(PACKAGED_KEYRING.read_text(encoding="utf-8"), encoding="utf-8")
+    _empty_keyring(keyring)
     first = tmp_path / "first.json"
     second = tmp_path / "second.json"
-    _envelope(first, "lecturecast-prod-202607-v1")
-    _envelope(second, "lecturecast-prod-202701-v1")
+    _envelope(first, TEST_FIRST_KEY_ID)
+    _envelope(second, TEST_SECOND_KEY_ID)
     update_keyring(keyring_path=keyring, entry_path=first)
 
     with pytest.raises(ValueError, match="replacement"):
-        revoke_key(keyring_path=keyring, key_id="lecturecast-prod-202607-v1")
+        revoke_key(keyring_path=keyring, key_id=TEST_FIRST_KEY_ID)
 
     update_keyring(keyring_path=keyring, entry_path=second)
-    revoked = revoke_key(keyring_path=keyring, key_id="lecturecast-prod-202607-v1")
-    repeated = revoke_key(keyring_path=keyring, key_id="lecturecast-prod-202607-v1")
+    revoked = revoke_key(keyring_path=keyring, key_id=TEST_FIRST_KEY_ID)
+    repeated = revoke_key(keyring_path=keyring, key_id=TEST_FIRST_KEY_ID)
 
     assert revoked == repeated
-    assert PublicKeyRing.load(keyring).get("lecturecast-prod-202607-v1").status == "revoked"  # type: ignore[union-attr]
+    assert PublicKeyRing.load(keyring).get(TEST_FIRST_KEY_ID).status == "revoked"  # type: ignore[union-attr]

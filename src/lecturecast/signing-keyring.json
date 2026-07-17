@@ -1,4 +1,13 @@
 {
   "keyring_version": "1.0",
-  "keys": []
+  "keys": [
+    {
+      "algorithm": "Ed25519",
+      "key_id": "lecturecast-prod-202607-v1",
+      "not_after": "2027-01-13T14:16:00Z",
+      "not_before": "2026-07-17T14:01:00Z",
+      "public_key": "aK+gMQbnSfK9yiau6IdphJDkCvCTqpzPJgVczusZEYo=",
+      "status": "current"
+    }
+  ]
 }
