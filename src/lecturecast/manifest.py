@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -16,10 +18,15 @@ from .protocol import ProductionManifest, canonical_digest, manifest_signing_byt
 
 
 KEYRING_PATH = Path(__file__).with_name("signing-keyring.json")
+KEY_ID_PATTERN = re.compile(r"[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*")
+KEY_STATUSES = {"current", "previous", "revoked"}
 
 
 def _parse_time(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("signing key timestamps must include a UTC offset")
+    return parsed
 
 
 @dataclass(frozen=True)
@@ -30,6 +37,9 @@ class SigningKey:
     status: str
     not_before: str
     not_after: str
+
+    def to_dict(self) -> dict[str, str]:
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -44,19 +54,68 @@ class VerificationResult:
 
 
 class PublicKeyRing:
-    def __init__(self, keys: list[SigningKey]) -> None:
+    def __init__(self, keys: list[SigningKey], *, keyring_version: str = "1.0") -> None:
+        if keyring_version != "1.0":
+            raise ValueError("unsupported signing keyring version")
+        for key in keys:
+            if not KEY_ID_PATTERN.fullmatch(key.key_id):
+                raise ValueError("invalid signing key_id")
+            if key.algorithm != "Ed25519":
+                raise ValueError("unsupported signing key algorithm")
+            if key.status not in KEY_STATUSES:
+                raise ValueError("invalid signing key status")
+            try:
+                public_key = base64.b64decode(key.public_key, validate=True)
+            except (binascii.Error, ValueError):
+                raise ValueError("invalid Ed25519 public key") from None
+            if len(public_key) != 32:
+                raise ValueError("invalid Ed25519 public key")
+            if _parse_time(key.not_before) >= _parse_time(key.not_after):
+                raise ValueError("invalid signing key validity window")
         self._keys = {key.key_id: key for key in keys}
         if len(self._keys) != len(keys):
             raise ValueError("duplicate signing key_id")
+        if sum(key.status == "current" for key in keys) > 1:
+            raise ValueError("signing keyring has multiple current keys")
+        self.keyring_version = keyring_version
 
     @classmethod
-    def load(cls, path: Path = KEYRING_PATH) -> "PublicKeyRing":
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        keys = [SigningKey(**item) for item in payload["keys"]]
-        return cls(keys)
+    def load(cls, path: Path | None = None) -> "PublicKeyRing":
+        payload = json.loads((path or KEYRING_PATH).read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or set(payload) != {"keyring_version", "keys"}:
+            raise ValueError("invalid signing keyring document")
+        if not isinstance(payload["keys"], list):
+            raise ValueError("invalid signing keyring keys")
+        try:
+            keys = [SigningKey(**item) for item in payload["keys"]]
+        except (TypeError, KeyError):
+            raise ValueError("invalid signing keyring entry") from None
+        return cls(keys, keyring_version=payload["keyring_version"])
 
     def get(self, key_id: str) -> SigningKey | None:
         return self._keys.get(key_id)
+
+    @property
+    def keys(self) -> tuple[SigningKey, ...]:
+        return tuple(self._keys.values())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "keyring_version": self.keyring_version,
+            "keys": [key.to_dict() for key in self._keys.values()],
+        }
+
+    def validate_for_release(self) -> None:
+        keys = list(self._keys.values())
+        if sum(key.status == "current" for key in keys) != 1:
+            raise ValueError("release keyring must contain exactly one current key")
+        if any(not key.key_id.startswith("lecturecast-prod-") for key in keys):
+            raise ValueError("release keyring can trust only lecturecast-prod keys")
+
+    @staticmethod
+    def public_key_fingerprint(key: SigningKey) -> str:
+        public_key = base64.b64decode(key.public_key, validate=True)
+        return f"sha256:{hashlib.sha256(public_key).hexdigest()}"
 
 
 def load_manifest(path: Path | str) -> ProductionManifest:
@@ -84,7 +143,15 @@ def verify_manifest(
     )
     payload = document.model_dump()
     signature = payload["signature"]
-    key = (keyring or PublicKeyRing.load()).get(signature["key_id"])
+    try:
+        trusted_keyring = keyring or PublicKeyRing.load()
+    except (OSError, ValueError, json.JSONDecodeError):
+        raise LectureCastError(
+            code="manifest_signature_invalid",
+            message="客户端签名信任根无效或尚未发布。",
+            next_action="请安装包含正式 LectureCast public keyring 的可信客户端版本。",
+        ) from None
+    key = trusted_keyring.get(signature["key_id"])
     if key is None or key.status not in {"current", "previous"}:
         raise LectureCastError(
             code="manifest_signature_invalid",

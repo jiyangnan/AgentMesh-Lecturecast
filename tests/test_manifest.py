@@ -75,3 +75,18 @@ def test_previous_rotation_key_remains_valid_for_its_signing_window() -> None:
 
     assert verify_manifest(payload, keyring=keyring).key_status == "previous"
 
+
+def test_invalid_packaged_trust_root_fails_as_a_signature_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        PublicKeyRing,
+        "load",
+        classmethod(lambda _cls, _path=None: (_ for _ in ()).throw(ValueError("bad"))),
+    )
+
+    with pytest.raises(LectureCastError) as captured:
+        verify_manifest(_manifest())
+
+    assert captured.value.code == "manifest_signature_invalid"
+    assert "信任根" in captured.value.message

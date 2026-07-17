@@ -1,0 +1,21 @@
+{
+  "keyring_version": "1.0",
+  "keys": [
+    {
+      "key_id": "fixture_key_v1",
+      "algorithm": "Ed25519",
+      "public_key": "Q4uhKOwdiwvoBQhk8ovJ83bbLXsOGsDHSBnn9Wg0nxE=",
+      "status": "current",
+      "not_before": "2026-07-01T00:00:00Z",
+      "not_after": "2030-01-01T00:00:00Z"
+    },
+    {
+      "key_id": "fixture_key_v0",
+      "algorithm": "Ed25519",
+      "public_key": "ru4h1Uw3JWgOHfq5hI9iHTqYe8UVwQrONIrk8Jelmos=",
+      "status": "previous",
+      "not_before": "2026-01-01T00:00:00Z",
+      "not_after": "2027-01-01T00:00:00Z"
+    }
+  ]
+}
