@@ -1,0 +1,30 @@
+name: Validate landing-page contract
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "scripts/validate_site.py"
+      - "tests/test_site_contract.py"
+      - ".github/workflows/site-contract.yml"
+  pull_request:
+    paths:
+      - "site/**"
+      - "scripts/validate_site.py"
+      - "tests/test_site_contract.py"
+      - ".github/workflows/site-contract.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate static site structure
+        run: python scripts/validate_site.py site
