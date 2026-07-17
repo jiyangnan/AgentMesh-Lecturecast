@@ -26,5 +26,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Validate static site structure
-        run: python scripts/validate_site.py site
+      - name: Validate static site and product boundary
+        run: python scripts/validate_site.py site --contract community-director

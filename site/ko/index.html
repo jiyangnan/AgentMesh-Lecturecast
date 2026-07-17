@@ -278,13 +278,13 @@
       <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md" class="btn btn-ghost">로컬 워크플로 보기</a>
     </div>
 
-    <div class="routes" id="routes" aria-label="Lecturecast 의 두 가지 사용 경로">
-      <article class="route route-community">
+    <div class="routes" id="routes" data-product-contract="community-director-v1" aria-label="Lecturecast 의 두 가지 사용 경로">
+      <article class="route route-community" data-route="community" data-access="available" data-media="local">
         <div class="route-top"><span class="route-label">Community</span><span class="route-status">지금 사용 가능</span></div>
         <h3>완전 로컬. 영구 무료.</h3>
         <p>계정이나 LectureCast API 키가 필요 없습니다. 에이전트가 대본, 더빙, 자막, 모션, 이중 포맷 렌더링, 커버를 당신의 머신에서 처리하며 원본 콘텐츠를 LectureCast 로 보내지 않습니다.</p>
       </article>
-      <article class="route route-director">
+      <article class="route route-director" data-route="director" data-access="staged" data-media="local">
         <div class="route-top"><span class="route-label">Director</span><span class="route-status">단계적 액세스</span></div>
         <h3>클라우드 디렉팅, 로컬 제작.</h3>
         <p>에이전트 네이티브 선택 UI 로 대상, 서사, 비주얼, 전달 방식을 결정합니다. 클라우드는 서명된 ProductionManifest 를 반환하고, credit 은 생성 확인 후에만 사용됩니다. 미디어, 더빙, 편집, 렌더링은 로컬입니다.</p>
