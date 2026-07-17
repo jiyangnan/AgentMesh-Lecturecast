@@ -32,7 +32,12 @@ Import is atomic and append-only by key ID:
 - only `lecturecast-prod-*` IDs can pass the release check.
 
 Publish this Public release at least seven days before the Server worker starts
-using the new private seed.
+using the new private seed. Record the full Public Git commit, exact UTC
+publication time and SHA-256 of the released wheel. At activation, operations
+must download that exact customer-facing wheel and run the Server's offline
+`lecturecast-signing-key public-first-check`; a local build is not release
+evidence. The gate verifies that the wheel embeds this key as `current`, matches
+the private seed and has aged for seven days before Director can be enabled.
 
 ## Revoke a compromised old key
 
