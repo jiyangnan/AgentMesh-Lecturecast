@@ -73,7 +73,7 @@ lecturecast director resume ./my-video --adapter openclaw --json  # after a host
 lecturecast director next ./my-video --json
 ```
 
-Set the credential with the hidden `lecturecast auth login` prompt (or `LECTURECAST_API_KEY`) and set `LECTURECAST_DIRECTOR_URL`. The API key is never written to the project. `director resume` is local and deducts no credit; it ensures the paid request uses the current host's capabilities. Run `director generate` only after approving the Brief and the fixed credit deduction.
+Set the credential with the hidden `lecturecast auth login` prompt (or `LECTURECAST_API_KEY`) and set `LECTURECAST_DIRECTOR_URL`. The API key is never written to the project. `director resume` is local and deducts no credit; it ensures the paid request uses the current host's capabilities. One confirmed ProductionManifest generation deducts 10 credits. Run `director generate` only after approving the Brief and that deduction.
 
 The real work happens when your AI agent follows the local workflow. In your agent chat:
 
