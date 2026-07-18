@@ -27,12 +27,6 @@ Website: **[lecturecast.agentmesh360.com](https://lecturecast.agentmesh360.com)*
 
 **Director is optional.** It adds structured creative choices and a paid, signed declarative ProductionManifest. It receives only a bounded source summary, your stable choice IDs, the Brief and client capabilities. Original media, voice, subtitles, editing, Remotion, ffmpeg and all outputs remain local.
 
-Release operators can use the offline [three-host dogfood gate](docs/RELEASE-DOGFOOD.md)
-to prove one exact released Public wheel across Codex, Claude Code, OpenClaw,
-cross-host handoff, text fallback, and the real local two-video/two-cover output
-contract. This tooling does not add a service, container, daemon, or cloud
-render path.
-
 **Driving this from an AI agent?** Start with **[AGENTS.md](AGENTS.md)** and **[docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)** — the complete, end-to-end how-to for producing a video locally.
 
 ---

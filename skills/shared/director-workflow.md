@@ -50,12 +50,6 @@ lecturecast director answer <project-path> \
   --json
 ```
 
-During an official release dogfood run, native host choices must add
-`--interaction-mode native_choice`; the numbered text-only run must add
-`--interaction-mode text_fallback`. The CLI rejects a missing or false marker
-before making the answer request. Follow [RELEASE-DOGFOOD.md](../../docs/RELEASE-DOGFOOD.md)
-for the complete five-run evidence matrix.
-
 For `other`, place the user's bounded text in a temporary UTF-8 file and use `--custom-text-file`; do not expose it in shell history. If the host has no native choice control, show numbered choices and map the selected number back to the exact option ID.
 
 For `source_readiness`, preserve the user's exact stable option ID. `facts_confirmed` means the summary is the factual boundary; `framework_only` forbids product-specific or technical details that are absent from the summary. If the user selects `need_more_source`, do not confirm or generate: tell them to supplement the local summary and start a new Director Session. This path never deducts credit.
@@ -82,10 +76,6 @@ lecturecast director status <project-path> --json
 ```
 
 The CLI reserves and persists one stable generation ID before the network call. On timeout or 503, rerun the same command without inventing a new ID. Internal model retries do not need a new ID. A ready Manifest is verified and saved read-only to the local project. An already delivered valid Manifest is not freely regenerated; local changes belong in `local-overrides.json`.
-
-For an official handoff dogfood run, every adapter change must happen in a fresh
-Agent task and the returned per-adapter resume command includes
-`--fresh-task`. Do not add that marker unless the new host task actually exists.
 
 ## Local production and deletion
 
