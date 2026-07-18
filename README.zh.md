@@ -27,6 +27,8 @@
 
 **Director 是可选增值路线。** 它提供结构化创作选择和付 credit 的签名声明式 ProductionManifest，只接收受限的素材摘要、稳定选项 ID、Brief 与客户端能力。原始媒体、配音、字幕、编辑、Remotion、ffmpeg 与所有成片仍留在本机。
 
+已有 AgentMesh360 付费账户可直接使用 Director，不需要另购 LectureCast 订阅；请使用 AgentMesh360 通用 API Key，credits 与其他 AgentMesh360 产品共享。
+
 **用 AI agent 驱动？** 先看 **[AGENTS.md](AGENTS.md)** 和 **[docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)**——一条完整、端到端的本地出片指南。
 
 ---

@@ -105,7 +105,7 @@ def test_validate_site_rejects_path_escape(tmp_path: Path) -> None:
     assert any("escapes site root" in error for error in errors)
 
 
-def _contract_page(*, director_access: str = "staged") -> str:
+def _contract_page(*, director_access: str = "paid") -> str:
     return _page(
         body=(
             '<section data-product-contract="community-director-v1">'
@@ -118,17 +118,17 @@ def _contract_page(*, director_access: str = "staged") -> str:
     )
 
 
-def _write_contract_site(root: Path, *, director_access: str = "staged") -> None:
+def _write_contract_site(root: Path, *, director_access: str = "paid") -> None:
     for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(_contract_page(director_access=director_access))
     (root / "llms.txt").write_text(
-        "Community Director ProductionManifest not yet generally open"
+        "Community Director ProductionManifest paid AgentMesh360 accounts"
     )
 
 
-def test_community_director_contract_accepts_staged_local_media_routes(
+def test_community_director_contract_accepts_paid_local_media_routes(
     tmp_path: Path,
 ) -> None:
     site = tmp_path / "site"
@@ -147,7 +147,7 @@ def test_current_site_publishes_ten_credit_manifest_price() -> None:
         assert "10 credits" in page
 
 
-def test_community_director_contract_rejects_director_marked_available(
+def test_community_director_contract_rejects_unmetered_director_access(
     tmp_path: Path,
 ) -> None:
     site = tmp_path / "site"
@@ -158,7 +158,7 @@ def test_community_director_contract_rejects_director_marked_available(
     assert process.returncode == 1
     errors = result["errors"]
     assert isinstance(errors, list)
-    assert sum("director route must remain staged" in error for error in errors) == 4
+    assert sum("director route must be paid" in error for error in errors) == 4
 
 
 def test_community_director_contract_requires_machine_readable_boundary(

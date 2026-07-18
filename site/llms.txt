@@ -20,7 +20,7 @@ Non-Chinese pages are machine-assisted translations; the Chinese page is authori
 
 - Community: Apache 2.0, fully local, free, and available without an account or
   LectureCast API key.
-- Director: optional staged access for native agent choice cards, a Creative
+- Director: optional paid access for native agent choice cards, a Creative
   Brief, and a signed declarative ProductionManifest.
 - Input: a topic or idea for a course video.
 - Output: Bilibili landscape video and Xiaohongshu portrait video.
@@ -29,11 +29,13 @@ Non-Chinese pages are machine-assisted translations; the Chinese page is authori
   ffmpeg, covers, and rendered outputs stay on the user's machine.
 - Director data boundary: only a bounded source summary, stable choice IDs, the
   Brief, and client capabilities are sent to the cloud.
-- Director access: requires an AgentMesh360 account and LectureCast API key once
-  staged access opens. Choices and Brief creation are free; 10 credits are
-  deducted only after the user confirms ProductionManifest generation.
-- Availability: Community is available now. Director is not yet generally open
-  to customers and follows closed, internal, and limited stages.
+- Director access: available to paid AgentMesh360 accounts using a universal
+  AgentMesh360 API key. It reuses the existing subscription and shared credits;
+  there is no separate LectureCast subscription. Choices and Brief creation are
+  free; 10 credits are deducted only after the user confirms ProductionManifest
+  generation.
+- Availability: Community is available now. Director is available to paid
+  AgentMesh360 accounts.
 - License: Apache 2.0.
 - Source code: https://github.com/jiyangnan/AgentMesh-Lecturecast
 

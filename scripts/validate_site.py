@@ -141,8 +141,8 @@ def _validate_community_director_contract(
             errors.append(f"{label}: community route must be available")
         if director is None:
             errors.append(f"{label}: missing director route contract")
-        elif director.get("data-access") != "staged":
-            errors.append(f"{label}: director route must remain staged")
+        elif director.get("data-access") != "paid":
+            errors.append(f"{label}: director route must be paid")
         for route_name, route in (("community", community), ("director", director)):
             if route is not None and route.get("data-media") != "local":
                 errors.append(f"{label}: {route_name} route must keep media local")
@@ -152,7 +152,7 @@ def _validate_community_director_contract(
         errors.append("llms.txt: required machine-readable product boundary is missing")
         return
     llms_text = llms_path.read_text(encoding="utf-8")
-    for token in ("Community", "Director", "ProductionManifest", "not yet generally open"):
+    for token in ("Community", "Director", "ProductionManifest", "paid AgentMesh360 accounts"):
         if token not in llms_text:
             errors.append(f"llms.txt: missing product-boundary token {token!r}")
 
