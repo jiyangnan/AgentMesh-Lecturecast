@@ -136,6 +136,12 @@ Agent 会读 runbook 并驱动本地流水线跑到完成。
 
 ---
 
+## 真实客户验收
+
+- [Community 首次客户旅程验收报告 — 2026-07-19](docs/FIRST-TIME-CUSTOMER-VALIDATION-2026-07-19.md)
+
+---
+
 ## 协议
 
 Apache 2.0 — 见 [LICENSE](LICENSE)。

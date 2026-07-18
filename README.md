@@ -141,6 +141,12 @@ The agent reads the runbook and drives the local pipeline to completion.
 
 ---
 
+## Field validation
+
+- [First-time Community customer journey validation — 2026-07-19](docs/FIRST-TIME-CUSTOMER-VALIDATION-2026-07-19.md) (Chinese)
+
+---
+
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).
