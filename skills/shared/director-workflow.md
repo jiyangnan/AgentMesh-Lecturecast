@@ -68,7 +68,7 @@ Show the full Brief and ask for explicit approval. Confirmation itself does not 
 lecturecast director brief confirm <project-path> --json
 ```
 
-Before `generate`, clearly tell the user that the next command requests one paid ProductionManifest and deducts the published fixed credit amount. Run it only after that explicit approval. Never work around a declined or insufficient-credit response.
+Before `generate`, clearly tell the user that the next command requests one paid ProductionManifest and deducts 10 credits. Run it only after that explicit approval. Never work around a declined or insufficient-credit response.
 
 ```bash
 lecturecast director generate <project-path> --json

@@ -141,6 +141,12 @@ def test_community_director_contract_accepts_staged_local_media_routes(
     assert result["files_checked"] == 4
 
 
+def test_current_site_publishes_ten_credit_manifest_price() -> None:
+    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+        page = (ROOT / "site" / relative).read_text(encoding="utf-8")
+        assert "10 credits" in page
+
+
 def test_community_director_contract_rejects_director_marked_available(
     tmp_path: Path,
 ) -> None:
