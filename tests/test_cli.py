@@ -28,3 +28,10 @@ def test_workflow_preserves_local_community_contract() -> None:
     assert "no API key" in output
     assert "Edge/MiniMax TTS" in output
     assert "Remotion render" in output
+
+
+def test_public_cli_does_not_expose_release_evidence_commands() -> None:
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "dogfood" not in result.stdout.lower()

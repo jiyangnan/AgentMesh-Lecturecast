@@ -16,7 +16,6 @@ from lecturecast.director import (
     normalize_server_url,
 )
 from lecturecast.errors import LectureCastError
-from lecturecast.dogfood import begin_dogfood, load_dogfood_session
 from lecturecast.project import ProjectStore
 from lecturecast.protocol import ClientCapabilities
 
@@ -28,20 +27,6 @@ NOW = "2026-07-15T12:00:00Z"
 
 def _fixture(name: str) -> dict[str, Any]:
     return json.loads((FIXTURE_DIR / name).read_text(encoding="utf-8"))
-
-
-def _stub_release_binding(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "lecturecast.dogfood.verify_release_binding",
-        lambda *_args, **_kwargs: {
-            "version": "0.3.0",
-            "commit": "a" * 40,
-            "wheel_sha256": "sha256:" + "1" * 64,
-            "package_digest": "sha256:" + "2" * 64,
-            "attestation_digest": "sha256:" + "3" * 64,
-            "key_id": "lecturecast-prod-test-v1",
-        },
-    )
 
 
 def _session(
@@ -352,115 +337,6 @@ def test_all_agent_adapters_receive_identical_stable_option_ids(
         )
 
     assert option_sets[0] == option_sets[1] == option_sets[2]
-
-
-def test_active_dogfood_records_actual_cli_events_and_rejects_unattributed_answer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    client = FakeDirectorClient()
-    monkeypatch.setattr(
-        "lecturecast.commands.director._make_client", lambda _url: client
-    )
-    source = _init_project(tmp_path)
-    _stub_release_binding(monkeypatch)
-    begin_dogfood(
-        tmp_path,
-        run_id="run_native_cli",
-        run_kind="native_full",
-        expected_adapter="codex",
-        public_first_attestation_path=tmp_path / "attestation.json",
-        public_wheel_path=tmp_path / "lecturecast.whl",
-    )
-    started = _start(tmp_path, source, adapter="codex")
-    question = started["decision_card_set"]["questions"][0]
-    answer_args = [
-        "director",
-        "answer",
-        str(tmp_path),
-        "--question-id",
-        question["question_id"],
-        "--option-id",
-        question["options"][0]["option_id"],
-        "--catalog-version",
-        started["decision_card_set"]["catalog_version"],
-        "--json",
-    ]
-
-    missing_mode = runner.invoke(app, answer_args)
-
-    assert missing_mode.exit_code == 1
-    assert json.loads(missing_mode.stderr)["code"] == "dogfood_evidence_invalid"
-    assert client.current["status"] == "collecting_decisions"
-
-    answered = runner.invoke(
-        app,
-        [*answer_args[:-1], "--interaction-mode", "native_choice", "--json"],
-    )
-
-    assert answered.exit_code == 0, answered.output
-    events = load_dogfood_session(tmp_path)["events"]
-    assert [item["event"] for item in events] == ["director_start", "decision_answer"]
-    assert events[-1]["interaction_mode"] == "native_choice"
-
-
-def test_handoff_dogfood_payload_requires_fresh_task_resume(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    client = FakeDirectorClient()
-    monkeypatch.setattr(
-        "lecturecast.commands.director._make_client", lambda _url: client
-    )
-    source = _init_project(tmp_path)
-    _stub_release_binding(monkeypatch)
-    begin_dogfood(
-        tmp_path,
-        run_id="run_handoff_cli",
-        run_kind="handoff",
-        expected_adapter="codex",
-        public_first_attestation_path=tmp_path / "attestation.json",
-        public_wheel_path=tmp_path / "lecturecast.whl",
-    )
-    _start(tmp_path, source, adapter="codex")
-
-    handoff = runner.invoke(app, ["director", "handoff", str(tmp_path), "--json"])
-
-    assert handoff.exit_code == 0, handoff.output
-    payload = json.loads(handoff.stdout)
-    assert "--fresh-task" in payload["director_resume_argv_by_adapter"]["claude-code"]
-
-    rejected = runner.invoke(
-        app,
-        [
-            "director",
-            "resume",
-            str(tmp_path),
-            "--adapter",
-            "claude-code",
-            "--json",
-        ],
-    )
-    assert rejected.exit_code == 1
-    assert json.loads(rejected.stderr)["code"] == "dogfood_evidence_invalid"
-
-    accepted = runner.invoke(
-        app,
-        [
-            "director",
-            "resume",
-            str(tmp_path),
-            "--adapter",
-            "claude-code",
-            "--fresh-task",
-            "--json",
-        ],
-    )
-    assert accepted.exit_code == 0, accepted.output
-    events = load_dogfood_session(tmp_path)["events"]
-    assert [item["event"] for item in events][-2:] == [
-        "director_handoff",
-        "director_resume",
-    ]
-    assert events[-1]["fresh_task"] is True
 
 
 def test_same_project_rebinds_across_agents_and_refreshes_capabilities_before_credit(

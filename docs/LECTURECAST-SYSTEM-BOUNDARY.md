@@ -26,8 +26,8 @@ Canonical decision: [lecturecast system boundary](https://github.com/jiyangnan/l
 Community stays fully local and account-free. Optional Director may return
 choices, a Creative Brief, and a signed declarative `ProductionManifest`, but
 original media, voice, subtitles, editing, rendering, covers, and exports stay
-on the user's machine. Director remains staged until the production canary and
-dogfood gates are actually complete.
+on the user's machine. Director uses a fail-closed account allowlist while it is
+staged.
 
 ## Reverse links
 

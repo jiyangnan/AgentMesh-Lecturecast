@@ -33,7 +33,7 @@ Non-Chinese pages are machine-assisted translations; the Chinese page is authori
   staged access opens. Choices and Brief creation are free; credits are deducted
   only after the user confirms ProductionManifest generation.
 - Availability: Community is available now. Director is not yet generally open
-  to customers and follows closed, internal canary, dogfood, and limited stages.
+  to customers and follows closed, internal, and limited stages.
 - License: Apache 2.0.
 - Source code: https://github.com/jiyangnan/AgentMesh-Lecturecast
 

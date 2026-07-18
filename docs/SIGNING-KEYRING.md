@@ -41,15 +41,11 @@ Import is atomic and append-only by key ID:
 - previous public keys remain so archived Manifests continue to verify;
 - only `lecturecast-prod-*` IDs can pass the release check.
 
-Publish this Public release before the Server worker starts using the new
-private seed. Record the full Public Git commit, exact UTC publication time and
-SHA-256 of the released wheel. At activation, operations must download that
-exact customer-facing wheel and run the Server's offline
-`lecturecast-signing-key public-first-check`; a local build is not release
-evidence. There is no fixed waiting period. The gate verifies that the release
-already exists, the wheel embeds this key as `current`, the key matches the
-private seed, and the production key window is active before Director can be
-enabled.
+Publish a normal Public release containing the new public key before the Server
+worker starts using its matching private seed. There is no fixed waiting period,
+signed attestation, or separate activation gate. During the internal canary,
+verify one real Manifest with the released client; that proves the packaged
+`current` key matches the production signer.
 
 ## Revoke a compromised old key
 
