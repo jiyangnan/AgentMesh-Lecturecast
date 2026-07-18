@@ -179,3 +179,17 @@ def test_production_hosting_stays_behind_agentmesh_caddy() -> None:
     assert "agentmesh-core" in boundary
     assert "GitHub Pages is not a production origin" in boundary
     assert (ROOT / ".github/workflows/site-contract.yml").exists()
+
+
+def test_localized_pages_use_the_lecturecast_product_mark_as_favicon() -> None:
+    favicon = (ROOT / "site/favicon.svg").read_text()
+
+    assert "#D1493F" in favicon
+    assert "Lecturecast" in favicon
+    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+        page = (ROOT / "site" / relative).read_text()
+        assert (
+            '<link rel="icon" type="image/svg+xml" '
+            'href="/favicon.svg?v=product-mark-v1" />'
+        ) in page
+        assert "data:image/svg+xml" not in page
