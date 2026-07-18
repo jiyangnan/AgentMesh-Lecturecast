@@ -26,8 +26,10 @@ Canonical decision: [lecturecast system boundary](https://github.com/jiyangnan/l
 Community stays fully local and account-free. Optional Director may return
 choices, a Creative Brief, and a signed declarative `ProductionManifest`, but
 original media, voice, subtitles, editing, rendering, covers, and exports stay
-on the user's machine. Director uses a fail-closed account allowlist while it is
-staged.
+on the user's machine. Director is fail-closed: internal/limited stages use an
+account allowlist, while customer access requires the current paid subscription
+returned by AgentMesh Core. Manifest generation remains metered through shared
+AgentMesh360 credits.
 
 ## Reverse links
 

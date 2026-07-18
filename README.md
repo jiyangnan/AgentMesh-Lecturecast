@@ -27,6 +27,10 @@ Website: **[lecturecast.agentmesh360.com](https://lecturecast.agentmesh360.com)*
 
 **Director is optional.** It adds structured creative choices and a paid, signed declarative ProductionManifest. It receives only a bounded source summary, your stable choice IDs, the Brief and client capabilities. Original media, voice, subtitles, editing, Remotion, ffmpeg and all outputs remain local.
 
+Director is available to existing AgentMesh360 paid accounts with a universal
+AgentMesh360 API key. It uses the same shared credits; there is no separate
+LectureCast subscription.
+
 **Driving this from an AI agent?** Start with **[AGENTS.md](AGENTS.md)** and **[docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)** — the complete, end-to-end how-to for producing a video locally.
 
 ---

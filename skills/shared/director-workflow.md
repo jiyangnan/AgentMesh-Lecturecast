@@ -2,6 +2,10 @@
 
 Director is optional. Community remains fully local and needs no account or LectureCast API key. Director sends only a bounded source summary, stable option IDs, the Creative Brief, ClientCapabilities and the resulting declarative Manifest; raw media, voice, local paths and rendered files stay on the user's machine.
 
+Director is available to accounts with a current AgentMesh360 paid subscription.
+Use an AgentMesh360 universal API key; an older Job Agent-only key does not cover
+LectureCast. There is no separate LectureCast subscription.
+
 ## State rule
 
 The local project is the durable state source. Never reconstruct IDs from chat history.
