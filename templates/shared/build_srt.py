@@ -7,7 +7,7 @@ from pathlib import Path
 from datetime import timedelta
 
 ROOT = Path(__file__).parent
-SCRIPT = json.loads((ROOT / "scripts" / "bilibili.json").read_text())
+SCRIPT = json.loads((ROOT / "scripts" / "bilibili.json").read_text(encoding="utf-8"))
 AUDIO_DIR = ROOT / "audio"
 
 # section start times (cumulative)
@@ -15,7 +15,7 @@ starts = []
 acc = 0.0
 for s in SCRIPT["sections"]:
     starts.append(acc)
-    d = json.loads((AUDIO_DIR / f"{s['id']}.json").read_text())
+    d = json.loads((AUDIO_DIR / f"{s['id']}.json").read_text(encoding="utf-8"))
     acc += d["duration"]
 
 # split a cue into shorter visible lines based on punctuation
@@ -70,7 +70,9 @@ def fmt(sec):
 lines = []
 idx = 1
 for sec, base in zip(SCRIPT["sections"], starts):
-    d = json.loads((AUDIO_DIR / f"{sec['id']}.json").read_text())
+    d = json.loads(
+        (AUDIO_DIR / f"{sec['id']}.json").read_text(encoding="utf-8")
+    )
     for cue in d["cues"]:
         text = cue["text"].strip()
         start = base + cue["start"]
@@ -81,6 +83,6 @@ for sec, base in zip(SCRIPT["sections"], starts):
             idx += 1
 
 out = ROOT / "assets" / "subtitle.srt"
-out.write_text("\n".join(lines))
+out.write_text("\n".join(lines), encoding="utf-8")
 print(f"wrote {idx-1} subtitle lines to {out}")
 print(f"total duration covered: {fmt(starts[-1] + d['duration'])}")

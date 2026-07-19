@@ -8,7 +8,7 @@ from pathlib import Path
 from subtitle_font import subtitle_font_name
 
 ROOT = Path(__file__).parent
-SRT = (ROOT / "assets" / "subtitle.srt").read_text()
+SRT = (ROOT / "assets" / "subtitle.srt").read_text(encoding="utf-8")
 ASS = ROOT / "assets" / "subtitle_vertical.ass"
 
 # Keywords to highlight (substring match) → ASS color (BGR hex)
@@ -87,5 +87,5 @@ for block in re.split(r"\n\s*\n", SRT.strip()):
     text = colorize(text)
     events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}")
 
-ASS.write_text(HEADER + "\n".join(events) + "\n")
+ASS.write_text(HEADER + "\n".join(events) + "\n", encoding="utf-8")
 print(f"wrote {len(events)} vertical-style events to {ASS}")

@@ -15,7 +15,7 @@ import urllib.request
 import edge_tts
 
 ROOT = Path(__file__).parent
-SCRIPT = json.loads((ROOT / "scripts" / "bilibili.json").read_text())
+SCRIPT = json.loads((ROOT / "scripts" / "bilibili.json").read_text(encoding="utf-8"))
 AUDIO = ROOT / "audio"; AUDIO.mkdir(exist_ok=True)
 TMP = AUDIO / "_parts"; TMP.mkdir(exist_ok=True)
 
@@ -119,12 +119,21 @@ async def main():
             cues.append({"start": round(cum, 3), "end": round(cum + d, 3), "text": sent})
             cum += d; parts.append(pf)
         listf = TMP / f"{sid}.txt"
-        listf.write_text("\n".join(f"file '{p.name}'" for p in parts))
+        listf.write_text(
+            "\n".join(f"file '{p.name}'" for p in parts), encoding="utf-8"
+        )
         out = AUDIO / f"{sid}.mp3"
         subprocess.run(["ffmpeg","-y","-f","concat","-safe","0","-i",str(listf),"-c","copy",str(out)],
                        capture_output=True, cwd=str(TMP))
         dur = ffdur(out)
-        (AUDIO / f"{sid}.json").write_text(json.dumps({"section": sid, "duration": dur, "cues": cues}, ensure_ascii=False, indent=2))
+        (AUDIO / f"{sid}.json").write_text(
+            json.dumps(
+                {"section": sid, "duration": dur, "cues": cues},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         print(f"  {sid}: {dur:.2f}s ({len(cues)} sentences)")
         total += dur
     print(f"\nTotal: {total:.2f}s ({total/60:.2f} min)  engines used: {engines}")

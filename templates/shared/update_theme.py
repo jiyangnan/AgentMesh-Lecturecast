@@ -6,14 +6,14 @@ import json, re
 from pathlib import Path
 
 ROOT = Path(__file__).parent
-SCRIPT = json.loads((ROOT / "scripts" / "bilibili.json").read_text())
+SCRIPT = json.loads((ROOT / "scripts" / "bilibili.json").read_text(encoding="utf-8"))
 AUDIO = ROOT / "audio"
 
 rows, acc = [], 0.0
 for s in SCRIPT["sections"]:
     sid = s["id"]
     short = sid[3:]  # "01_hook" -> "hook"
-    dur = json.loads((AUDIO / f"{sid}.json").read_text())["duration"]
+    dur = json.loads((AUDIO / f"{sid}.json").read_text(encoding="utf-8"))["duration"]
     rows.append((short, round(acc, 2), round(dur, 2)))
     acc += dur
 total = round(acc, 2)
@@ -22,11 +22,11 @@ body = "\n".join(f"  {{ id: '{sh}', start: {st}, duration: {du} }}," for sh, st,
 block = ("export const SECTIONS: { id: string; start: number; duration: number }[] = [\n"
          + body + "\n];")
 
-theme = (ROOT / "remotion" / "src" / "theme.ts").read_text()
+theme = (ROOT / "remotion" / "src" / "theme.ts").read_text(encoding="utf-8")
 theme = re.sub(r"export const SECTIONS[^\]]*\];", block, theme, flags=re.S)
 theme = re.sub(r"export const NARRATION_SEC = [\d.]+;", f"export const NARRATION_SEC = {total};", theme)
 theme = re.sub(r"export const TOTAL_SEC = [\d.]+;", f"export const TOTAL_SEC = {total};", theme)
-(ROOT / "remotion" / "src" / "theme.ts").write_text(theme)
+(ROOT / "remotion" / "src" / "theme.ts").write_text(theme, encoding="utf-8")
 
 print(f"✓ theme.ts updated · TOTAL_SEC = {total}s ({total/60:.2f} min)")
 for sh, st, du in rows:

@@ -6,7 +6,7 @@ from pathlib import Path
 from subtitle_font import subtitle_font_name
 
 ROOT = Path(__file__).parent
-SRT = (ROOT / "assets" / "subtitle.srt").read_text()
+SRT = (ROOT / "assets" / "subtitle.srt").read_text(encoding="utf-8")
 ASS = ROOT / "assets" / "subtitle.ass"
 
 HEADER = f"""[Script Info]
@@ -44,5 +44,5 @@ for block in re.split(r"\n\s*\n", SRT.strip()):
     end = srt_t_to_ass(m.group(2))
     events.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}")
 
-ASS.write_text(HEADER + "\n".join(events) + "\n")
+ASS.write_text(HEADER + "\n".join(events) + "\n", encoding="utf-8")
 print(f"wrote {len(events)} events to {ASS}")
