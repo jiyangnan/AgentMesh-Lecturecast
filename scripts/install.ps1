@@ -60,13 +60,19 @@ if (-not $GitCommand) {
 }
 
 $PythonExe = $PythonCommand.Source
-$PythonInfoJson = & $PythonExe -c 'import json, platform, sys; print(json.dumps({"major": sys.version_info.major, "minor": sys.version_info.minor, "arch": platform.machine()}))'
+$PythonInfoText = & $PythonExe -c 'import platform, sys; print(sys.version_info.major, sys.version_info.minor, platform.machine(), sep=chr(124))'
 Assert-LastExit "Python inspection"
-$PythonInfo = $PythonInfoJson | ConvertFrom-Json
-if ($PythonInfo.major -lt 3 -or ($PythonInfo.major -eq 3 -and $PythonInfo.minor -lt 11)) {
-    throw "Python 3.11+ is required (found $($PythonInfo.major).$($PythonInfo.minor))."
+$PythonInfo = $PythonInfoText.Trim().Split("|")
+if ($PythonInfo.Count -ne 3) {
+    throw "Python inspection returned an unexpected value: $PythonInfoText"
 }
-$PythonSignature = "$($PythonInfo.major).$($PythonInfo.minor)/$($PythonInfo.arch)"
+$PythonMajor = [int]$PythonInfo[0]
+$PythonMinor = [int]$PythonInfo[1]
+$PythonArch = $PythonInfo[2]
+if ($PythonMajor -lt 3 -or ($PythonMajor -eq 3 -and $PythonMinor -lt 11)) {
+    throw "Python 3.11+ is required (found $PythonMajor.$PythonMinor)."
+}
+$PythonSignature = "$PythonMajor.$PythonMinor/$PythonArch"
 Write-Ok "python $PythonSignature"
 
 if (Test-Path -LiteralPath (Join-Path $InstallDir ".git")) {
@@ -92,7 +98,13 @@ $LectureCastExe = Join-Path $Venv "Scripts\lecturecast.exe"
 if (Test-Path -LiteralPath $Venv) {
     $VenvSignature = ""
     if (Test-Path -LiteralPath $VenvPython) {
-        $VenvSignature = (& $VenvPython -c 'import platform, sys; print(f"{sys.version_info.major}.{sys.version_info.minor}/{platform.machine()}")' 2>$null)
+        $VenvSignature = (& $VenvPython -c 'import platform, sys; print(sys.version_info.major, sys.version_info.minor, platform.machine(), sep=chr(47))' 2>$null)
+        if ($LASTEXITCODE -eq 0) {
+            $VenvParts = $VenvSignature.Trim().Split("/")
+            if ($VenvParts.Count -eq 3) {
+                $VenvSignature = "$($VenvParts[0]).$($VenvParts[1])/$($VenvParts[2])"
+            }
+        }
     }
     if ($VenvSignature -ne $PythonSignature) {
         Write-Warn "recreating incomplete or mismatched installer-owned venv ($VenvSignature -> $PythonSignature)"
