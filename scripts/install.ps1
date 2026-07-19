@@ -166,4 +166,4 @@ Write-Host "Community remains fully local. Director is optional; media and rende
 Write-Host "Director signature verification is optional; install it only when needed:"
 Write-Host "    `"$VenvPip`" install cryptography>=43"
 Write-Host "If this agent session started before installation, open a new session and paste:"
-Write-Host "    请读取 LectureCast Skill，并从项目路径 <project-path> 继续。"
+Write-Host "    Read the LectureCast Skill and continue from project path <project-path>."
