@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "scripts/*.ps1"
+      - "src/lecturecast/**"
       - "templates/shared/*.ps1"
       - "templates/shared/*.py"
       - "tests/test_platform_contract.py"
@@ -18,6 +19,7 @@ on:
   pull_request:
     paths:
       - "scripts/*.ps1"
+      - "src/lecturecast/**"
       - "templates/shared/*.ps1"
       - "templates/shared/*.py"
       - "tests/test_platform_contract.py"
