@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# Lecturecast installer (macOS / Linux). Idempotent.
+# LectureCast installer for macOS. Windows uses install.ps1.
 set -euo pipefail
+
+if [ "$(uname -s)" != "Darwin" ]; then
+  printf 'LectureCast supports macOS and native Windows only.\n' >&2
+  printf 'Windows: run scripts/install.ps1 from PowerShell. Linux and WSL are not supported.\n' >&2
+  exit 1
+fi
 
 REPO="${LECTURECAST_REPO:-https://github.com/jiyangnan/AgentMesh-Lecturecast.git}"
 BRANCH="${LECTURECAST_BRANCH:-main}"

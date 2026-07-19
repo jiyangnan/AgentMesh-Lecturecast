@@ -7,15 +7,18 @@ script** — didactic visuals need per-topic design, and that's your job as the
 director. You get the pipeline, the Remotion project, and working Hook/End scenes
 to copy.
 
+Supported native hosts are **macOS and Windows**. Linux distributions and WSL
+are not supported. See [SUPPORTED-PLATFORMS.md](SUPPORTED-PLATFORMS.md).
+
 ## What you need on the machine
 
 Check at the start; offer to install whatever's missing.
 
 | Tool | Why | Install |
 |---|---|---|
-| Node 20+ + `npm` | Remotion render | `brew install node` |
-| Python 3.11+ (venv) | `edge-tts`, SRT/ASS converters | `python3 -m venv .venv` |
-| Local `ffmpeg` **with libass** | subtitle burn + audio concat | macOS: `brew install ffmpeg-full`, then `export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"` for this shell. The regular Homebrew `ffmpeg` formula does not currently guarantee libass. |
+| Node 20+ + `npm` | Remotion render | macOS: `brew install node`; Windows: install Node LTS |
+| Python 3.11+ (venv) | `edge-tts`, SRT/ASS converters | macOS: `python3 -m venv .venv`; Windows: `python -m venv .venv` |
+| Local `ffmpeg` **with libass** | subtitle burn + audio concat | macOS: `brew install ffmpeg-full`, then put its bin first in this shell's PATH. Windows: install a native ffmpeg build with libass. Verify either route with `lecturecast doctor`. |
 | **MiniMax API key** *(optional, BYOK)* | warmer default voice | **ask your human for their own MiniMax key** (third-party, minimaxi.com) → `export MINIMAX_API_KEY=…`. No key → automatic free Edge voice. |
 
 > **On the MiniMax key:** it is the user's own third-party account, not a
@@ -38,7 +41,7 @@ topic
 [4] Scenes — ONE Remotion project: src/scenes/<Id>.tsx (vertical)
                                   + src/scenesH/<Id>H.tsx (landscape)
   ▼
-[5] ./build_video.sh <slug> — merge audio · rewrite timing · SRT+ASS ·
+[5] build_video.sh / build_video.ps1 <slug> — merge audio · rewrite timing · SRT+ASS ·
         render VideoVertical + VideoLandscape · burn subs · 2 covers
   ▼
 [6] Xiaohongshu compliance pass — banned-word grep over the WHOLE video
@@ -66,6 +69,16 @@ Make a working dir **outside this repo** (so renders don't pollute it):
 SLUG=rag
 mkdir -p ~/lecturecast-projects/$SLUG && cd ~/lecturecast-projects/$SLUG
 mkdir -p scripts audio assets output
+```
+
+Windows PowerShell equivalent:
+
+```powershell
+$Slug = "rag"
+$Project = Join-Path $HOME "lecturecast-projects\$Slug"
+New-Item -ItemType Directory -Force -Path $Project | Out-Null
+Set-Location $Project
+New-Item -ItemType Directory -Force -Path scripts, audio, assets, output | Out-Null
 ```
 
 Write `scripts/bilibili.json`:
@@ -103,6 +116,22 @@ export MINIMAX_API_KEY=…    # optional BYOK; omit to use the free Edge voice
 python3 build_audio_mm.py
 ```
 
+Windows PowerShell equivalent:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install --quiet edge-tts
+Copy-Item C:\path\to\AgentMesh-Lecturecast\templates\shared\build_audio_mm.py .
+Copy-Item C:\path\to\AgentMesh-Lecturecast\templates\shared\build_srt.py .
+Copy-Item C:\path\to\AgentMesh-Lecturecast\templates\shared\subtitle_font.py .
+Copy-Item C:\path\to\AgentMesh-Lecturecast\templates\shared\srt_to_ass*.py .
+Copy-Item C:\path\to\AgentMesh-Lecturecast\templates\shared\update_theme.py .
+Copy-Item C:\path\to\AgentMesh-Lecturecast\templates\shared\build_video.ps1 .
+$env:MINIMAX_API_KEY = "..."  # optional BYOK; omit for Edge
+python build_audio_mm.py
+```
+
 Output: `audio/<id>.mp3` + `audio/<id>.json` (per-sentence cues) per section.
 Degradation is built in: MiniMax transient/RPM error → retry 3× at 20s;
 quota/auth error → permanent fallback to Edge. Per-sentence synth + ffmpeg
@@ -117,6 +146,17 @@ npm install --no-fund --no-audit   # NOT bun — see failure modes
 npx remotion browser ensure        # explicit first-run browser download/warm-up
 cd ..
 lecturecast doctor --project-root "$PWD"
+```
+
+Windows PowerShell equivalent:
+
+```powershell
+Copy-Item C:\path\to\AgentMesh-Lecturecast\templates\remotion remotion -Recurse
+Set-Location remotion
+npm install --no-fund --no-audit
+npx.cmd remotion browser ensure
+Set-Location ..
+lecturecast doctor --project-root (Get-Location)
 ```
 
 - Set the look in `src/theme.ts`: `BRAND.series` / `BRAND.ep` / `COLORS.accent`.
@@ -149,13 +189,22 @@ terms first, then:
 ./build_video.sh $SLUG
 ```
 
+Windows PowerShell:
+
+```powershell
+.\build_video.ps1 $Slug
+```
+
 The ASS generators choose a CJK-capable platform default: `Arial Unicode MS`
-on macOS, `Microsoft YaHei` on Windows, and `Noto Sans CJK SC` elsewhere. To use
-another locally installed family, set it before generating ASS:
+on macOS and `Microsoft YaHei` on Windows. Unsupported operating systems stop
+instead of silently selecting an unverified font. To use another locally
+installed family, set it before generating ASS:
 
 ```bash
 export LECTURECAST_SUBTITLE_FONT="Your CJK Font Family"
 ```
+
+Windows PowerShell uses `$env:LECTURECAST_SUBTITLE_FONT = "Your CJK Font Family"`.
 
 LectureCast does not bundle or upload fonts. The override is read from the
 current environment only.
@@ -175,6 +224,14 @@ Outputs `output/$SLUG-{xiaohongshu,bilibili}.mp4` + `$SLUG-cover-*.png`.
 - 🔍 Grep the WHOLE video — narration, on-screen text, subtitles:
   ```bash
   grep -rno "扒\|私信\|领取\|暗号\|起底\|爬虫\|爬取\|关注我" scripts remotion/src assets/*.srt
+  # expect: no matches
+  ```
+
+  Windows PowerShell equivalent:
+
+  ```powershell
+  Get-ChildItem scripts, remotion\src, assets -Recurse -File |
+    Select-String -Pattern "扒|私信|领取|暗号|起底|爬虫|爬取|关注我"
   # expect: no matches
   ```
 
@@ -220,7 +277,7 @@ after a highlighted word so it doesn't bleed.
 | MiniMax quota/auth error | auto-falls back to Edge; top up or fix the key to restore MiniMax |
 | `ModuleNotFoundError: edge_tts` | activate the venv (PEP 668 locks system python) |
 | `Cannot find module '@rspack/binding-darwin-*'` | `bun` pruned an optional dep — `rm -rf node_modules && npm install` |
-| ffmpeg `No option name near 'subtitle.ass'` | system ffmpeg lacks libass — on macOS install `ffmpeg-full` and put `$(brew --prefix ffmpeg-full)/bin` first in PATH |
+| ffmpeg `No option name near 'subtitle.ass'` | ffmpeg lacks libass — use `ffmpeg-full` on macOS or a Windows build with libass, then rerun doctor |
 | Burned Chinese subtitles are squares | regenerate ASS with the platform default, or set `LECTURECAST_SUBTITLE_FONT` to a locally installed CJK family first |
 | first Remotion browser connection times out after download | run `npx remotion browser ensure`, then retry the original render once; if it repeats, report the full error |
 | Scene timing drifts from audio | you hand-edited `SECTIONS` — never do that; rerun `update_theme.py` |

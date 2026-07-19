@@ -37,21 +37,42 @@ LectureCast subscription.
 
 ## Install
 
+Supported native hosts: **macOS and Windows**. Linux distributions and WSL are
+not supported; see [Supported platforms](docs/SUPPORTED-PLATFORMS.md).
+
 ### One-liner (recommended)
 
-**macOS / Linux** (Terminal):
+**macOS** (Terminal):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash
 ```
 
+**Windows** (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex
+```
+
 ### Manual
+
+macOS:
 
 ```bash
 git clone https://github.com/jiyangnan/AgentMesh-Lecturecast.git
 cd AgentMesh-Lecturecast
 python -m venv .venv
 source .venv/bin/activate
+pip install -e .
+```
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/jiyangnan/AgentMesh-Lecturecast.git
+Set-Location AgentMesh-Lecturecast
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -e .
 ```
 
@@ -95,7 +116,7 @@ topic
   ▼ 7-section draft script         (your approval gate)
   ▼ voiceover   python3 build_audio_mm.py   (Edge free, MiniMax optional)
   ▼ scenes      Remotion (vertical + landscape)
-  ▼ render      ./build_video.sh <slug>      (ffmpeg + libass)
+  ▼ render      build_video.sh / build_video.ps1 <slug> (ffmpeg + libass)
   ▼ 2 mp4s + 2 covers in your working dir
 ```
 

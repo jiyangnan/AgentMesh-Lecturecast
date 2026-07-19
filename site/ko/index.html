@@ -45,7 +45,7 @@
       "license": "https://www.apache.org/licenses/LICENSE-2.0",
       "applicationCategory": "MultimediaApplication",
       "applicationSubCategory": "local AI video generation workflow",
-      "operatingSystem": "macOS, Windows, Linux",
+      "operatingSystem": "macOS, Windows",
       "isAccessibleForFree": true,
       "provider": { "@id": "https://agentmesh360.com/#organization" },
       "description": "Lecturecast Community 는 오픈소스 로컬 강의 영상 워크플로입니다. 선택형 Director 는 구조화된 창작 선택과 서명된 ProductionManifest 를 제공하며 미디어 제작과 렌더링은 사용자의 머신에 남습니다.",
@@ -297,6 +297,7 @@
         <span class="title">~ run-this-locally</span>
       </div>
 <pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
+<span class="c-prompt">PS&gt;</span> <span class="c-cmd">irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex</span>
 <span class="c-prompt">$</span> <span class="c-cmd">lecturecast workflow</span>      <span class="c-dim"># 로컬 워크플로 위치를 출력해 AI 에이전트에게 전달</span>
 
 <span class="c-dim"># 에이전트는 AGENTS.md / docs/LOCAL-WORKFLOW.md 에 따라 로컬에서 엔드 투 엔드 실행:</span>
@@ -373,12 +374,12 @@
   <div class="wrap">
     <div class="kicker">로컬 3 가지 세트</div>
     <h2 class="section-title">모두 <em>당신의 머신</em>에서.</h2>
-    <p class="section-lede">클라우드 미디어 워커도, 원격 렌더러도 없습니다. Director 를 선택해도 클라우드는 창작 결정과 서명된 Manifest 만 담당합니다. 아래 세 가지를 설치하면 에이전트가 미디어 제작을 로컬에서 엔드 투 엔드 실행할 수 있습니다. <code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh</code> 가 누락된 것을 알려 줍니다.</p>
+    <p class="section-lede">macOS 와 Windows 를 네이티브 지원하며 Linux / WSL 은 지원하지 않습니다. 클라우드 미디어 워커나 원격 렌더러는 없습니다. <code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh / install.ps1</code> 가 로컬 환경의 누락 항목을 확인합니다.</p>
     <div class="stack">
       <div class="stk">
         <div class="stk-icon">RENDER</div>
         <h3>Node + Remotion</h3>
-        <p>코드 기반 애니메이션으로 두 비율을 렌더링. <code>brew install node</code> 후 <code>npm install</code>.</p>
+        <p>코드 기반 애니메이션으로 두 비율을 렌더링합니다. Node 20+ 설치 후 <code>npm install</code> 로 프로젝트를 준비합니다.</p>
       </div>
       <div class="stk">
         <div class="stk-icon">VOICE</div>
@@ -388,7 +389,7 @@
       <div class="stk">
         <div class="stk-icon">MUX</div>
         <h3>ffmpeg(libass 포함)</h3>
-        <p>중국어 자막을 굽고 최종 영상을 합성합니다. macOS 에서는 <code>brew install ffmpeg-full</code> 을 사용하고 doctor 의 PATH 안내를 따르세요. 일반 Homebrew ffmpeg 는 현재 libass 포함을 보장하지 않습니다.</p>
+        <p>중국어 자막을 굽고 최종 영상을 합성합니다. macOS 는 <code>ffmpeg-full</code>, Windows 는 libass 포함 네이티브 ffmpeg build 를 사용하며 doctor 가 실제 기능을 검증합니다.</p>
       </div>
     </div>
   </div>
@@ -404,7 +405,7 @@
         <div class="step-n">01</div>
         <div class="step-body">
           <h3>CLI 설치</h3>
-          <p>한 줄의 <code>install.sh</code> 로 <code>lecturecast</code> CLI 와 로컬 워크플로가 설치되고, <code>lecturecast workflow</code> 가 워크플로의 위치를 출력합니다.<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub 보기 →</a></p>
+          <p>macOS 는 <code>install.sh</code>, Windows PowerShell 은 <code>install.ps1</code> 을 사용합니다. 둘 다 CLI 와 로컬 워크플로를 설치하며 <code>lecturecast workflow</code> 가 위치를 출력합니다.<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub 보기 →</a></p>
         </div>
       </div>
       <div class="step">
@@ -448,7 +449,7 @@
       </details>
       <details class="faq-item">
         <summary>무엇을 설치해야 하나요?</summary>
-        <div class="faq-answer">로컬 3 가지 세트: <code>Node</code> + Remotion(렌더링), <code>Python</code> + edge-tts(더빙), libass 포함 <code>ffmpeg</code>(자막 굽기). <code>install.sh</code> 는 CLI 설치 성공과 렌더러 준비 상태를 구분합니다. macOS 에서는 <code>brew install node ffmpeg-full</code> 을 사용하고 doctor 의 PATH 안내를 따르세요.</div>
+        <div class="faq-answer">로컬 3 가지 세트는 <code>Node</code> + Remotion, <code>Python</code> + edge-tts, libass 포함 <code>ffmpeg</code> 입니다. macOS <code>install.sh</code> 와 Windows <code>install.ps1</code> 은 CLI 설치와 렌더러 준비를 구분하며 doctor 가 기능을 판정합니다.</div>
       </details>
       <details class="faq-item">
         <summary>어떤 플랫폼용 영상에 대응하나요?</summary>

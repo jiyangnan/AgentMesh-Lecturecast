@@ -31,7 +31,9 @@ def test_subtitle_font_has_cjk_platform_defaults(monkeypatch: pytest.MonkeyPatch
 
     assert module.subtitle_font_name(system="Darwin") == "Arial Unicode MS"
     assert module.subtitle_font_name(system="Windows") == "Microsoft YaHei"
-    assert module.subtitle_font_name(system="Linux") == "Noto Sans CJK SC"
+
+    with pytest.raises(RuntimeError, match="Linux is not supported"):
+        module.subtitle_font_name(system="Linux")
 
 
 def test_subtitle_font_accepts_safe_override(monkeypatch: pytest.MonkeyPatch) -> None:

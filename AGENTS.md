@@ -32,17 +32,22 @@ per-topic design, and that's your job.
 Voiceover is **Edge TTS (free) by default**, upgradable to **MiniMax** if your
 human gives you their own `MINIMAX_API_KEY` (see [Voiceover & BYOK](#voiceover--byok)).
 
+Supported native hosts are **macOS and Windows**. Linux distributions and WSL
+are not supported; read [docs/SUPPORTED-PLATFORMS.md](docs/SUPPORTED-PLATFORMS.md).
+
 ## Produce a video — the workflow
 
 1. **Install tools** (offer to install whatever's missing):
-   - Node 20+ + npm — `brew install node`
+   - Node 20+ + npm — macOS: `brew install node`; Windows: install Node LTS
    - Python 3.11+ — for `edge-tts` + the SRT/ASS converters
    - ffmpeg **with libass** — on current Homebrew use `brew install ffmpeg-full`,
-     then `export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"`
+     then `export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH`; on Windows use
+     a Windows build with libass and let `lecturecast doctor` verify it
    - *(optional)* a MiniMax key from your human → `export MINIMAX_API_KEY=…`
 2. **Follow the full pipeline** in **[docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)**:
    scope → script (approval gate) → `build_audio_mm.py` → Remotion scenes →
-   `build_video.sh` → Xiaohongshu compliance grep → deliver 2 mp4s + 2 covers.
+   `build_video.sh` (macOS) or `build_video.ps1` (Windows) → Xiaohongshu
+   compliance check → deliver 2 mp4s + 2 covers.
 
 Everything runs on this machine. Two finished videos + two covers land in your
 working dir.
@@ -80,7 +85,7 @@ never create a second generation ID after a timeout.
 
 | Thing | Required? | How they get it | Used for |
 |---|---|---|---|
-| Node + ffmpeg installed | Yes | `brew install node ffmpeg-full`, then put the `ffmpeg-full` bin first in this shell's PATH | Local render |
+| Node + ffmpeg installed | Yes | macOS: Homebrew; Windows: native Node and an ffmpeg build with libass | Local render |
 | MiniMax API key | Optional | Their own signup at minimaxi.com | Upgrade voiceover to MiniMax |
 
 ## When something's missing
@@ -89,8 +94,8 @@ never create a second generation ID after a timeout.
 |---|---|
 | MiniMax warned + fell back to Edge | No `MINIMAX_API_KEY` set. Want MiniMax? Ask your human for a key. Else ignore — Edge still ships. |
 | `bun` / `@rspack/binding` error | Use `npm install`, not bun. See LOCAL-WORKFLOW failure modes. |
-| ffmpeg `No option name near 'subtitle.ass'` | System ffmpeg lacks libass — on macOS use `brew install ffmpeg-full`, then put `$(brew --prefix ffmpeg-full)/bin` first in PATH. |
-| Burned Chinese subtitles are squares | Keep the platform default, or set `LECTURECAST_SUBTITLE_FONT` to a locally installed CJK font family before generating ASS. macOS defaults to `Arial Unicode MS`. |
+| ffmpeg `No option name near 'subtitle.ass'` | System ffmpeg lacks libass — use `ffmpeg-full` on macOS or a Windows build with libass, then rerun `lecturecast doctor`. |
+| Burned Chinese subtitles are squares | Keep the platform default, or set `LECTURECAST_SUBTITLE_FONT` to a locally installed CJK font family before generating ASS. macOS defaults to `Arial Unicode MS`; Windows defaults to `Microsoft YaHei`. |
 | `ModuleNotFoundError: edge_tts` | Activate the Python venv (PEP 668 locks system python). |
 
 ## Don'ts
@@ -106,5 +111,6 @@ never create a second generation ID after a timeout.
 ## More
 
 - Local pipeline (full): [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)
+- Supported hosts: [docs/SUPPORTED-PLATFORMS.md](docs/SUPPORTED-PLATFORMS.md)
 - Human-facing docs: [README.md](README.md) · [中文](README.zh.md)
 - Agent Skills: [Codex](skills/codex/SKILL.md) · [Claude Code](skills/claude-code/SKILL.md) · [OpenClaw](skills/openclaw/SKILL.md)

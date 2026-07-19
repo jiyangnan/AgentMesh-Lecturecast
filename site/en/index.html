@@ -45,7 +45,7 @@
       "license": "https://www.apache.org/licenses/LICENSE-2.0",
       "applicationCategory": "MultimediaApplication",
       "applicationSubCategory": "local AI video generation workflow",
-      "operatingSystem": "macOS, Windows, Linux",
+      "operatingSystem": "macOS, Windows",
       "isAccessibleForFree": true,
       "provider": { "@id": "https://agentmesh360.com/#organization" },
       "description": "Lecturecast Community is an open-source local course-video workflow. Optional Director adds structured creative choices and a signed ProductionManifest while media production and rendering stay on the user's machine.",
@@ -297,6 +297,7 @@
         <span class="title">~ run-this-locally</span>
       </div>
 <pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
+<span class="c-prompt">PS&gt;</span> <span class="c-cmd">irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex</span>
 <span class="c-prompt">$</span> <span class="c-cmd">lecturecast workflow</span>      <span class="c-dim"># prints the path of the local workflow, hand it to your AI agent</span>
 
 <span class="c-dim"># Your agent follows AGENTS.md / docs/LOCAL-WORKFLOW.md and runs locally end-to-end:</span>
@@ -373,12 +374,12 @@
   <div class="wrap">
     <div class="kicker">Local three-piece stack</div>
     <h2 class="section-title">All on <em>your own machine</em>.</h2>
-    <p class="section-lede">No cloud media workers and no remote renderer. Even with Director, the cloud handles only creative decisions and a signed Manifest. Install these three, and your agent can run media production end-to-end on this machine. <code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh</code> checks what's missing.</p>
+    <p class="section-lede">Native macOS and Windows are supported; Linux and WSL are not. There are no cloud media workers or remote renderers. Even with Director, the cloud handles only creative decisions and a signed Manifest. <code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh / install.ps1</code> checks what the local machine is missing.</p>
     <div class="stack">
       <div class="stk">
         <div class="stk-icon">RENDER</div>
         <h3>Node + Remotion</h3>
-        <p>Code-driven animated scenes that render both aspect ratios. <code>brew install node</code> then <code>npm install</code>.</p>
+        <p>Code-driven animated scenes that render both aspect ratios. Install Node 20+, then let <code>npm install</code> prepare the project.</p>
       </div>
       <div class="stk">
         <div class="stk-icon">VOICE</div>
@@ -388,7 +389,7 @@
       <div class="stk">
         <div class="stk-icon">MUX</div>
         <h3>ffmpeg (with libass)</h3>
-        <p>Burns Chinese subtitles and stitches the final video. On macOS, use <code>brew install ffmpeg-full</code> and follow doctor’s PATH hint; the regular Homebrew ffmpeg formula does not currently guarantee libass.</p>
+        <p>Burns Chinese subtitles and stitches the final video. Use <code>ffmpeg-full</code> on macOS or a native Windows ffmpeg build with libass; doctor verifies the actual capability.</p>
       </div>
     </div>
   </div>
@@ -404,7 +405,7 @@
         <div class="step-n">01</div>
         <div class="step-body">
           <h3>Install the CLI</h3>
-          <p>One <code>install.sh</code> installs the <code>lecturecast</code> CLI and the local workflow files; <code>lecturecast workflow</code> prints where the workflow lives.<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">See on GitHub →</a></p>
+          <p>Use <code>install.sh</code> on macOS or <code>install.ps1</code> in Windows PowerShell. Both install the CLI and local workflow; <code>lecturecast workflow</code> prints its location.<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">See on GitHub →</a></p>
         </div>
       </div>
       <div class="step">
@@ -448,7 +449,7 @@
       </details>
       <details class="faq-item">
         <summary>What do I need to install?</summary>
-        <div class="faq-answer">Three local pieces: <code>Node</code> + Remotion (render), <code>Python</code> + edge-tts (voiceover), and <code>ffmpeg</code> with libass (subtitle burn-in). <code>install.sh</code> distinguishes a successful CLI install from renderer readiness. On macOS, use <code>brew install node ffmpeg-full</code> and follow doctor’s PATH hint.</div>
+        <div class="faq-answer">Three local pieces: <code>Node</code> + Remotion, <code>Python</code> + edge-tts, and <code>ffmpeg</code> with libass. macOS <code>install.sh</code> and Windows <code>install.ps1</code> both distinguish CLI installation from renderer readiness; doctor is the capability source of truth.</div>
       </details>
       <details class="faq-item">
         <summary>Which platforms are the outputs for?</summary>

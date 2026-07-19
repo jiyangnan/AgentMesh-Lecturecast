@@ -43,7 +43,7 @@
       "license": "https://www.apache.org/licenses/LICENSE-2.0",
       "applicationCategory": "MultimediaApplication",
       "applicationSubCategory": "local AI video generation workflow",
-      "operatingSystem": "macOS, Windows, Linux",
+      "operatingSystem": "macOS, Windows",
       "isAccessibleForFree": true,
       "provider": { "@id": "https://agentmesh360.com/#organization" },
       "description": "Lecturecast Community 是开源本地课程视频工作流；可选 Director 提供结构化创作选择与签名 ProductionManifest，媒体制作和渲染仍在用户本机完成。",
@@ -293,6 +293,7 @@
         <span class="title">~ run-this-locally</span>
       </div>
 <pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
+<span class="c-prompt">PS&gt;</span> <span class="c-cmd">irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex</span>
 <span class="c-prompt">$</span> <span class="c-cmd">lecturecast workflow</span>      <span class="c-dim"># 打印本地工作流位置，交给你的 AI agent</span>
 
 <span class="c-dim"># 你的 agent 按 AGENTS.md / docs/LOCAL-WORKFLOW.md 在本地端到端跑：</span>
@@ -369,12 +370,12 @@
   <div class="wrap">
     <div class="kicker">本地三件套依赖</div>
     <h2 class="section-title">全部跑在<em>你自己的机器</em>上。</h2>
-    <p class="section-lede">没有云端媒体 worker，也没有远程渲染。即使选择 Director，云端也只负责创作决策与签名 Manifest；装好这三样，你的 agent 就能在本机端到端出片。<code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh</code> 会帮你检查缺哪样。</p>
+    <p class="section-lede">正式支持 macOS 与 Windows，不支持 Linux/WSL。没有云端媒体 worker，也没有远程渲染。即使选择 Director，云端也只负责创作决策与签名 Manifest；<code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh / install.ps1</code> 会检查本机缺少什么。</p>
     <div class="stack">
       <div class="stk">
         <div class="stk-icon">RENDER</div>
         <h3>Node + Remotion</h3>
-        <p>用代码驱动的动画场景渲染双平台画面。<code>brew install node</code> 后 <code>npm install</code> 即可。</p>
+        <p>用代码驱动的动画场景渲染双平台画面。安装 Node 20+ 后由 <code>npm install</code> 准备项目依赖。</p>
       </div>
       <div class="stk">
         <div class="stk-icon">VOICE</div>
@@ -384,7 +385,7 @@
       <div class="stk">
         <div class="stk-icon">MUX</div>
         <h3>ffmpeg（带 libass）</h3>
-        <p>烧录中文字幕、合成成片。macOS 使用 <code>brew install ffmpeg-full</code>，并按 doctor 提示把它放到本次 PATH 前面；普通 Homebrew ffmpeg 当前不保证包含 libass。</p>
+        <p>烧录中文字幕、合成成片。macOS 使用 <code>ffmpeg-full</code>；Windows 使用带 libass 的原生 ffmpeg build。最终都由 doctor 按能力验证。</p>
       </div>
     </div>
   </div>
@@ -400,7 +401,7 @@
         <div class="step-n">01</div>
         <div class="step-body">
           <h3>装上 CLI</h3>
-          <p>一行 <code>install.sh</code> 装好 <code>lecturecast</code> CLI 和本地工作流；<code>lecturecast workflow</code> 会打印工作流文件的位置。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">看 GitHub →</a></p>
+          <p>macOS 使用 <code>install.sh</code>，Windows PowerShell 使用 <code>install.ps1</code>；两者都会安装 CLI 与本地工作流，<code>lecturecast workflow</code> 会打印其位置。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">看 GitHub →</a></p>
         </div>
       </div>
       <div class="step">
@@ -444,7 +445,7 @@
       </details>
       <details class="faq-item">
         <summary>需要装什么？</summary>
-        <div class="faq-answer">本地三件套：<code>Node</code> + Remotion（渲染）、<code>Python</code> + edge-tts（配音）、<code>ffmpeg</code> 带 libass（烧字幕）。<code>install.sh</code> 会明确区分 CLI 安装成功和渲染器就绪；macOS 使用 <code>brew install node ffmpeg-full</code>，并按 doctor 的 PATH 提示启用 ffmpeg-full。</div>
+        <div class="faq-answer">本地三件套：<code>Node</code> + Remotion（渲染）、<code>Python</code> + edge-tts（配音）、<code>ffmpeg</code> 带 libass（烧字幕）。macOS 的 <code>install.sh</code> 与 Windows 的 <code>install.ps1</code> 都会区分 CLI 安装成功和渲染器就绪；以 doctor 的能力检查为准。</div>
       </details>
       <details class="faq-item">
         <summary>支持哪些平台的成片？</summary>

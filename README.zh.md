@@ -35,21 +35,42 @@
 
 ## 安装
 
+正式支持的原生宿主为 **macOS 和 Windows**。不支持 Linux 发行版与 WSL；边界说明见
+[支持平台](docs/SUPPORTED-PLATFORMS.md)。
+
 ### 一行装好（推荐）
 
-**macOS / Linux**（Terminal）：
+**macOS**（Terminal）：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash
 ```
 
+**Windows**（PowerShell）：
+
+```powershell
+irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex
+```
+
 ### 手动安装
+
+macOS：
 
 ```bash
 git clone https://github.com/jiyangnan/AgentMesh-Lecturecast.git
 cd AgentMesh-Lecturecast
 python -m venv .venv
 source .venv/bin/activate
+pip install -e .
+```
+
+Windows PowerShell：
+
+```powershell
+git clone https://github.com/jiyangnan/AgentMesh-Lecturecast.git
+Set-Location AgentMesh-Lecturecast
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -e .
 ```
 
@@ -92,7 +113,7 @@ Agent 会读 [AGENTS.md](AGENTS.md) / [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFL
   ▼ 7 段草稿脚本           （你审批）
   ▼ 配音   python3 build_audio_mm.py   （Edge 免费、MiniMax 可选）
   ▼ 场景   Remotion（竖版 + 横版）
-  ▼ 渲染   ./build_video.sh <slug>      （ffmpeg + libass）
+  ▼ 渲染   build_video.sh / build_video.ps1 <slug>（ffmpeg + libass）
   ▼ 工作目录里出 2 个 mp4 + 2 张封面
 ```
 

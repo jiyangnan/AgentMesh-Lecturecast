@@ -147,6 +147,14 @@ def test_current_site_publishes_ten_credit_manifest_price() -> None:
         assert "10 credits" in page
 
 
+def test_current_site_supports_macos_and_windows_without_linux() -> None:
+    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+        page = (ROOT / "site" / relative).read_text(encoding="utf-8")
+        assert '"operatingSystem": "macOS, Windows"' in page
+        assert '"operatingSystem": "macOS, Windows, Linux"' not in page
+        assert "install.ps1" in page
+
+
 def test_community_director_contract_rejects_unmetered_director_access(
     tmp_path: Path,
 ) -> None:

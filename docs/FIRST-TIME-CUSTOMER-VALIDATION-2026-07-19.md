@@ -60,6 +60,14 @@ ruff、mypy、四语官网契约和 shell 语法全部通过；真实 burn 的 l
 `missing_glyph=0`，中文画面正常。`LECTURECAST_SUBTITLE_FONT` 覆盖在两份 ASS 中均生效。
 测试没有修改全局 Homebrew、使用 Director 或消耗 credits，本次修复范围内无剩余 blocker。
 
+### 0.3.4 平台范围收敛
+
+产品正式支持范围收敛为原生 **macOS + Windows**，不再支持 Linux 发行版或 WSL。
+公开仓库新增 Windows PowerShell 安装、adapter 管理、卸载和本地双平台渲染入口；macOS
+继续使用现有 Bash 路径。Linux 上的安装器和字幕字体选择都会明确停止，不再用未经验证的
+`Noto Sans CJK SC` 兜底。该决定只收敛客户端宿主范围，不改变 Community 全本地、
+Director 只负责创作决策、媒体不上云以及现有 Caddy 的系统边界。
+
 ## 1. 为什么做这次测试
 
 本次测试不从开发者已经配置好的工作区开始，而是模拟一名第一次访问
@@ -501,7 +509,7 @@ TimeoutError: Timed out after 25000 ms while trying to connect to the browser
 |---|---|---|
 | macOS arm64 原生 | Python 3.11、3.12、3.14；Node 20/22 | 主支持路径 |
 | macOS arm64 + Rosetta x86_64 | 至少一个受支持组合 | 识别真实迁移机器风险 |
-| Ubuntu x86_64 | Python 3.11/3.12；Node 20/22 | Linux 主路径 |
+| Windows 原生 x64 | Python 3.11/3.12；Node 20/22 | PowerShell 安装、双画幅渲染与中文烧录 |
 
 Release gate 必须保证：
 

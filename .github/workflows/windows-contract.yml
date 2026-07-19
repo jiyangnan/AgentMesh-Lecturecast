@@ -1,0 +1,115 @@
+name: Validate Windows client contract
+
+on:
+  push:
+    paths:
+      - "scripts/*.ps1"
+      - "templates/shared/*.ps1"
+      - "templates/shared/subtitle_font.py"
+      - "tests/test_platform_contract.py"
+      - "tests/test_site_contract.py"
+      - "tests/test_subtitle_templates.py"
+      - "site/**"
+      - "README.md"
+      - "README.zh.md"
+      - "docs/SUPPORTED-PLATFORMS.md"
+      - ".github/workflows/windows-contract.yml"
+  pull_request:
+    paths:
+      - "scripts/*.ps1"
+      - "templates/shared/*.ps1"
+      - "templates/shared/subtitle_font.py"
+      - "tests/test_platform_contract.py"
+      - "tests/test_site_contract.py"
+      - "tests/test_subtitle_templates.py"
+      - "site/**"
+      - "README.md"
+      - "README.zh.md"
+      - "docs/SUPPORTED-PLATFORMS.md"
+      - ".github/workflows/windows-contract.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Parse Windows PowerShell entrypoints
+        shell: powershell
+        run: |
+          $failed = $false
+          $files = @(
+            "scripts/install.ps1",
+            "scripts/manage_adapters.ps1",
+            "scripts/uninstall.ps1",
+            "templates/shared/build_video.ps1",
+            "templates/shared/build_manifest_video.ps1"
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file`: $_" }
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Run platform contract tests
+        shell: powershell
+        run: |
+          python -m pip install --disable-pip-version-check -e ".[dev]"
+          python -m pytest -q tests/test_platform_contract.py tests/test_subtitle_templates.py
+
+      - name: Run isolated Windows installer canary
+        shell: powershell
+        run: |
+          $mirror = Join-Path $env:RUNNER_TEMP "lecturecast.git"
+          $home = Join-Path $env:RUNNER_TEMP "lecturecast-home"
+          $install = Join-Path $home ".lecturecast\app"
+          git clone --bare $env:GITHUB_WORKSPACE $mirror
+          git --git-dir=$mirror branch -f canary $env:GITHUB_SHA
+          New-Item -ItemType Directory -Force -Path $home | Out-Null
+          $env:HOME = $home
+          $env:USERPROFILE = $home
+          $env:LECTURECAST_REPO = $mirror
+          $env:LECTURECAST_BRANCH = "canary"
+          $env:LECTURECAST_DIR = $install
+          $env:LECTURECAST_SKIP_PIP_UPGRADE = "1"
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = & "$install\.venv\Scripts\lecturecast.exe" version
+          if ($version -notmatch "0.3.4") { throw "unexpected version: $version" }
+          $sha = git -C $install rev-parse HEAD
+          if ($sha -ne $env:GITHUB_SHA) { throw "installer checkout mismatch: $sha" }
+          if (-not (Test-Path "$env:WINDIR\Fonts\msyh.ttc")) {
+            throw "Microsoft YaHei is missing from the Windows runner"
+          }
+
+      - name: Verify Windows subtitle default
+        shell: powershell
+        run: |
+          $install = Join-Path $env:RUNNER_TEMP "lecturecast-home\.lecturecast\app"
+          $output = Join-Path $env:RUNNER_TEMP "subtitle-output"
+          & "$install\.venv\Scripts\python.exe" `
+            "$install\templates\shared\build_manifest_subtitles.py" `
+            "$install\tests\fixtures\production-manifest-v1.json" `
+            $output
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($file in @("subtitle_landscape.ass", "subtitle_vertical.ass")) {
+            $content = Get-Content (Join-Path $output $file) -Raw
+            if ($content -notmatch "Style: Default,Microsoft YaHei,") {
+              throw "$file does not use Microsoft YaHei"
+            }
+          }

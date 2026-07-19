@@ -25,4 +25,6 @@ def subtitle_font_name(*, system: str | None = None) -> str:
         return "Arial Unicode MS"
     if current_system == "Windows":
         return "Microsoft YaHei"
-    return "Noto Sans CJK SC"
+    raise RuntimeError(
+        "LectureCast supports macOS and Windows only; Linux is not supported"
+    )

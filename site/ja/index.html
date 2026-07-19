@@ -45,7 +45,7 @@
       "license": "https://www.apache.org/licenses/LICENSE-2.0",
       "applicationCategory": "MultimediaApplication",
       "applicationSubCategory": "local AI video generation workflow",
-      "operatingSystem": "macOS, Windows, Linux",
+      "operatingSystem": "macOS, Windows",
       "isAccessibleForFree": true,
       "provider": { "@id": "https://agentmesh360.com/#organization" },
       "description": "Lecturecast Community はオープンソースのローカル講座動画ワークフロー。任意の Director は構造化された創作選択と署名付き ProductionManifest を提供し、メディア制作とレンダリングはユーザーのマシン上に残ります。",
@@ -297,6 +297,7 @@
         <span class="title">~ run-this-locally</span>
       </div>
 <pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
+<span class="c-prompt">PS&gt;</span> <span class="c-cmd">irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex</span>
 <span class="c-prompt">$</span> <span class="c-cmd">lecturecast workflow</span>      <span class="c-dim"># ローカルワークフローの場所を出力し、AI エージェントに渡します</span>
 
 <span class="c-dim"># エージェントは AGENTS.md / docs/LOCAL-WORKFLOW.md に従い、ローカルでエンドツーエンド実行：</span>
@@ -373,12 +374,12 @@
   <div class="wrap">
     <div class="kicker">ローカル 3 点セット依存</div>
     <h2 class="section-title">すべて<em>あなたのマシン</em>上で。</h2>
-    <p class="section-lede">クラウドのメディア worker もリモートレンダラもありません。Director を選んでも、クラウドは創作判断と署名付き Manifest のみを担当します。3 点をインストールすれば、エージェントがメディア制作をローカルでエンドツーエンド実行できます。<code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh</code> が不足を確認します。</p>
+    <p class="section-lede">macOS と Windows をネイティブ対応し、Linux / WSL は非対応です。クラウドのメディア worker もリモートレンダラもありません。<code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh / install.ps1</code> がローカル環境の不足を確認します。</p>
     <div class="stack">
       <div class="stk">
         <div class="stk-icon">RENDER</div>
         <h3>Node + Remotion</h3>
-        <p>コード駆動のアニメシーンで 2 アスペクト比をレンダリング。<code>brew install node</code> 後 <code>npm install</code>。</p>
+        <p>コード駆動のアニメシーンで 2 アスペクト比をレンダリング。Node 20+ を入れ、<code>npm install</code> でプロジェクトを準備します。</p>
       </div>
       <div class="stk">
         <div class="stk-icon">VOICE</div>
@@ -388,7 +389,7 @@
       <div class="stk">
         <div class="stk-icon">MUX</div>
         <h3>ffmpeg（libass 付き）</h3>
-        <p>中国語字幕を焼き付け、成片を合成。macOS では <code>brew install ffmpeg-full</code> を使い、doctor の PATH 案内に従ってください。通常の Homebrew ffmpeg は現在 libass を保証しません。</p>
+        <p>中国語字幕を焼き付け、成片を合成。macOS は <code>ffmpeg-full</code>、Windows は libass 入りネイティブ ffmpeg build を使い、doctor が実際の能力を検証します。</p>
       </div>
     </div>
   </div>
@@ -404,7 +405,7 @@
         <div class="step-n">01</div>
         <div class="step-body">
           <h3>CLI をインストール</h3>
-          <p>一行の <code>install.sh</code> で <code>lecturecast</code> CLI とローカルワークフローがインストールされ、<code>lecturecast workflow</code> がワークフローの場所を出力します。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub を見る →</a></p>
+          <p>macOS は <code>install.sh</code>、Windows PowerShell は <code>install.ps1</code> を使用します。どちらも CLI とローカルワークフローを導入し、<code>lecturecast workflow</code> が場所を出力します。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub を見る →</a></p>
         </div>
       </div>
       <div class="step">
@@ -448,7 +449,7 @@
       </details>
       <details class="faq-item">
         <summary>何をインストールする必要がありますか？</summary>
-        <div class="faq-answer">ローカル 3 点セット：<code>Node</code> + Remotion（レンダリング）、<code>Python</code> + edge-tts（配音）、libass 入り <code>ffmpeg</code>（字幕焼き付け）。<code>install.sh</code> は CLI のインストール成功とレンダラ準備完了を区別します。macOS では <code>brew install node ffmpeg-full</code> を使い、doctor の PATH 案内に従ってください。</div>
+        <div class="faq-answer">ローカル 3 点セットは <code>Node</code> + Remotion、<code>Python</code> + edge-tts、libass 入り <code>ffmpeg</code>。macOS の <code>install.sh</code> と Windows の <code>install.ps1</code> は CLI 導入とレンダラ準備を区別し、doctor が能力を判定します。</div>
       </details>
       <details class="faq-item">
         <summary>どのプラットフォーム向けの成片に対応していますか？</summary>
