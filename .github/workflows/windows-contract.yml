@@ -119,3 +119,31 @@ jobs:
               throw "$file does not use Microsoft YaHei"
             }
           }
+
+      - name: Burn one-second Chinese glyph canary
+        shell: powershell
+        run: |
+          choco install ffmpeg-shared --version 8.0.1 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $output = Join-Path $env:RUNNER_TEMP "subtitle-output"
+          Push-Location $output
+          try {
+            $log = @(
+              & ffmpeg -hide_banner -y `
+                -f lavfi -i "color=c=black:s=640x360:d=1:r=25" `
+                -vf "ass=subtitle_landscape.ass" `
+                -t 1 -c:v libx264 -pix_fmt yuv420p glyph-canary.mp4 2>&1
+            ) | Out-String
+            if ($LASTEXITCODE -ne 0) { throw "ffmpeg burn failed:`n$log" }
+            if ($log -notmatch "Using font provider") {
+              throw "libass did not initialize a font provider:`n$log"
+            }
+            if ($log -match "Glyph .* not found") {
+              throw "Chinese glyph was not resolved:`n$log"
+            }
+            if ((Get-Item glyph-canary.mp4).Length -lt 1024) {
+              throw "glyph canary output is unexpectedly small"
+            }
+          } finally {
+            Pop-Location
+          }
