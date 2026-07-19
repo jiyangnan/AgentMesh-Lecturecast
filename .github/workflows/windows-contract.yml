@@ -5,7 +5,7 @@ on:
     paths:
       - "scripts/*.ps1"
       - "templates/shared/*.ps1"
-      - "templates/shared/subtitle_font.py"
+      - "templates/shared/*.py"
       - "tests/test_platform_contract.py"
       - "tests/test_site_contract.py"
       - "tests/test_subtitle_templates.py"
@@ -18,7 +18,7 @@ on:
     paths:
       - "scripts/*.ps1"
       - "templates/shared/*.ps1"
-      - "templates/shared/subtitle_font.py"
+      - "templates/shared/*.py"
       - "tests/test_platform_contract.py"
       - "tests/test_site_contract.py"
       - "tests/test_subtitle_templates.py"
