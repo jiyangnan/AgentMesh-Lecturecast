@@ -76,13 +76,13 @@ jobs:
         shell: powershell
         run: |
           $mirror = Join-Path $env:RUNNER_TEMP "lecturecast.git"
-          $home = Join-Path $env:RUNNER_TEMP "lecturecast-home"
-          $install = Join-Path $home ".lecturecast\app"
+          $isolatedHome = Join-Path $env:RUNNER_TEMP "lecturecast-home"
+          $install = Join-Path $isolatedHome ".lecturecast\app"
           git clone --bare $env:GITHUB_WORKSPACE $mirror
           git --git-dir=$mirror branch -f canary $env:GITHUB_SHA
-          New-Item -ItemType Directory -Force -Path $home | Out-Null
-          $env:HOME = $home
-          $env:USERPROFILE = $home
+          New-Item -ItemType Directory -Force -Path $isolatedHome | Out-Null
+          $env:HOME = $isolatedHome
+          $env:USERPROFILE = $isolatedHome
           $env:LECTURECAST_REPO = $mirror
           $env:LECTURECAST_BRANCH = "canary"
           $env:LECTURECAST_DIR = $install
