@@ -123,7 +123,7 @@ jobs:
       - name: Burn one-second Chinese glyph canary
         shell: powershell
         run: |
-          choco install ffmpeg-shared --version 8.0.1 --yes --no-progress
+          choco install ffmpeg --version 8.1.2 --yes --no-progress
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $output = Join-Path $env:RUNNER_TEMP "subtitle-output"
           Push-Location $output
