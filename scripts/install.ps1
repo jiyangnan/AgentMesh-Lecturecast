@@ -156,8 +156,8 @@ if ($Doctor.ready) {
     Write-Ok "CLI installed; renderer ready"
 } else {
     Write-Warn "CLI installed; renderer not ready"
-    & $LectureCastExe doctor
-    Assert-LastExit "lecturecast doctor report"
+    $Missing = @($Doctor.missing) -join ", "
+    Write-Warn "missing local render capabilities: $Missing"
 }
 
 $PathEntries = $env:Path -split ";"

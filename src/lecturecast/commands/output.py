@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from typing import Any, NoReturn
 
 import typer
 from rich.console import Console
 
 from ..errors import LectureCastError
+
+
+if os.name == "nt":
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
 console = Console()

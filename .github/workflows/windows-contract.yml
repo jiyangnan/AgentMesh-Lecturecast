@@ -95,6 +95,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $version = & "$install\.venv\Scripts\lecturecast.exe" version
           if ($version -notmatch "0.3.4") { throw "unexpected version: $version" }
+          & "$install\.venv\Scripts\lecturecast.exe" doctor | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "human-readable doctor failed" }
           $sha = git -C $install rev-parse HEAD
           if ($sha -ne $env:GITHUB_SHA) { throw "installer checkout mismatch: $sha" }
           if (-not (Test-Path "$env:WINDIR\Fonts\msyh.ttc")) {
