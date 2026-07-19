@@ -4,9 +4,12 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "manage_adapters.sh"
+BASH_ONLY = pytest.mark.skipif(os.name == "nt", reason="macOS Bash adapter contract")
 
 
 def _run(home: Path, action: str) -> subprocess.CompletedProcess[str]:
@@ -24,6 +27,7 @@ def _run(home: Path, action: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+@BASH_ONLY
 def test_adapter_install_is_idempotent_and_preserves_custom_skill(tmp_path: Path) -> None:
     codex = tmp_path / ".codex" / "skills"
     claude = tmp_path / ".claude" / "skills"
@@ -51,6 +55,7 @@ def test_adapter_install_is_idempotent_and_preserves_custom_skill(tmp_path: Path
     assert marker.exists()
 
 
+@BASH_ONLY
 def test_openclaw_uses_existing_global_then_workspace_fallback(tmp_path: Path) -> None:
     workspace_skills = tmp_path / ".openclaw" / "workspace" / "skills"
     workspace_skills.mkdir(parents=True)
@@ -70,6 +75,7 @@ def test_openclaw_uses_existing_global_then_workspace_fallback(tmp_path: Path) -
     assert not fallback_link.exists()
 
 
+@BASH_ONLY
 def test_missing_agent_directories_are_never_created(tmp_path: Path) -> None:
     result = _run(tmp_path, "install")
 
@@ -80,6 +86,7 @@ def test_missing_agent_directories_are_never_created(tmp_path: Path) -> None:
     assert "OpenClaw adapter skipped: host not detected" in result.stdout
 
 
+@BASH_ONLY
 def test_existing_codex_host_without_skills_gets_an_actionable_skip(
     tmp_path: Path,
 ) -> None:

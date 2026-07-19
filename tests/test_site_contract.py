@@ -185,7 +185,9 @@ def test_community_director_contract_requires_machine_readable_boundary(
 
 
 def test_production_hosting_stays_behind_agentmesh_caddy() -> None:
-    boundary = (ROOT / "docs/LECTURECAST-SYSTEM-BOUNDARY.md").read_text()
+    boundary = (ROOT / "docs/LECTURECAST-SYSTEM-BOUNDARY.md").read_text(
+        encoding="utf-8"
+    )
 
     assert not (ROOT / ".github/workflows/pages.yml").exists()
     assert not (ROOT / "site/CNAME").exists()
@@ -196,12 +198,12 @@ def test_production_hosting_stays_behind_agentmesh_caddy() -> None:
 
 
 def test_localized_pages_use_the_lecturecast_product_mark_as_favicon() -> None:
-    favicon = (ROOT / "site/favicon.svg").read_text()
+    favicon = (ROOT / "site/favicon.svg").read_text(encoding="utf-8")
 
     assert "#D1493F" in favicon
     assert "Lecturecast" in favicon
     for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
-        page = (ROOT / "site" / relative).read_text()
+        page = (ROOT / "site" / relative).read_text(encoding="utf-8")
         assert (
             '<link rel="icon" type="image/svg+xml" '
             'href="/favicon.svg?v=product-mark-v1" />'

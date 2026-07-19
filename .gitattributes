@@ -1,0 +1,4 @@
+src/lecturecast/protocol/schemas/*.json text eol=lf
+src/lecturecast/protocol/protocol.lock text eol=lf
+tests/fixtures/*.json text eol=lf
+tests/fixtures/fixture.lock text eol=lf

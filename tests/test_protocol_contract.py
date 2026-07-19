@@ -153,7 +153,9 @@ def test_update_protocol_verifies_source_before_atomic_import(tmp_path: Path) ->
 
     imported = update_protocol(source, target_schemas, target_lock)
 
-    assert imported["bundle_digest"] == json.loads(LOCK_PATH.read_text())["bundle_digest"]
+    assert imported["bundle_digest"] == json.loads(
+        LOCK_PATH.read_text(encoding="utf-8")
+    )["bundle_digest"]
     assert target_lock.read_bytes() == LOCK_PATH.read_bytes()
     for filename in imported["files"]:
         assert (target_schemas / filename).read_bytes() == (SCHEMA_DIR / filename).read_bytes()
