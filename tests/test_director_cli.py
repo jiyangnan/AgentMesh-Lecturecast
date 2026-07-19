@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 from pathlib import Path
 from typing import Any
@@ -312,7 +313,8 @@ def test_full_director_cli_flow_is_machine_readable_and_resumable(
     state_text = state_path.read_text(encoding="utf-8")
     assert "api_key" not in state_text.lower()
     assert "authorization" not in state_text.lower()
-    assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
+    if os.name != "nt":
+        assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
 
 
 def test_all_agent_adapters_receive_identical_stable_option_ids(

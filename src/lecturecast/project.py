@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import stat
@@ -15,6 +14,7 @@ from typing import Any, Iterator, Mapping
 
 from .config import PROJECT_DIRECTORY, PROJECT_SCHEMA_VERSION
 from .errors import LectureCastError
+from .file_lock import exclusive_file_lock
 from .manifest import verify_manifest
 from .protocol import ClientCapabilities, CreativeBrief, ProductionManifest, canonical_digest
 
@@ -83,11 +83,12 @@ def atomic_write_json(path: Path, payload: Mapping[str, Any], *, mode: int = 0o6
             os.fsync(stream.fileno())
         os.chmod(temporary, mode)
         os.replace(temporary, path)
-        directory_descriptor = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_descriptor)
-        finally:
-            os.close(directory_descriptor)
+        if os.name != "nt":
+            directory_descriptor = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_descriptor)
+            finally:
+                os.close(directory_descriptor)
     finally:
         if temporary.exists():
             temporary.unlink()
@@ -140,13 +141,8 @@ class ProjectStore:
 
     @contextmanager
     def _locked(self) -> Iterator[None]:
-        self.directory.mkdir(parents=True, exist_ok=True)
-        with self.lock_path.open("a+b") as stream:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+        with exclusive_file_lock(self.lock_path):
+            yield
 
     def init(self, *, name: str, project_id: str | None = None) -> ProjectState:
         clean_name = name.strip()

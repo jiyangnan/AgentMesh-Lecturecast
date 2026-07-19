@@ -30,6 +30,11 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures"
 runner = CliRunner()
 
 
+def _assert_private_posix_mode(path: Path) -> None:
+    if os.name != "nt":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
 def _fixture(name: str) -> dict[str, object]:
     return json.loads((FIXTURE_DIR / name).read_text(encoding="utf-8"))
 
@@ -60,7 +65,7 @@ def test_private_receipt_binds_verified_manifest_and_stays_mode_0600(
     assert receipt["manifest_digest"].startswith("sha256:")
     assert receipt["manifest_key_id"] == "fixture_key_v1"
     assert receipt["receipt_revision"] == 1
-    assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
+    _assert_private_posix_mode(store.path)
     assert str(tmp_path) not in store.path.read_text(encoding="utf-8")
 
 
@@ -166,7 +171,7 @@ def test_anonymous_export_has_an_exact_non_identifying_shape(tmp_path: Path) -> 
 
     output = tmp_path / "share" / "anonymous-outcome.json"
     write_anonymous_report(output, report)
-    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    _assert_private_posix_mode(output)
     assert read_anonymous_report(output) == report
     with pytest.raises(LectureCastError, match="已存在"):
         write_anonymous_report(output, report)
@@ -228,7 +233,7 @@ def test_offline_aggregate_requires_three_unique_reports_and_drops_ids(
 
     output = tmp_path / "aggregate.json"
     write_outcome_aggregate(output, aggregate)
-    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    _assert_private_posix_mode(output)
 
 
 def test_outcome_cli_never_prints_private_binding_or_output_paths(tmp_path: Path) -> None:

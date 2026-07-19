@@ -66,11 +66,11 @@ jobs:
           }
           if ($failed) { exit 1 }
 
-      - name: Run platform contract tests
+      - name: Run full Windows test suite
         shell: powershell
         run: |
           python -m pip install --disable-pip-version-check -e ".[dev]"
-          python -m pytest -q tests/test_platform_contract.py tests/test_subtitle_templates.py
+          python -m pytest -q
 
       - name: Run isolated Windows installer canary
         shell: powershell

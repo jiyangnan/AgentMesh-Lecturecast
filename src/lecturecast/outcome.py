@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import re
@@ -14,6 +13,7 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping
 
 from .errors import LectureCastError
+from .file_lock import exclusive_file_lock
 from .manifest import load_manifest
 from .project import ProjectStore, atomic_write_json
 
@@ -159,7 +159,7 @@ def _read_object(path: Path, *, label: str) -> dict[str, Any]:
             raise _fail(f"{label} 必须是普通文件。", "移除符号链接或特殊文件后重试。")
         if metadata.st_size > _MAX_DOCUMENT_BYTES:
             raise _fail(f"{label} 超过 32 KiB。", "不要在 outcome 证据中加入自由文本或媒体。")
-        if stat.S_IMODE(metadata.st_mode) & 0o022:
+        if os.name != "nt" and stat.S_IMODE(metadata.st_mode) & 0o022:
             raise _fail(f"{label} 权限过宽。", "移除 group/world 写权限后重试。")
         payload = json.loads(path.read_text(encoding="utf-8"))
     except LectureCastError:
@@ -247,13 +247,8 @@ class OutcomeStore:
 
     @contextmanager
     def _locked(self) -> Iterator[None]:
-        self.project.directory.mkdir(parents=True, exist_ok=True)
-        with self.lock_path.open("a+b") as stream:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+        with exclusive_file_lock(self.lock_path):
+            yield
 
     def _project_binding(self) -> tuple[str, str, str]:
         state = self.project.load().payload
