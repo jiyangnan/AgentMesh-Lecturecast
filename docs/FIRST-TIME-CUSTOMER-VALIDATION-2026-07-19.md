@@ -54,6 +54,12 @@ Mac mini 随后从远端 `main` 的 `fdd40e2` 重新执行了同口径隔离 can
 ruff、mypy、四语官网契约和 shell 语法全部通过；真实 burn 的 libass 日志解析到
 `/System/Library/Fonts/Supplemental/Arial Unicode.ttf`，输出帧中的中文 glyph 正常。
 
+远端最终 canary 也已通过：Mac mini 从官网原始安装器全新安装精确提交
+`90fdb6ca5cfb7077eb723b3315cf83160b481127`，CLI 为 `0.3.3`；官方 fixture 生成的横竖 ASS
+默认均为 `Arial Unicode MS`，1920×1080 与 1080×1920 两条 1 秒真实烧录均为
+`missing_glyph=0`，中文画面正常。`LECTURECAST_SUBTITLE_FONT` 覆盖在两份 ASS 中均生效。
+测试没有修改全局 Homebrew、使用 Director 或消耗 credits，本次修复范围内无剩余 blocker。
+
 ## 1. 为什么做这次测试
 
 本次测试不从开发者已经配置好的工作区开始，而是模拟一名第一次访问
