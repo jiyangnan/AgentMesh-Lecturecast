@@ -68,6 +68,13 @@ ruff、mypy、四语官网契约和 shell 语法全部通过；真实 burn 的 l
 `Noto Sans CJK SC` 兜底。该决定只收敛客户端宿主范围，不改变 Community 全本地、
 Director 只负责创作决策、媒体不上云以及现有 Caddy 的系统边界。
 
+Windows 发布 canary 已在 GitHub `windows-latest` 原生 PowerShell 5.1 环境通过：
+107 项跨平台测试通过，4 项仅适用于 macOS Bash adapter 的测试按宿主跳过；隔离 HOME
+一行安装完成并绑定预期 commit，`doctor` 的 JSON 与人类输出均可用，字幕生成选择
+`Microsoft YaHei`。随后用带 libass 的 Windows ffmpeg 对 ASS 中文字幕完成 1 秒真实
+烧录，日志确认字体 provider 初始化、无缺失 glyph，产物非空。对应证据为
+`Validate Windows client contract` run `29678660930`。
+
 ## 1. 为什么做这次测试
 
 本次测试不从开发者已经配置好的工作区开始，而是模拟一名第一次访问
