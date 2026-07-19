@@ -36,6 +36,24 @@
 使用 Python 3.14 完成了 Community 首装和重复安装，CLI 为 `0.3.2`，基础环境中未安装
 `cryptography`，并且安装器如实输出 `CLI installed; renderer not ready: remotion` 及下一步命令。
 
+### 0.3.2 远端首次客户复测与 0.3.3 字幕修复
+
+Mac mini 随后从远端 `main` 的 `fdd40e2` 重新执行了同口径隔离 canary：首装、重复安装、
+项目级 Remotion 识别、禁词扫描、browser warm-up、纵横 still 均通过，旧问题矩阵为
+6 PASS / 2 PARTIAL / 0 FAIL。LC-FTUX-008 只保留首次 528 MB/episode 与冷启动耗时观察。
+
+复测同时发现一个新的真实 blocker：三个官方 ASS 生成器都固定写入 `Microsoft YaHei`。
+干净 macOS 上 libass 会回退到缺少中文 glyph 的字体，导致 1 秒真实烧录中的中文显示为方框。
+控制组只替换 Fontname 后，`Arial Unicode MS` 两次都由 libass 直接解析到系统字体文件，
+无需 `fontsdir`，中文帧哈希稳定一致；`PingFang SC` 两次都失败。
+
+`0.3.3` 因此改为按平台选择 CJK 默认字体，并允许通过
+`LECTURECAST_SUBTITLE_FONT` 使用本机已安装字体。字体仍完全留在本机：不捆绑、不上传，
+也不改变 Community、Director、ProductionManifest 或 Caddy 边界。发布门禁新增 ASS 生成器
+回归测试，并继续用 1 秒真实中文字幕烧录作为 macOS canary。本地验证为 105 项测试、
+ruff、mypy、四语官网契约和 shell 语法全部通过；真实 burn 的 libass 日志解析到
+`/System/Library/Fonts/Supplemental/Arial Unicode.ttf`，输出帧中的中文 glyph 正常。
+
 ## 1. 为什么做这次测试
 
 本次测试不从开发者已经配置好的工作区开始，而是模拟一名第一次访问

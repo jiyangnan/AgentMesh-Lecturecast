@@ -97,7 +97,7 @@ skip this gate.)
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate && pip install --quiet edge-tts
-cp /path/to/AgentMesh-Lecturecast/templates/shared/{build_audio_mm.py,build_srt.py,srt_to_ass.py,srt_to_ass_vertical.py,update_theme.py,build_video.sh} .
+cp /path/to/AgentMesh-Lecturecast/templates/shared/{build_audio_mm.py,build_srt.py,subtitle_font.py,srt_to_ass.py,srt_to_ass_vertical.py,update_theme.py,build_video.sh} .
 chmod +x build_video.sh
 export MINIMAX_API_KEY=…    # optional BYOK; omit to use the free Edge voice
 python3 build_audio_mm.py
@@ -148,6 +148,17 @@ terms first, then:
 ```bash
 ./build_video.sh $SLUG
 ```
+
+The ASS generators choose a CJK-capable platform default: `Arial Unicode MS`
+on macOS, `Microsoft YaHei` on Windows, and `Noto Sans CJK SC` elsewhere. To use
+another locally installed family, set it before generating ASS:
+
+```bash
+export LECTURECAST_SUBTITLE_FONT="Your CJK Font Family"
+```
+
+LectureCast does not bundle or upload fonts. The override is read from the
+current environment only.
 
 Merges audio → `update_theme.py` → SRT + both ASS → renders `VideoVertical` +
 `VideoLandscape` → burns subs (local ffmpeg+libass) → renders both covers.
@@ -210,6 +221,7 @@ after a highlighted word so it doesn't bleed.
 | `ModuleNotFoundError: edge_tts` | activate the venv (PEP 668 locks system python) |
 | `Cannot find module '@rspack/binding-darwin-*'` | `bun` pruned an optional dep — `rm -rf node_modules && npm install` |
 | ffmpeg `No option name near 'subtitle.ass'` | system ffmpeg lacks libass — on macOS install `ffmpeg-full` and put `$(brew --prefix ffmpeg-full)/bin` first in PATH |
+| Burned Chinese subtitles are squares | regenerate ASS with the platform default, or set `LECTURECAST_SUBTITLE_FONT` to a locally installed CJK family first |
 | first Remotion browser connection times out after download | run `npx remotion browser ensure`, then retry the original render once; if it repeats, report the full error |
 | Scene timing drifts from audio | you hand-edited `SECTIONS` — never do that; rerun `update_theme.py` |
 

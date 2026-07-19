@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lecturecast"
-version = "0.3.2"
+version = "0.3.3"
 description = "Open-source, fully local video workflow for AI agents — turn a topic into B站 + 小红书 course videos on your own machine"
 readme = "README.md"
 requires-python = ">=3.11"

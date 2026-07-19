@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Convert SRT to ASS with Bilibili-friendly Chinese styling embedded."""
-import re, sys
+import re
 from pathlib import Path
+
+from subtitle_font import subtitle_font_name
 
 ROOT = Path(__file__).parent
 SRT = (ROOT / "assets" / "subtitle.srt").read_text()
 ASS = ROOT / "assets" / "subtitle.ass"
 
-HEADER = """[Script Info]
+HEADER = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
@@ -16,7 +18,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Microsoft YaHei,52,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,4,0,2,120,120,80,1
+Style: Default,{subtitle_font_name()},52,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,4,0,2,120,120,80,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

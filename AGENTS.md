@@ -80,7 +80,7 @@ never create a second generation ID after a timeout.
 
 | Thing | Required? | How they get it | Used for |
 |---|---|---|---|
-| Node + ffmpeg installed | Yes | `brew install node ffmpeg` | Local render |
+| Node + ffmpeg installed | Yes | `brew install node ffmpeg-full`, then put the `ffmpeg-full` bin first in this shell's PATH | Local render |
 | MiniMax API key | Optional | Their own signup at minimaxi.com | Upgrade voiceover to MiniMax |
 
 ## When something's missing
@@ -90,6 +90,7 @@ never create a second generation ID after a timeout.
 | MiniMax warned + fell back to Edge | No `MINIMAX_API_KEY` set. Want MiniMax? Ask your human for a key. Else ignore — Edge still ships. |
 | `bun` / `@rspack/binding` error | Use `npm install`, not bun. See LOCAL-WORKFLOW failure modes. |
 | ffmpeg `No option name near 'subtitle.ass'` | System ffmpeg lacks libass — on macOS use `brew install ffmpeg-full`, then put `$(brew --prefix ffmpeg-full)/bin` first in PATH. |
+| Burned Chinese subtitles are squares | Keep the platform default, or set `LECTURECAST_SUBTITLE_FONT` to a locally installed CJK font family before generating ASS. macOS defaults to `Arial Unicode MS`. |
 | `ModuleNotFoundError: edge_tts` | Activate the Python venv (PEP 668 locks system python). |
 
 ## Don'ts

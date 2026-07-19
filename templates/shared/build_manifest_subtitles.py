@@ -6,6 +6,8 @@ import json
 import re
 from pathlib import Path
 
+from subtitle_font import subtitle_font_name
+
 
 def timestamp(seconds: float, *, ass: bool = False) -> str:
     milliseconds = max(0, round(seconds * 1000))
@@ -58,7 +60,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Microsoft YaHei,{font_size},&H00FFFFFF,&H000000FF,&H0029332E,&H00000000,1,0,0,0,100,100,0,0,1,5,1,2,80,80,{margin_v},1
+Style: Default,{subtitle_font_name()},{font_size},&H00FFFFFF,&H000000FF,&H0029332E,&H00000000,1,0,0,0,100,100,0,0,1,5,1,2,80,80,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -110,4 +112,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
