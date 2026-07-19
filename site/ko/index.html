@@ -388,7 +388,7 @@
       <div class="stk">
         <div class="stk-icon">MUX</div>
         <h3>ffmpeg(libass 포함)</h3>
-        <p>중국어 자막을 굽고, 최종 영상을 합성. <code>brew install ffmpeg</code> 로 libass 포함 빌드 설치.</p>
+        <p>중국어 자막을 굽고 최종 영상을 합성합니다. macOS 에서는 <code>brew install ffmpeg-full</code> 을 사용하고 doctor 의 PATH 안내를 따르세요. 일반 Homebrew ffmpeg 는 현재 libass 포함을 보장하지 않습니다.</p>
       </div>
     </div>
   </div>
@@ -418,7 +418,7 @@
         <div class="step-n">03</div>
         <div class="step-body">
           <h3>에이전트가 로컬에서 엔드 투 엔드 제작</h3>
-          <p>주제를 주고, AI 가 쓴 대본을 확인·수정합니다. 승인 후 로컬에서 자동으로 더빙, 이중 플랫폼 렌더링, 자막 굽기, 커버 작업이 실행되고, 몇 분 후 영상 2 편과 커버 2 장이 작업 디렉터리에 도착합니다.</p>
+          <p>주제를 주고 AI 가 쓴 대본을 확인·수정합니다. 승인 후 로컬에서 더빙, 이중 플랫폼 렌더링, 자막 굽기, 커버 작업을 실행합니다. 첫 준비에서는 수백 MB 의 Remotion 의존성과 브라우저를 다운로드하며 이후 제작 시간은 영상 길이와 머신 성능에 따라 달라집니다.</p>
         </div>
       </div>
     </div>
@@ -448,7 +448,7 @@
       </details>
       <details class="faq-item">
         <summary>무엇을 설치해야 하나요?</summary>
-        <div class="faq-answer">로컬 3 가지 세트: <code>Node</code> + Remotion(렌더링), <code>Python</code> + edge-tts(더빙), libass 포함 <code>ffmpeg</code>(자막 굽기). <code>install.sh</code> 가 누락된 것을 알려 줍니다. macOS 라면 <code>brew install node ffmpeg</code> 로 충분합니다.</div>
+        <div class="faq-answer">로컬 3 가지 세트: <code>Node</code> + Remotion(렌더링), <code>Python</code> + edge-tts(더빙), libass 포함 <code>ffmpeg</code>(자막 굽기). <code>install.sh</code> 는 CLI 설치 성공과 렌더러 준비 상태를 구분합니다. macOS 에서는 <code>brew install node ffmpeg-full</code> 을 사용하고 doctor 의 PATH 안내를 따르세요.</div>
       </details>
       <details class="faq-item">
         <summary>어떤 플랫폼용 영상에 대응하나요?</summary>

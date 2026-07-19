@@ -56,6 +56,10 @@ pip install -e .
 ```
 
 You'll also need **Node 20+**, **Python 3.11+**, and **ffmpeg with libass** for the local render — see [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md) for the one-line installs.
+The base install is the fully local Community path and does not compile the
+optional Director signature verifier. Before using Director from a manual
+checkout, run `pip install -e '.[director]'`; installer users can run
+`~/.lecturecast/app/.venv/bin/pip install 'cryptography>=43'`.
 
 ---
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import builtins
 import copy
 import json
 from datetime import UTC, datetime, timedelta
@@ -20,6 +21,25 @@ FIXTURE = Path(__file__).parent / "fixtures" / "production-manifest-v1.json"
 
 def _manifest() -> dict[str, object]:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
+def test_community_import_defers_optional_director_crypto(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_import = builtins.__import__
+
+    def blocked_import(name: str, *args: object, **kwargs: object) -> object:
+        if name.startswith("cryptography"):
+            raise ImportError("optional dependency intentionally unavailable")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked_import)
+
+    with pytest.raises(LectureCastError) as captured:
+        verify_manifest(_manifest())
+
+    assert captured.value.code == "client_upgrade_required"
+    assert "cryptography" in captured.value.next_action
 
 
 def test_fixture_manifest_has_valid_default_signature() -> None:

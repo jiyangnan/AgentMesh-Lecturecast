@@ -21,6 +21,12 @@ manage_one() {
   # An absent host directory means that agent is not installed/configured.
   # Do not create it merely because LectureCast is being installed.
   if [ ! -d "$base" ]; then
+    host_root="${base%/skills}"
+    if [ -d "$host_root" ]; then
+      warn "$agent adapter skipped: $base is missing; create it and rerun this installer"
+    else
+      warn "$agent adapter skipped: host not detected"
+    fi
     return 0
   fi
 
@@ -58,4 +64,8 @@ if [ -d "$HOME/.openclaw/skills" ]; then
   manage_one "OpenClaw" "$HOME/.openclaw/skills" "$INSTALL_DIR/skills/openclaw"
 elif [ -d "$HOME/.openclaw/workspace/skills" ]; then
   manage_one "OpenClaw" "$HOME/.openclaw/workspace/skills" "$INSTALL_DIR/skills/openclaw"
+elif [ -d "$HOME/.openclaw" ]; then
+  warn "OpenClaw adapter skipped: no skills directory detected; create one and rerun this installer"
+else
+  warn "OpenClaw adapter skipped: host not detected"
 fi

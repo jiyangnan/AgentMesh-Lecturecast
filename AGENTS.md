@@ -37,7 +37,8 @@ human gives you their own `MINIMAX_API_KEY` (see [Voiceover & BYOK](#voiceover--
 1. **Install tools** (offer to install whatever's missing):
    - Node 20+ + npm — `brew install node`
    - Python 3.11+ — for `edge-tts` + the SRT/ASS converters
-   - ffmpeg **with libass** — `brew install ffmpeg`
+   - ffmpeg **with libass** — on current Homebrew use `brew install ffmpeg-full`,
+     then `export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"`
    - *(optional)* a MiniMax key from your human → `export MINIMAX_API_KEY=…`
 2. **Follow the full pipeline** in **[docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)**:
    scope → script (approval gate) → `build_audio_mm.py` → Remotion scenes →
@@ -50,6 +51,10 @@ working dir.
 
 Use Director only when the user wants guided choices and explicitly accepts the
 paid Manifest step. Follow [skills/shared/director-workflow.md](skills/shared/director-workflow.md).
+The Community install intentionally excludes Director's optional signature
+verifier; before the first Director run, install it with
+`~/.lecturecast/app/.venv/bin/pip install 'cryptography>=43'` (or install this
+checkout with `pip install -e '.[director]'`).
 Use the host-specific Skill for native choices:
 
 - [Codex](skills/codex/SKILL.md)
@@ -84,7 +89,7 @@ never create a second generation ID after a timeout.
 |---|---|
 | MiniMax warned + fell back to Edge | No `MINIMAX_API_KEY` set. Want MiniMax? Ask your human for a key. Else ignore — Edge still ships. |
 | `bun` / `@rspack/binding` error | Use `npm install`, not bun. See LOCAL-WORKFLOW failure modes. |
-| ffmpeg `No option name near 'subtitle.ass'` | System ffmpeg lacks libass — use `brew install ffmpeg`. |
+| ffmpeg `No option name near 'subtitle.ass'` | System ffmpeg lacks libass — on macOS use `brew install ffmpeg-full`, then put `$(brew --prefix ffmpeg-full)/bin` first in PATH. |
 | `ModuleNotFoundError: edge_tts` | Activate the Python venv (PEP 668 locks system python). |
 
 ## Don'ts

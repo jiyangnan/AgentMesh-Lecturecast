@@ -75,6 +75,22 @@ def test_missing_agent_directories_are_never_created(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     assert list(tmp_path.iterdir()) == []
+    assert "Codex adapter skipped: host not detected" in result.stdout
+    assert "Claude Code adapter skipped: host not detected" in result.stdout
+    assert "OpenClaw adapter skipped: host not detected" in result.stdout
+
+
+def test_existing_codex_host_without_skills_gets_an_actionable_skip(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".codex").mkdir()
+
+    result = _run(tmp_path, "install")
+
+    assert result.returncode == 0
+    assert "Codex adapter skipped" in result.stdout
+    assert ".codex/skills is missing" in result.stdout
+    assert not (tmp_path / ".codex" / "skills").exists()
 
 
 def test_three_host_skills_reference_one_shared_director_workflow() -> None:

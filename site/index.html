@@ -384,7 +384,7 @@
       <div class="stk">
         <div class="stk-icon">MUX</div>
         <h3>ffmpeg（带 libass）</h3>
-        <p>烧录中文字幕、合成成片。<code>brew install ffmpeg</code> 一行装好带 libass 的版本。</p>
+        <p>烧录中文字幕、合成成片。macOS 使用 <code>brew install ffmpeg-full</code>，并按 doctor 提示把它放到本次 PATH 前面；普通 Homebrew ffmpeg 当前不保证包含 libass。</p>
       </div>
     </div>
   </div>
@@ -414,7 +414,7 @@
         <div class="step-n">03</div>
         <div class="step-body">
           <h3>agent 在本地端到端出片</h3>
-          <p>给一个主题，先看 AI 写的讲稿、改到满意；确认后在本机自动配音、双平台渲染、烧字幕、做封面，几分钟后两条成片 + 两张封面落在你的工作目录里。</p>
+          <p>给一个主题，先看 AI 写的讲稿、改到满意；确认后在本机自动配音、双平台渲染、烧字幕、做封面。首次准备会下载数百 MB 的 Remotion 依赖与浏览器；后续每期耗时取决于视频长度和本机性能。</p>
         </div>
       </div>
     </div>
@@ -444,7 +444,7 @@
       </details>
       <details class="faq-item">
         <summary>需要装什么？</summary>
-        <div class="faq-answer">本地三件套：<code>Node</code> + Remotion（渲染）、<code>Python</code> + edge-tts（配音）、<code>ffmpeg</code> 带 libass（烧字幕）。<code>install.sh</code> 会帮你检查缺哪样，macOS 用 <code>brew install node ffmpeg</code> 即可。</div>
+        <div class="faq-answer">本地三件套：<code>Node</code> + Remotion（渲染）、<code>Python</code> + edge-tts（配音）、<code>ffmpeg</code> 带 libass（烧字幕）。<code>install.sh</code> 会明确区分 CLI 安装成功和渲染器就绪；macOS 使用 <code>brew install node ffmpeg-full</code>，并按 doctor 的 PATH 提示启用 ffmpeg-full。</div>
       </details>
       <details class="faq-item">
         <summary>支持哪些平台的成片？</summary>

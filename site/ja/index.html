@@ -388,7 +388,7 @@
       <div class="stk">
         <div class="stk-icon">MUX</div>
         <h3>ffmpeg（libass 付き）</h3>
-        <p>中国語字幕を焼き付け、成片を合成。<code>brew install ffmpeg</code> で libass 入りビルドが入手できます。</p>
+        <p>中国語字幕を焼き付け、成片を合成。macOS では <code>brew install ffmpeg-full</code> を使い、doctor の PATH 案内に従ってください。通常の Homebrew ffmpeg は現在 libass を保証しません。</p>
       </div>
     </div>
   </div>
@@ -418,7 +418,7 @@
         <div class="step-n">03</div>
         <div class="step-body">
           <h3>エージェントがローカルでエンドツーエンド出片</h3>
-          <p>テーマを与え、AI が書いた脚本を確認・修正。承認後、ローカルで自動的に配音、2 プラットフォーム同時レンダリング、字幕焼き付け、カバー作成が走り、数分後に成片 2 本＋カバー 2 枚が作業ディレクトリに揃います。</p>
+          <p>テーマを与え、AI が書いた脚本を確認・修正。承認後、ローカルで配音、2 プラットフォーム同時レンダリング、字幕焼き付け、カバー作成を行います。初回準備では数百 MB の Remotion 依存関係とブラウザをダウンロードし、その後の所要時間は動画の長さとマシン性能に依存します。</p>
         </div>
       </div>
     </div>
@@ -448,7 +448,7 @@
       </details>
       <details class="faq-item">
         <summary>何をインストールする必要がありますか？</summary>
-        <div class="faq-answer">ローカル 3 点セット：<code>Node</code> + Remotion（レンダリング）、<code>Python</code> + edge-tts（配音）、libass 入り <code>ffmpeg</code>（字幕焼き付け）。<code>install.sh</code> が不足を教えてくれます。macOS なら <code>brew install node ffmpeg</code> で揃います。</div>
+        <div class="faq-answer">ローカル 3 点セット：<code>Node</code> + Remotion（レンダリング）、<code>Python</code> + edge-tts（配音）、libass 入り <code>ffmpeg</code>（字幕焼き付け）。<code>install.sh</code> は CLI のインストール成功とレンダラ準備完了を区別します。macOS では <code>brew install node ffmpeg-full</code> を使い、doctor の PATH 案内に従ってください。</div>
       </details>
       <details class="faq-item">
         <summary>どのプラットフォーム向けの成片に対応していますか？</summary>

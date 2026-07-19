@@ -10,9 +10,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
 from .errors import LectureCastError
 from .protocol import ProductionManifest, canonical_digest, manifest_signing_bytes
 
@@ -138,6 +135,18 @@ def verify_manifest(
     *,
     keyring: PublicKeyRing | None = None,
 ) -> VerificationResult:
+    try:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    except ImportError:
+        raise LectureCastError(
+            code="client_upgrade_required",
+            message="当前 Community 安装未包含 Director 的签名验证依赖。",
+            next_action=(
+                "如需使用 Director，请运行："
+                "~/.lecturecast/app/.venv/bin/pip install 'cryptography>=43'"
+            ),
+        ) from None
     document = (
         manifest if isinstance(manifest, ProductionManifest) else ProductionManifest.model_validate(manifest)
     )

@@ -46,15 +46,43 @@ def _version(command: Sequence[str], *, runner: RunCommand) -> str | None:
     return match.group("version") if match else None
 
 
-def _remotion_version(repo_root: Path | None) -> str | None:
-    if repo_root is None:
-        return None
-    package_path = repo_root / "templates" / "remotion" / "node_modules" / "remotion" / "package.json"
+def _package_version(package_path: Path) -> str | None:
     try:
         value = json.loads(package_path.read_text(encoding="utf-8"))["version"]
     except (FileNotFoundError, OSError, json.JSONDecodeError, KeyError, TypeError):
         return None
     return value if isinstance(value, str) and _SEMVER.fullmatch(value) else None
+
+
+def _remotion_version(
+    *,
+    project_root: Path | None,
+    repo_root: Path | None,
+    runner: RunCommand,
+) -> str | None:
+    candidates: list[Path] = []
+    if project_root is not None:
+        candidates.append(
+            project_root.expanduser().resolve()
+            / "remotion"
+            / "node_modules"
+            / "remotion"
+            / "package.json"
+        )
+    if repo_root is not None:
+        candidates.append(
+            repo_root.expanduser().resolve()
+            / "templates"
+            / "remotion"
+            / "node_modules"
+            / "remotion"
+            / "package.json"
+        )
+    for package_path in candidates:
+        version = _package_version(package_path)
+        if version is not None:
+            return version
+    return _version(["remotion", "--version"], runner=runner)
 
 
 def capture_capabilities(
@@ -63,17 +91,27 @@ def capture_capabilities(
     adapter_version: str = "1.0.0",
     components: list[str] | None = None,
     component_catalog_digest: str | None = None,
+    project_root: Path | None = None,
     repo_root: Path | None = None,
     runner: RunCommand = _default_run,
 ) -> ClientCapabilities:
     node_version = _version(["node", "--version"], runner=runner)
     ffmpeg_version = _version(["ffmpeg", "-version"], runner=runner)
-    remotion_version = _remotion_version(repo_root)
+    remotion_version = _remotion_version(
+        project_root=project_root,
+        repo_root=repo_root,
+        runner=runner,
+    )
     has_libass = False
     if ffmpeg_version is not None:
         try:
             build = runner(["ffmpeg", "-buildconf"])
-            has_libass = "--enable-libass" in f"{build.stdout}\n{build.stderr}"
+            filters = runner(["ffmpeg", "-hide_banner", "-filters"])
+            filter_output = f"{filters.stdout}\n{filters.stderr}"
+            has_libass = (
+                "--enable-libass" in f"{build.stdout}\n{build.stderr}"
+                and re.search(r"(?m)^\s*\S+\s+(?:ass|subtitles)\s", filter_output) is not None
+            )
         except (OSError, subprocess.SubprocessError):
             has_libass = False
     catalog, locked_digest = load_component_catalog()
@@ -122,8 +160,25 @@ def doctor_report(capabilities: ClientCapabilities) -> dict[str, Any]:
     ]
     if not runtime["has_libass"]:
         missing.append("ffmpeg-libass")
+    next_actions: list[str] = []
+    if runtime["node_version"] is None:
+        next_actions.append("安装 Node 20+；macOS 可运行：brew install node")
+    if runtime["remotion_version"] is None:
+        next_actions.append(
+            "在 LectureCast 项目中复制 remotion 模板并运行：cd remotion && npm install"
+        )
+    if runtime["ffmpeg_version"] is None:
+        next_actions.append(
+            "安装带 libass 的 ffmpeg；macOS 可运行：brew install ffmpeg-full"
+        )
+    elif not runtime["has_libass"]:
+        next_actions.append(
+            "当前 ffmpeg 缺少 libass；macOS 可运行：brew install ffmpeg-full，"
+            "再将 $(brew --prefix ffmpeg-full)/bin 放到本次 PATH 最前面"
+        )
     return {
         "ready": runtime["can_render_locally"] and runtime["has_libass"],
         "missing": missing,
+        "next_actions": next_actions,
         "capabilities": payload,
     }

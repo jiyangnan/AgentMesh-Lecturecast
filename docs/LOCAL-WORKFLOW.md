@@ -15,7 +15,7 @@ Check at the start; offer to install whatever's missing.
 |---|---|---|
 | Node 20+ + `npm` | Remotion render | `brew install node` |
 | Python 3.11+ (venv) | `edge-tts`, SRT/ASS converters | `python3 -m venv .venv` |
-| Local `ffmpeg` **with libass** | subtitle burn + audio concat | `brew install ffmpeg` (the brew build has libass + system CJK fonts) |
+| Local `ffmpeg` **with libass** | subtitle burn + audio concat | macOS: `brew install ffmpeg-full`, then `export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH"` for this shell. The regular Homebrew `ffmpeg` formula does not currently guarantee libass. |
 | **MiniMax API key** *(optional, BYOK)* | warmer default voice | **ask your human for their own MiniMax key** (third-party, minimaxi.com) → `export MINIMAX_API_KEY=…`. No key → automatic free Edge voice. |
 
 > **On the MiniMax key:** it is the user's own third-party account, not a
@@ -112,7 +112,11 @@ concat keeps cues accurate and avoids long-segment truncation.
 
 ```bash
 cp -R /path/to/AgentMesh-Lecturecast/templates/remotion/. remotion/
-cd remotion && npm install --no-fund --no-audit   # NOT bun — see failure modes
+cd remotion
+npm install --no-fund --no-audit   # NOT bun — see failure modes
+npx remotion browser ensure        # explicit first-run browser download/warm-up
+cd ..
+lecturecast doctor --project-root "$PWD"
 ```
 
 - Set the look in `src/theme.ts`: `BRAND.series` / `BRAND.ep` / `COLORS.accent`.
@@ -205,7 +209,8 @@ after a highlighted word so it doesn't bleed.
 | MiniMax quota/auth error | auto-falls back to Edge; top up or fix the key to restore MiniMax |
 | `ModuleNotFoundError: edge_tts` | activate the venv (PEP 668 locks system python) |
 | `Cannot find module '@rspack/binding-darwin-*'` | `bun` pruned an optional dep — `rm -rf node_modules && npm install` |
-| ffmpeg `No option name near 'subtitle.ass'` | system ffmpeg lacks libass — use brew ffmpeg |
+| ffmpeg `No option name near 'subtitle.ass'` | system ffmpeg lacks libass — on macOS install `ffmpeg-full` and put `$(brew --prefix ffmpeg-full)/bin` first in PATH |
+| first Remotion browser connection times out after download | run `npx remotion browser ensure`, then retry the original render once; if it repeats, report the full error |
 | Scene timing drifts from audio | you hand-edited `SECTIONS` — never do that; rerun `update_theme.py` |
 
 ## Don'ts

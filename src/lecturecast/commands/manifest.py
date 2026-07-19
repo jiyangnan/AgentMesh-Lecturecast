@@ -58,7 +58,10 @@ def preflight(
         capabilities = (
             _load_capabilities(capabilities_path)
             if capabilities_path is not None
-            else capture_capabilities(repo_root=Path(__file__).resolve().parents[3])
+            else capture_capabilities(
+                project_root=project_root or Path.cwd(),
+                repo_root=Path(__file__).resolve().parents[3],
+            )
         )
         root = project_root
         if root is None and manifest_path.parent.name == ".lecturecast":

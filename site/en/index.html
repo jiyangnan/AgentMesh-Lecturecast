@@ -388,7 +388,7 @@
       <div class="stk">
         <div class="stk-icon">MUX</div>
         <h3>ffmpeg (with libass)</h3>
-        <p>Burns Chinese subtitles and stitches the final video. <code>brew install ffmpeg</code> gives you a libass-enabled build.</p>
+        <p>Burns Chinese subtitles and stitches the final video. On macOS, use <code>brew install ffmpeg-full</code> and follow doctor’s PATH hint; the regular Homebrew ffmpeg formula does not currently guarantee libass.</p>
       </div>
     </div>
   </div>
@@ -418,7 +418,7 @@
         <div class="step-n">03</div>
         <div class="step-body">
           <h3>Agent runs the full pipeline locally</h3>
-          <p>Give it a topic, review the AI-written script and edit until it's right; then it voices, renders both platforms, burns subtitles, and produces covers locally. A few minutes later, two finished videos and two covers land in your working directory.</p>
+          <p>Give it a topic, review the AI-written script and edit until it's right; then it voices, renders both platforms, burns subtitles, and produces covers locally. First-time setup downloads several hundred MB of Remotion dependencies and a browser; later production time depends on video length and your machine.</p>
         </div>
       </div>
     </div>
@@ -448,7 +448,7 @@
       </details>
       <details class="faq-item">
         <summary>What do I need to install?</summary>
-        <div class="faq-answer">Three local pieces: <code>Node</code> + Remotion (render), <code>Python</code> + edge-tts (voiceover), and <code>ffmpeg</code> with libass (subtitle burn-in). <code>install.sh</code> tells you what's missing; on macOS, <code>brew install node ffmpeg</code> covers it.</div>
+        <div class="faq-answer">Three local pieces: <code>Node</code> + Remotion (render), <code>Python</code> + edge-tts (voiceover), and <code>ffmpeg</code> with libass (subtitle burn-in). <code>install.sh</code> distinguishes a successful CLI install from renderer readiness. On macOS, use <code>brew install node ffmpeg-full</code> and follow doctor’s PATH hint.</div>
       </details>
       <details class="faq-item">
         <summary>Which platforms are the outputs for?</summary>

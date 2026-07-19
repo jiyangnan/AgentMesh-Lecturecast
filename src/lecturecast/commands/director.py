@@ -378,6 +378,7 @@ def generate(
             capabilities = capture_capabilities(
                 adapter_kind=adapter_kind,
                 adapter_version=adapter_version,
+                project_root=directory,
                 repo_root=Path(__file__).resolve().parents[3],
             )
             project = project_store.load()

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lecturecast"
-version = "0.3.1"
+version = "0.3.2"
 description = "Open-source, fully local video workflow for AI agents — turn a topic into B站 + 小红书 course videos on your own machine"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,17 +12,20 @@ license = "Apache-2.0"
 authors = [{ name = "jiyangnan", email = "niclolaszhaosi@gmail.com" }]
 keywords = ["lecturecast", "agentmesh", "video", "course", "bilibili", "xiaohongshu", "remotion", "local"]
 dependencies = [
-    "cryptography>=43",
     "jsonschema>=4.23",
     "typer>=0.12",
     "rich>=13.7",
 ]
 
 [project.optional-dependencies]
+director = [
+    "cryptography>=43",
+]
 auth = [
     "keyring>=25",
 ]
 dev = [
+    "cryptography>=43",
     "pytest>=8.0",
     "ruff>=0.7",
     "mypy>=1.13",

@@ -5,6 +5,37 @@
 > 路线：Community（完全本地、无账户、无 LectureCast API Key）
 > 结论：**价值主张清楚，CLI 与本地模板能够工作；但当前 macOS 首次安装链路仍存在会阻断首条成片的 P0 问题，尚不适合把“一行安装后几分钟出片”作为普遍承诺。**
 
+> 复核状态：2026-07-19 已由主开发环境对 `b9b95a7` 的代码和可复现实验逐条复核，
+> 并在 `0.3.2` 修复确认成立的主路径问题。本文保留 `0.3.1` 的历史验收事实；下面的
+> “复核与修复说明”记录其中一处需要更正的归因，避免把观察结果写成代码并不支持的事实。
+
+## 0. 复核与修复说明
+
+整体判断中肯，且 LC-FTUX-001、002、003、004 的 Remotion 发现缺陷、005、007 均有
+直接代码证据。LC-FTUX-006 与 008 是有效的首次冷启动观测，但单机一次超时不应扩大为
+稳定性结论；本次以显式浏览器预热和一次重试说明处理，没有把它上升为新的运行时组件。
+
+需要更正一处：在 `b9b95a7` 的干净 checkout 上复现时，Remotion 缺失会让能力快照记录
+`remotion_version: null`，但 `lecturecast project capabilities` 本身仍能保存该快照，
+不会仅因为 Remotion 缺失而返回 `manifest_incompatible`。原测试中的这次错误可能还叠加了
+项目状态或其他异常，不能归因给 Remotion 缺失。LC-FTUX-004 的核心问题仍成立：doctor
+和能力采集没有查看文档要求用户安装的项目级 `remotion/node_modules`。
+
+`0.3.2` 的对应修复：
+
+- Community 基础安装不再强制安装 `cryptography`；Director 签名验证改为显式可选依赖；
+- installer 检测混合架构和损坏/错版本 venv，pip 失败时输出完整诊断；
+- installer 结尾运行 doctor，明确区分 “CLI installed” 与 “renderer ready”；
+- doctor 与 project/Director capability capture 优先识别项目级 Remotion，并同时核验
+  ffmpeg 的 libass build flag 和字幕 filter；
+- macOS 文档和官网改用 keg-only `ffmpeg-full`，通过当前 shell 的 PATH 隔离启用；
+- 官方 End 模板删除命中禁词的占位文案，adapter 跳过时给出可见状态；
+- 首次 Remotion 使用前显式执行 `remotion browser ensure`，官网区分首次下载成本与后续制作耗时。
+
+修复验证结果：96 项测试通过，ruff、mypy 与四语官网契约检查通过；在全新隔离 `HOME`
+使用 Python 3.14 完成了 Community 首装和重复安装，CLI 为 `0.3.2`，基础环境中未安装
+`cryptography`，并且安装器如实输出 `CLI installed; renderer not ready: remotion` 及下一步命令。
+
 ## 1. 为什么做这次测试
 
 本次测试不从开发者已经配置好的工作区开始，而是模拟一名第一次访问
@@ -101,7 +132,7 @@ Rosetta/历史迁移机器是真实客户环境，安装器至少应该识别并
 | CLI 入口 | `lecturecast version` / `workflow` | PASS | 命令结构和 agent handoff 文案清楚 |
 | 环境体检 | `lecturecast doctor` | PARTIAL | 能发现 libass，但错误地持续报告 Remotion 缺失 |
 | 项目初始化 | `lecturecast project init` | PASS | 本地项目状态文件成功生成 |
-| 能力采集 | `lecturecast project capabilities` | FAIL | 因 doctor 的 Remotion 误判返回 `manifest_incompatible` |
+| 能力采集 | `lecturecast project capabilities` | PARTIAL | 保存了 `remotion_version: null` 的快照；原报告中的 `manifest_incompatible` 不能仅归因于该误判 |
 | Remotion 安装 | 项目模板内 `npm install` | PASS | 186 packages，冷启动约 2 分钟 |
 | 浏览器准备 | 自动下载 Headless Chrome | PASS | 额外约 98 MB，官网未量化说明 |
 | 首次 QA still | 官方命令渲染 `VideoVertical` | FAIL → PASS | 第一次浏览器连接 25 秒超时；原命令立即重试成功 |
@@ -273,7 +304,9 @@ cd remotion && npm install --no-fund --no-audit
 ```
 
 而 CLI 的 doctor、project、manifest 与 Director 都把 package repo root 传给能力采集。
-它们不会检查用户按照文档安装依赖的 episode 项目目录。
+它们不会检查用户按照文档安装依赖的 episode 项目目录。复核也确认：Remotion 缺失本身
+不会阻止 `project capabilities` 保存快照；此前把 `manifest_incompatible` 直接归因于这一点
+并不准确。
 
 #### 建议
 

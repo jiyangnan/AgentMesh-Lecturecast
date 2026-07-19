@@ -54,6 +54,9 @@ pip install -e .
 ```
 
 本地渲染还需要 **Node 20+**、**Python 3.11+**、**带 libass 的 ffmpeg**——一行安装命令见 [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)。
+基础安装只包含完全本地的 Community 路线，不会编译可选的 Director 签名验证依赖。
+手动 checkout 在首次使用 Director 前运行 `pip install -e '.[director]'`；一行安装用户可运行
+`~/.lecturecast/app/.venv/bin/pip install 'cryptography>=43'`。
 
 ---
 

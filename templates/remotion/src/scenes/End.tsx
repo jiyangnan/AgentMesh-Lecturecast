@@ -4,7 +4,7 @@ import { reveal, pop, pulse } from '../anim';
 
 export const End: React.FC = () => {
   const frame = useCurrentFrame();
-  const polls = ['AI 自动剪视频', 'AI 做小红书图文', 'AI 写爬虫', '你来定 →'];
+  const polls = ['AI 自动剪视频', 'AI 做小红书图文', 'AI 做数据采集', '你来定 →'];
   return (
     <AbsoluteFill style={{ background: C.ink, fontFamily: F.sans, color: C.paper }}>
       <div style={{ position: 'absolute', top: 130, left: 0, right: 0, textAlign: 'center', ...reveal(frame, 0.1) }}>

@@ -78,6 +78,7 @@ def capabilities(
         document = capture_capabilities(
             adapter_kind=adapter,
             adapter_version=adapter_version,
+            project_root=directory,
             repo_root=Path(__file__).resolve().parents[3],
         )
         updated = store.save_capabilities(document, expected_revision=state.revision)
