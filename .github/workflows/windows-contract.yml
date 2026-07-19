@@ -14,6 +14,7 @@ on:
       - "README.zh.md"
       - "docs/SUPPORTED-PLATFORMS.md"
       - ".github/workflows/windows-contract.yml"
+      - ".gitattributes"
   pull_request:
     paths:
       - "scripts/*.ps1"
@@ -27,6 +28,7 @@ on:
       - "README.zh.md"
       - "docs/SUPPORTED-PLATFORMS.md"
       - ".github/workflows/windows-contract.yml"
+      - ".gitattributes"
 
 permissions:
   contents: read
