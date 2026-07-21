@@ -183,6 +183,13 @@ def _init_project(path: Path) -> Path:
     return source
 
 
+@pytest.fixture(autouse=True)
+def _allow_project_cli_after_test_onboarding(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "lecturecast.commands.project.require_commercial_access", lambda: None
+    )
+
+
 def _start(path: Path, source: Path, adapter: str = "codex") -> dict[str, Any]:
     result = runner.invoke(
         app,

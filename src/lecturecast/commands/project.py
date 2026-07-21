@@ -5,6 +5,7 @@ from pathlib import Path
 import typer
 
 from ..capabilities import capture_capabilities
+from ..commercial import require_commercial_access
 from ..errors import LectureCastError
 from ..project import ProjectStore
 from .output import emit, fail
@@ -21,6 +22,7 @@ def init_project(
 ) -> None:
     """Create a shareable local project index."""
     try:
+        require_commercial_access()
         state = ProjectStore(directory).init(name=name)
         emit(
             state.to_dict(),
@@ -61,6 +63,10 @@ def resume(
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Resume from disk; conversation history is not used as project state."""
+    try:
+        require_commercial_access()
+    except LectureCastError as error:
+        fail(error, json_output=json_output)
     _show_project(directory, json_output)
 
 
@@ -73,6 +79,7 @@ def capabilities(
 ) -> None:
     """Capture and persist the exact capability snapshot later bound to a Manifest."""
     try:
+        require_commercial_access()
         store = ProjectStore(directory)
         state = store.load()
         document = capture_capabilities(

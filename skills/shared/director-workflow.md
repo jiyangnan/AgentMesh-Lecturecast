@@ -5,7 +5,7 @@ source summary, stable option IDs, the Creative Brief, ClientCapabilities and th
 resulting declarative Manifest; raw media, voice, local paths and rendered files
 stay on the user's machine.
 
-LectureCast requires a current AgentMesh360 paid subscription.
+LectureCast requires current AgentMesh360 paid access (the active monthly pass).
 Use an AgentMesh360 universal API key; an older Job Agent-only key does not cover
 LectureCast. There is no separate LectureCast subscription.
 

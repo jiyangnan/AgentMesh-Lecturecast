@@ -17,11 +17,11 @@ def _access(*, usable: bool = True) -> CommercialAccess:
     return CommercialAccess(
         valid=True,
         usable=usable,
-        reason="ready" if usable else "paid_subscription_required",
+        reason="ready" if usable else "paid_access_required",
         tier="pro" if usable else "free",
         subscription_status="active",
         credit=50,
-        source="agentmesh_shared_credits",
+        source="monthly_pass" if usable else "none",
         expires_at="2026-08-21T00:00:00Z",
         required_credits=10,
         paid_pass_required=not usable,
@@ -114,7 +114,7 @@ def test_no_paid_access_never_falls_back_to_local_render(monkeypatch) -> None:
     result = onboard_module.onboarding_status()
 
     assert result["ok"] is False
-    assert result["workflow"]["blocked_by"] == ["paid_subscription_required"]
+    assert result["workflow"]["blocked_by"] == ["paid_access_required"]
     assert result["next_suggested"].endswith("#pricing")
     assert "project init" not in result["next_suggested"]
 

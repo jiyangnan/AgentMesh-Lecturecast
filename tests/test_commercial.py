@@ -13,7 +13,10 @@ class FakeTransport:
     def __init__(
         self,
         *,
-        balance: tuple[int, dict[str, Any]] = (200, {"balance": 42, "tier": "pro"}),
+        balance: tuple[int, dict[str, Any]] = (
+            200,
+            {"balance": 42, "tier": "pro", "source": "none", "expires_at": None},
+        ),
         subscription: tuple[int, dict[str, Any]] = (
             200,
             {
@@ -62,19 +65,54 @@ def test_paid_account_with_enough_shared_credits_is_usable() -> None:
     assert secret not in json.dumps(access.to_dict())
 
 
+def test_active_monthly_pass_is_usable_even_when_legacy_subscription_is_free() -> None:
+    transport = FakeTransport(
+        balance=(
+            200,
+            {
+                "balance": 1000,
+                "tier": "free",
+                "source": "monthly_pass",
+                "expires_at": "2026-08-20 12:00:00",
+            },
+        ),
+        subscription=(200, {"tier": "free", "status": "active"}),
+    )
+
+    access = CommercialClient(
+        api_key="am_live_monthly_pass",
+        core_url="https://core.example.test",
+        transport=transport,
+    ).access()
+
+    assert access.usable is True
+    assert access.reason == "ready"
+    assert access.source == "monthly_pass"
+    assert access.expires_at == "2026-08-20 12:00:00"
+    assert access.tier == "free"
+
+
 @pytest.mark.parametrize(
     ("transport", "reason", "paid_pass_required"),
     [
         (
             FakeTransport(
-                balance=(200, {"balance": 50, "tier": "free"}),
+                balance=(
+                    200,
+                    {"balance": 50, "tier": "free", "source": "signup_trial"},
+                ),
                 subscription=(200, {"tier": "free", "status": "active"}),
             ),
-            "paid_subscription_required",
+            "paid_access_required",
             True,
         ),
         (
-            FakeTransport(balance=(200, {"balance": 9, "tier": "pro"})),
+            FakeTransport(
+                balance=(
+                    200,
+                    {"balance": 9, "tier": "free", "source": "monthly_pass"},
+                )
+            ),
             "insufficient_credits",
             False,
         ),
