@@ -82,9 +82,12 @@ jobs:
           $mirror = Join-Path $env:RUNNER_TEMP "lecturecast.git"
           $isolatedHome = Join-Path $env:RUNNER_TEMP "lecturecast-home"
           $install = Join-Path $isolatedHome ".lecturecast\app"
+          $legacySkill = Join-Path $isolatedHome ".codex\skills\lecturecast"
           git clone --bare $env:GITHUB_WORKSPACE $mirror
           git --git-dir=$mirror branch -f canary $env:GITHUB_SHA
           New-Item -ItemType Directory -Force -Path $isolatedHome | Out-Null
+          New-Item -ItemType Directory -Force -Path $legacySkill | Out-Null
+          Set-Content -LiteralPath (Join-Path $legacySkill "SKILL.md") -Value "legacy-canary"
           $env:HOME = $isolatedHome
           $env:USERPROFILE = $isolatedHome
           $env:LECTURECAST_REPO = $mirror
@@ -93,6 +96,16 @@ jobs:
           $env:LECTURECAST_SKIP_PIP_UPGRADE = "1"
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $legacyBackups = @(Get-ChildItem (Split-Path -Parent $legacySkill) -Directory |
+            Where-Object { $_.Name -like "lecturecast.backup-*" })
+          if ($legacyBackups.Count -ne 1) { throw "legacy Skill backup was not preserved" }
+          if ((Get-Content (Join-Path $legacyBackups[0].FullName "SKILL.md") -Raw).Trim() -ne "legacy-canary") {
+            throw "legacy Skill backup content changed"
+          }
+          $installedSkill = Get-Item -LiteralPath $legacySkill -Force
+          if ($installedSkill.LinkType -notin @("Junction", "SymbolicLink")) {
+            throw "LectureCast Director Skill was not registered"
+          }
           $expected = (Select-String -Path pyproject.toml -Pattern '^version = "([^"]+)"$').Matches[0].Groups[1].Value
           $version = & "$install\.venv\Scripts\lecturecast.exe" version
           if ($version -ne "lecturecast $expected") { throw "unexpected version: $version (expected $expected)" }

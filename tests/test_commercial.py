@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 from typing import Any, Mapping
 
 import pytest
@@ -118,6 +119,17 @@ def test_active_monthly_pass_is_usable_even_when_legacy_subscription_is_free() -
         ),
         (
             {
+                "balance": 0,
+                "tier": "free",
+                "source": "monthly_pass",
+                "expires_at": "2026-08-21T00:00:00Z",
+            },
+            "insufficient_credits",
+            False,
+            "active",
+        ),
+        (
+            {
                 "balance": 9,
                 "tier": "free",
                 "source": "monthly_pass",
@@ -128,7 +140,13 @@ def test_active_monthly_pass_is_usable_even_when_legacy_subscription_is_free() -
             "active",
         ),
     ],
-    ids=["free", "signup-trial", "expired-pass", "insufficient-paid-pass"],
+    ids=[
+        "free",
+        "signup-trial",
+        "expired-pass",
+        "zero-credit-paid-pass",
+        "insufficient-paid-pass",
+    ],
 )
 def test_commercial_access_fails_closed(
     balance: dict[str, Any],
@@ -166,6 +184,24 @@ def test_invalid_key_is_rejected_without_echoing_secret() -> None:
 
     assert captured.value.code == "invalid_key"
     assert secret not in json.dumps(captured.value.to_dict(), ensure_ascii=False)
+
+
+def test_balance_request_failure_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable(*_args: Any, **_kwargs: Any) -> None:
+        raise urllib.error.URLError("canary unavailable")
+
+    monkeypatch.setattr("urllib.request.urlopen", unavailable)
+
+    with pytest.raises(LectureCastError) as captured:
+        CommercialClient(
+            api_key="am_live_request_failure",
+            core_url="https://core.example.test",
+        ).access()
+
+    assert captured.value.code == "core_unavailable"
+    assert captured.value.retryable is True
 
 
 @pytest.mark.parametrize(

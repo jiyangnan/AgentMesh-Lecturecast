@@ -47,6 +47,18 @@ function Get-OwnedTarget([string]$Path) {
     return [System.IO.Path]::GetFullPath($Target).TrimEnd("\")
 }
 
+function Move-LegacyAdapterToBackup([string]$Path) {
+    $Stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
+    $Backup = "$Path.backup-$Stamp"
+    $Suffix = 1
+    while (Test-Path -LiteralPath $Backup) {
+        $Backup = "$Path.backup-$Stamp-$Suffix"
+        $Suffix += 1
+    }
+    Move-Item -LiteralPath $Path -Destination $Backup
+    return $Backup
+}
+
 function Manage-One(
     [string]$Agent,
     [string]$Base,
@@ -79,9 +91,11 @@ function Manage-One(
             return
         }
         if (Test-Path -LiteralPath $Target) {
-            Write-ErrorLine "$Agent adapter conflict: $Target is not installer-owned"
-            Write-ErrorLine "Rename that path, then rerun scripts\manage_adapters.ps1 -Action install"
-            $script:AdapterConflicts += 1
+            $Backup = Move-LegacyAdapterToBackup $Target
+            Write-Ok "$Agent legacy adapter backed up to $Backup"
+            New-Item -ItemType Junction -Path $Target -Target $Expected | Out-Null
+            Write-Ok "$Agent adapter upgraded"
+            $script:AdaptersRegistered += 1
             return
         }
         New-Item -ItemType Junction -Path $Target -Target $Expected | Out-Null

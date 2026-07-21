@@ -108,3 +108,29 @@ def test_director_resume_is_gated_before_local_rebind(
 
     _assert_denied(result)
     assert not (tmp_path / ".lecturecast").exists()
+
+
+def test_read_only_status_inspect_and_verify_remain_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ProjectStore(tmp_path).init(name="read-only")
+
+    def unexpected_gate() -> None:
+        raise AssertionError("read-only commands must not invoke the commercial gate")
+
+    monkeypatch.setattr(
+        "lecturecast.commands.project.require_commercial_access", unexpected_gate
+    )
+    monkeypatch.setattr(
+        "lecturecast.commands.manifest.require_commercial_access", unexpected_gate
+    )
+    manifest = FIXTURE_DIR / "production-manifest-v1.json"
+
+    status = runner.invoke(app, ["project", "status", str(tmp_path), "--json"])
+    inspected = runner.invoke(app, ["manifest", "inspect", str(manifest), "--json"])
+    verified = runner.invoke(app, ["manifest", "verify", str(manifest), "--json"])
+
+    assert status.exit_code == 0, status.output
+    assert inspected.exit_code == 0, inspected.output
+    assert verified.exit_code == 0, verified.output
+    assert json.loads(verified.stdout)["valid"] is True

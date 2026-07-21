@@ -28,7 +28,9 @@ def _run(home: Path, action: str) -> subprocess.CompletedProcess[str]:
 
 
 @BASH_ONLY
-def test_adapter_install_blocks_custom_skill_and_preserves_it(tmp_path: Path) -> None:
+def test_adapter_install_upgrades_directory_skill_and_preserves_backup(
+    tmp_path: Path,
+) -> None:
     codex = tmp_path / ".codex" / "skills"
     claude = tmp_path / ".claude" / "skills"
     codex.mkdir(parents=True)
@@ -41,11 +43,16 @@ def test_adapter_install_blocks_custom_skill_and_preserves_it(tmp_path: Path) ->
     first = _run(tmp_path, "install")
     second = _run(tmp_path, "install")
 
-    assert first.returncode == second.returncode == 3
-    assert "adapter conflict" in first.stderr
-    assert "onboarding is not safe" in first.stderr
-    assert marker.read_text(encoding="utf-8") == "custom user skill\n"
-    assert not custom.is_symlink()
+    assert first.returncode == second.returncode == 0
+    assert "legacy adapter backed up" in first.stdout
+    assert "adapter upgraded" in first.stdout
+    assert "adapter already registered" in second.stdout
+    assert custom.is_symlink()
+    assert custom.resolve() == ROOT / "skills" / "codex"
+    backups = list(codex.glob("lecturecast.backup-*"))
+    assert len(backups) == 1
+    backup_marker = backups[0] / "SKILL.md"
+    assert backup_marker.read_text(encoding="utf-8") == "custom user skill\n"
     installed = claude / "lecturecast"
     assert installed.is_symlink()
     assert installed.resolve() == ROOT / "skills" / "claude-code"
@@ -54,7 +61,8 @@ def test_adapter_install_blocks_custom_skill_and_preserves_it(tmp_path: Path) ->
     removed = _run(tmp_path, "uninstall")
     assert removed.returncode == 0
     assert not installed.exists()
-    assert marker.exists()
+    assert not custom.exists()
+    assert backup_marker.exists()
 
 
 @BASH_ONLY

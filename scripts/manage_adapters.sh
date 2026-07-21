@@ -16,6 +16,19 @@ err()  { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; }
 CONFLICTS=0
 REGISTERED=0
 
+backup_legacy_adapter() {
+  target="$1"
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  backup="${target}.backup-${stamp}"
+  suffix=1
+  while [ -e "$backup" ] || [ -L "$backup" ]; do
+    backup="${target}.backup-${stamp}-${suffix}"
+    suffix=$((suffix + 1))
+  done
+  mv "$target" "$backup"
+  printf '%s\n' "$backup"
+}
+
 manage_one() {
   agent="$1"
   base="$2"
@@ -47,9 +60,11 @@ manage_one() {
       return 0
     fi
     if [ -e "$target" ]; then
-      err "$agent adapter conflict: $target is not installer-owned"
-      err "rename that path, then rerun: bash \"$INSTALL_DIR/scripts/manage_adapters.sh\" install"
-      CONFLICTS=$((CONFLICTS + 1))
+      backup="$(backup_legacy_adapter "$target")"
+      ok "$agent legacy adapter backed up to $backup"
+      ln -s "$source" "$target"
+      ok "$agent adapter upgraded"
+      REGISTERED=$((REGISTERED + 1))
       return 0
     fi
     ln -s "$source" "$target"

@@ -105,6 +105,14 @@ def test_windows_native_entrypoints_cover_install_and_both_render_routes() -> No
             assert token in content, f"{relative} is missing {token!r}"
 
 
+def test_windows_adapter_upgrades_directory_skills_with_a_backup() -> None:
+    script = (ROOT / "scripts" / "manage_adapters.ps1").read_text(encoding="utf-8")
+
+    assert "Move-LegacyAdapterToBackup" in script
+    assert "legacy adapter backed up" in script
+    assert "adapter upgraded" in script
+
+
 def test_windows_canary_reads_the_package_version_instead_of_pinning_a_release() -> None:
     workflow = (ROOT / ".github" / "workflows" / "windows-contract.yml").read_text(
         encoding="utf-8"
