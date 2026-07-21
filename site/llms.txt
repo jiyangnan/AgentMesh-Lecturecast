@@ -30,8 +30,8 @@ Non-Chinese pages are machine-assisted translations; the Chinese page is authori
 - Director data boundary: only a bounded source summary, stable choice IDs, the
   Brief, and client capabilities are sent to the cloud.
 - Director access: available to a paid AgentMesh360 account using a universal
-  AgentMesh360 API key. It reuses the existing subscription and shared credits;
-  there is no separate LectureCast subscription. Choices and Brief creation are
+  AgentMesh360 API key. It reuses the active monthly pass and shared credits;
+  there is no separate LectureCast pass. Choices and Brief creation are
   free; 10 credits are deducted only after the user confirms ProductionManifest
   generation.
 - Availability: paid AgentMesh360 accounts with sufficient shared credits.

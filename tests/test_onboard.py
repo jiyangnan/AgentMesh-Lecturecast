@@ -17,9 +17,9 @@ def _access(*, usable: bool = True) -> CommercialAccess:
     return CommercialAccess(
         valid=True,
         usable=usable,
-        reason="ready" if usable else "paid_access_required",
-        tier="pro" if usable else "free",
-        subscription_status="active",
+        reason="ready" if usable else "monthly_pass_required",
+        legacy_tier="free",
+        pass_status="active" if usable else "inactive",
         credit=50,
         source="monthly_pass" if usable else "none",
         expires_at="2026-08-21T00:00:00Z",
@@ -86,7 +86,9 @@ def test_paid_account_and_renderer_make_workflow_ready(monkeypatch) -> None:
     assert result["ok"] is True
     assert result["workflow"]["ready"] is True
     assert result["workflow"]["blocked_by"] == []
-    assert result["account"]["tier"] == "pro"
+    assert result["account"]["legacy_tier"] == "free"
+    assert result["account"]["pass_status"] == "active"
+    assert result["cloud_access"]["source"] == "monthly_pass"
     assert result["cloud_access"]["required_credits"] == 10
     assert result["director"]["reachable"] is True
     assert result["next_suggested"].startswith("lecturecast project init")
@@ -114,7 +116,7 @@ def test_no_paid_access_never_falls_back_to_local_render(monkeypatch) -> None:
     result = onboard_module.onboarding_status()
 
     assert result["ok"] is False
-    assert result["workflow"]["blocked_by"] == ["paid_access_required"]
+    assert result["workflow"]["blocked_by"] == ["monthly_pass_required"]
     assert result["next_suggested"].endswith("#pricing")
     assert "project init" not in result["next_suggested"]
 

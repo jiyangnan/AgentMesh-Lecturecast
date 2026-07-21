@@ -16,6 +16,6 @@ All original media, voice, editing and rendering remain local.
 
 For each Director question, use Claude Code's `AskUserQuestion` choice UI when available. Preserve the server's label/description and map the response to the exact stable `option_id`; never infer it from display text. Submit one answer and refresh server state before asking the next question. If the choice UI is unavailable, use the shared numbered-text fallback.
 
-When continuing an existing Director project, first run `lecturecast director resume <project-path> --adapter claude-code --json`. This is an offline, zero-credit rebind; run it before any further Director operation.
+When continuing an existing Director project, first run `lecturecast director resume <project-path> --adapter claude-code --json`. This verifies commercial access with AgentMesh360 Core, sends no Director request, and deducts no credit; run it before any further Director operation.
 
 Never treat conversation history as project state. Resume from the supplied project path. Never create a second generation ID after a timeout. Never expose `LECTURECAST_API_KEY`.

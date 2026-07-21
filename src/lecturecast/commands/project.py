@@ -33,8 +33,12 @@ def init_project(
         fail(error, json_output=json_output)
 
 
-def _show_project(directory: Path, json_output: bool) -> None:
+def _show_project(
+    directory: Path, json_output: bool, *, require_access: bool = False
+) -> None:
     try:
+        if require_access:
+            require_commercial_access()
         state = ProjectStore(directory).load()
         emit(
             state.to_dict(),
@@ -63,11 +67,7 @@ def resume(
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Resume from disk; conversation history is not used as project state."""
-    try:
-        require_commercial_access()
-    except LectureCastError as error:
-        fail(error, json_output=json_output)
-    _show_project(directory, json_output)
+    _show_project(directory, json_output, require_access=True)
 
 
 @app.command("capabilities")

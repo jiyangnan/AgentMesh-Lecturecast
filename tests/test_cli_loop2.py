@@ -14,10 +14,17 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures"
 runner = CliRunner()
 
 
-def test_project_init_and_resume_are_machine_readable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr("lecturecast.commands.project.require_commercial_access", lambda: None)
+@pytest.fixture(autouse=True)
+def allow_commercial_commands(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "lecturecast.commands.project.require_commercial_access", lambda: None
+    )
+    monkeypatch.setattr(
+        "lecturecast.commands.manifest.require_commercial_access", lambda: None
+    )
+
+
+def test_project_init_and_resume_are_machine_readable(tmp_path: Path) -> None:
     created = runner.invoke(
         app,
         ["project", "init", str(tmp_path), "--name", "CLI handoff", "--json"],
@@ -36,8 +43,8 @@ def test_project_commands_fail_closed_without_commercial_access(
 ) -> None:
     def deny() -> None:
         raise LectureCastError(
-            code="paid_access_required",
-            message="需要有效的 AgentMesh360 付费权限。",
+            code="monthly_pass_required",
+            message="需要有效的 AgentMesh360 月度通行证。",
             next_action="运行 lecturecast onboard --json。",
         )
 
@@ -45,7 +52,7 @@ def test_project_commands_fail_closed_without_commercial_access(
     result = runner.invoke(app, ["project", command, str(tmp_path), "--json"])
 
     assert result.exit_code == 1
-    assert json.loads(result.stderr)["code"] == "paid_access_required"
+    assert json.loads(result.stderr)["code"] == "monthly_pass_required"
     assert not (tmp_path / ".lecturecast").exists()
 
 

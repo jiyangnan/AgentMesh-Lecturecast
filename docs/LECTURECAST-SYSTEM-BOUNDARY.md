@@ -24,7 +24,7 @@ Canonical decision: [lecturecast system boundary](https://github.com/jiyangnan/l
 ## Product boundary
 
 LectureCast has one commercial product path. The client must validate a universal
-AgentMesh360 API Key, active paid access and sufficient shared credits
+AgentMesh360 API Key, an active monthly pass and sufficient shared credits
 before production begins. Director returns choices, a Creative Brief and a
 signed declarative `ProductionManifest`; original media, voice, subtitles,
 editing, rendering, covers and exports stay on the user's machine. All commercial

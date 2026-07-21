@@ -125,8 +125,8 @@ def onboarding_status(project_root: Path | None = None) -> dict[str, Any]:
         },
         "account": (
             {
-                "tier": access.tier,
-                "subscription_status": access.subscription_status,
+                "legacy_tier": access.legacy_tier,
+                "pass_status": access.pass_status,
                 "expires_at": access.expires_at,
             }
             if access.valid

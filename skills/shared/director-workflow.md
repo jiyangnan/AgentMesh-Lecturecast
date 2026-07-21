@@ -5,9 +5,9 @@ source summary, stable option IDs, the Creative Brief, ClientCapabilities and th
 resulting declarative Manifest; raw media, voice, local paths and rendered files
 stay on the user's machine.
 
-LectureCast requires current AgentMesh360 paid access (the active monthly pass).
+LectureCast requires a current AgentMesh360 monthly pass.
 Use an AgentMesh360 universal API key; an older Job Agent-only key does not cover
-LectureCast. There is no separate LectureCast subscription.
+LectureCast. There is no separate LectureCast pass.
 
 ## Commercial gate
 
@@ -31,7 +31,7 @@ lecturecast director next <project-path> --json
 
 Read `.lecturecast/project.json` and `.lecturecast/director-state.json` through the CLI. Never write them by hand. Never put an API key in an argument, project file, prompt, log or stdout.
 
-On every existing Director project, run `director resume` with the current host before `next`, `answer`, `brief`, `generate`, or `status`. This local command makes no network request and deducts no credit. If the host changed, the CLI refreshes its saved ClientCapabilities before the paid generation request, so the server receives the current host identity instead of stale handoff state.
+On every existing Director project, run `director resume` with the current host before `next`, `answer`, `brief`, `generate`, or `status`. This command verifies commercial access with AgentMesh360 Core, makes no Director request, and deducts no credit. If the host changed, the CLI refreshes its saved ClientCapabilities before the paid generation request, so the server receives the current host identity instead of stale handoff state.
 
 ## Start
 

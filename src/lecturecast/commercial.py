@@ -117,8 +117,8 @@ class CommercialAccess:
     valid: bool
     usable: bool
     reason: str
-    tier: str | None
-    subscription_status: str | None
+    legacy_tier: str | None
+    pass_status: str | None
     credit: int | None
     source: str
     expires_at: str | None
@@ -176,12 +176,15 @@ class CommercialClient:
 
     def access(self) -> CommercialAccess:
         balance = self._get("/v1/credits/balance", {"product": "lecturecast"})
-        subscription = self._get("/v1/subscriptions/current")
         try:
             credit = int(balance["balance"])
-            tier = str(subscription.get("tier") or balance["tier"])
-            subscription_status = str(subscription.get("status") or "active")
-            balance_source = str(balance["source"])
+            legacy_tier = str(balance["tier"])
+            source = str(balance["source"])
+            expires_at = (
+                str(balance["expires_at"])
+                if balance.get("expires_at") is not None
+                else None
+            )
         except (KeyError, TypeError, ValueError):
             raise LectureCastError(
                 code="core_unavailable",
@@ -189,22 +192,27 @@ class CommercialClient:
                 next_action="稍后重新运行 lecturecast onboard --json。",
                 retryable=True,
             ) from None
-        # The current AgentMesh360 product is a fixed-term monthly pass. Core
-        # represents it as an active `paid_pass` entitlement and reports it from
-        # /credits/balance as source=monthly_pass; it intentionally does not
-        # mutate the legacy subscriptions table away from tier=free. Keep the
-        # tier check only for older recurring subscriptions.
-        paid_pass_active = balance_source == "monthly_pass"
-        legacy_subscription_active = (
-            tier.lower() not in {"", "free"} and subscription_status == "active"
+        if credit < 0 or source not in {"monthly_pass", "signup_trial", "none"}:
+            raise LectureCastError(
+                code="core_unavailable",
+                message="AgentMesh360 账户服务返回了无法识别的商业状态。",
+                next_action="稍后重新运行 lecturecast onboard --json。",
+                retryable=True,
+            )
+        paid = source == "monthly_pass"
+        pass_status = (
+            "active"
+            if paid
+            else "signup_trial"
+            if source == "signup_trial"
+            else "inactive"
         )
-        paid = paid_pass_active or legacy_subscription_active
         enough_credit = credit >= MANIFEST_CREDIT_COST
         usable = paid and enough_credit
         reason = (
             "ready"
             if usable
-            else "paid_access_required"
+            else "monthly_pass_required"
             if not paid
             else "insufficient_credits"
         )
@@ -212,19 +220,11 @@ class CommercialClient:
             valid=True,
             usable=usable,
             reason=reason,
-            tier=tier,
-            subscription_status=subscription_status,
+            legacy_tier=legacy_tier,
+            pass_status=pass_status,
             credit=credit,
-            source=(
-                "monthly_pass" if paid_pass_active else "subscription" if paid else balance_source
-            ),
-            expires_at=(
-                str(balance["expires_at"])
-                if balance.get("expires_at") is not None
-                else str(subscription["current_period_end"])
-                if subscription.get("current_period_end") is not None
-                else None
-            ),
+            source=source,
+            expires_at=expires_at,
             required_credits=MANIFEST_CREDIT_COST,
             paid_pass_required=not paid,
             account_url=ACCOUNT_URL,
@@ -240,8 +240,8 @@ def missing_commercial_access() -> CommercialAccess:
         valid=False,
         usable=False,
         reason="api_key_required",
-        tier=None,
-        subscription_status=None,
+        legacy_tier=None,
+        pass_status=None,
         credit=None,
         source="none",
         expires_at=None,
@@ -259,8 +259,8 @@ def require_commercial_access() -> CommercialAccess:
     access = CommercialClient(api_key=require_api_key()).access()
     if access.usable:
         return access
-    if access.reason == "paid_access_required":
-        message = "当前 AgentMesh360 账户没有有效的付费 LectureCast 权限。"
+    if access.reason == "monthly_pass_required":
+        message = "当前 AgentMesh360 账户没有有效的月度通行证。"
     else:
         message = "当前 AgentMesh360 账户不足 10 credits，无法继续 LectureCast。"
     raise LectureCastError(

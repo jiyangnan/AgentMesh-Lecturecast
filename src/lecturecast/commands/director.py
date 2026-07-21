@@ -171,8 +171,9 @@ def resume(
     adapter_version: str = typer.Option("1.0.0", "--adapter-version"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Rebind an existing Director project to the current agent without network use."""
+    """Rebind locally after verifying commercial access; no Director request is sent."""
     try:
+        require_commercial_access()
         project = ProjectStore(directory).load()
         adapter, adapter_version = _adapter(adapter, adapter_version)
         store = DirectorStateStore(directory)
@@ -190,6 +191,8 @@ def resume(
         payload["resume"] = {
             "adapter_changed": changed,
             "network_requested": False,
+            "director_network_requested": False,
+            "commercial_access_verified": True,
             "credit_deducted": False,
             "capabilities_policy": "refresh_before_generate_on_adapter_mismatch",
         }

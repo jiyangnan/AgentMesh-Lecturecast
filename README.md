@@ -34,7 +34,7 @@ finished mp4s and covers.
 
 The Director receives only a bounded source summary, stable choice IDs, the Brief
 and client capabilities. It uses the account's shared AgentMesh360 credits; there
-is no separate LectureCast subscription. Original media, voice, subtitles,
+is no separate LectureCast pass. Original media, voice, subtitles,
 editing, Remotion, ffmpeg and all outputs remain local.
 
 **Driving this from an AI agent?** Start with **[AGENTS.md](AGENTS.md)** and the

@@ -27,6 +27,16 @@ runner = CliRunner()
 NOW = "2026-07-15T12:00:00Z"
 
 
+@pytest.fixture(autouse=True)
+def allow_commercial_commands(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "lecturecast.commands.project.require_commercial_access", lambda: None
+    )
+    monkeypatch.setattr(
+        "lecturecast.commands.director.require_commercial_access", lambda: None
+    )
+
+
 def _fixture(name: str) -> dict[str, Any]:
     return json.loads((FIXTURE_DIR / name).read_text(encoding="utf-8"))
 
@@ -385,6 +395,8 @@ def test_same_project_rebinds_across_agents_and_refreshes_capabilities_before_cr
     assert claude_payload["resume"] == {
         "adapter_changed": True,
         "network_requested": False,
+        "director_network_requested": False,
+        "commercial_access_verified": True,
         "credit_deducted": False,
         "capabilities_policy": "refresh_before_generate_on_adapter_mismatch",
     }

@@ -16,6 +16,6 @@ All original media, voice, editing and rendering remain local.
 
 For each Director question, use the current OpenClaw channel's native choice/form capability when exposed. Keep the server label/description and exact stable `option_id`. Submit one answer and refresh server state before asking the next. When a channel has no reliable choice control, use the shared numbered-text fallback; do not invent channel-specific IDs.
 
-When continuing an existing Director project, first run `lecturecast director resume <project-path> --adapter openclaw --json`. This is an offline, zero-credit rebind; run it before any further Director operation.
+When continuing an existing Director project, first run `lecturecast director resume <project-path> --adapter openclaw --json`. This verifies commercial access with AgentMesh360 Core, sends no Director request, and deducts no credit; run it before any further Director operation.
 
 Never treat chat memory as project state. Resume from the supplied project path. Never create a second generation ID after a timeout. Never expose `LECTURECAST_API_KEY` in messages, tool arguments or memory.

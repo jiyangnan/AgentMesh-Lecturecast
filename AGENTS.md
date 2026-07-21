@@ -91,7 +91,7 @@ never create a second generation ID after a timeout.
 | Symptom | What to do |
 |---|---|
 | `api_key_required` | Open the AgentMesh360 account center, then run `lecturecast auth login`. |
-| `paid_access_required` / `insufficient_credits` | Follow `next_suggested` to pricing; never continue through a local-only fallback. |
+| `monthly_pass_required` / `insufficient_credits` | Follow `next_suggested` to pricing; never continue through a local-only fallback. |
 | MiniMax warned + fell back to Edge | No `MINIMAX_API_KEY` set. Want MiniMax? Ask your human for a key. Else ignore — Edge still ships. |
 | `bun` / `@rspack/binding` error | Use `npm install`, not bun. See LOCAL-WORKFLOW failure modes. |
 | ffmpeg `No option name near 'subtitle.ass'` | System ffmpeg lacks libass — use `ffmpeg-full` on macOS or a Windows build with libass, then rerun `lecturecast doctor`. |
