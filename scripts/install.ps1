@@ -122,9 +122,6 @@ if ($env:LECTURECAST_SKIP_PIP_UPGRADE -ne "1") {
     Assert-LastExit "pip upgrade"
 }
 $InstallSpec = $InstallDir
-if ($env:LECTURECAST_INSTALL_DIRECTOR -eq "1") {
-    $InstallSpec = "${InstallDir}[director]"
-}
 & $VenvPip install --quiet -e $InstallSpec
 if ($LASTEXITCODE -ne 0) {
     Write-Warn "package installation failed; retrying with full diagnostics"
@@ -170,12 +167,16 @@ if ($PathEntries -contains $ShimDir) {
 }
 
 Write-Host ""
-Write-Host "CLI installed. Next:" -ForegroundColor Cyan
-Write-Host "    lecturecast workflow"
-Write-Host "    lecturecast project resume <project-path> --json"
+Write-Host "Commercial onboarding gate:" -ForegroundColor Cyan
+& $LectureCastExe onboard --json
+Assert-LastExit "commercial onboarding"
 Write-Host ""
-Write-Host "Community remains fully local. Director is optional; media and rendering stay local."
-Write-Host "Director signature verification is optional; install it only when needed:"
-Write-Host "    `"$VenvPip`" install cryptography>=43"
+Write-Host "Follow the onboarding result:" -ForegroundColor Cyan
+Write-Host "    lecturecast onboard --json"
+Write-Host "    lecturecast auth login    # when onboarding asks for an API Key"
+Write-Host ""
+Write-Host "A paid AgentMesh360 account and at least 10 shared credits are required."
+Write-Host "Account center: https://agentmesh360.com/app/"
+Write-Host "Original media, voice, rendering and exports remain on this machine."
 Write-Host "If this agent session started before installation, open a new session and paste:"
-Write-Host "    Read the LectureCast Skill and continue from project path <project-path>."
+Write-Host "    Read the current LectureCast Skill, run lecturecast onboard --json, then continue."

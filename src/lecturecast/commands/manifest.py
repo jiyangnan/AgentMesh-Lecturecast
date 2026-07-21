@@ -6,6 +6,7 @@ from pathlib import Path
 import typer
 
 from ..capabilities import capture_capabilities
+from ..commercial import require_commercial_access
 from ..errors import LectureCastError
 from ..manifest import inspect_manifest, load_manifest, verify_manifest
 from ..preflight import run_preflight
@@ -55,6 +56,7 @@ def preflight(
 ) -> None:
     """Verify that this client can execute a signed Manifest without rendering."""
     try:
+        require_commercial_access()
         capabilities = (
             _load_capabilities(capabilities_path)
             if capabilities_path is not None

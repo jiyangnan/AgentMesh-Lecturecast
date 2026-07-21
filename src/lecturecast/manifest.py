@@ -141,11 +141,8 @@ def verify_manifest(
     except ImportError:
         raise LectureCastError(
             code="client_upgrade_required",
-            message="当前 Community 安装未包含 Director 的签名验证依赖。",
-            next_action=(
-                "如需使用 Director，请运行："
-                "~/.lecturecast/app/.venv/bin/pip install 'cryptography>=43'"
-            ),
+            message="当前安装缺少签名验证依赖。",
+            next_action="重新运行官方安装器；不要跳过签名验证。",
         ) from None
     document = (
         manifest if isinstance(manifest, ProductionManifest) else ProductionManifest.model_validate(manifest)

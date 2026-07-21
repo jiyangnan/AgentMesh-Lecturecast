@@ -15,6 +15,7 @@ from lecturecast.director import (
     DirectorStateStore,
     load_source_file,
     normalize_server_url,
+    probe_director,
 )
 from lecturecast.errors import LectureCastError
 from lecturecast.project import ProjectStore
@@ -24,6 +25,16 @@ from lecturecast.protocol import ClientCapabilities
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 runner = CliRunner()
 NOW = "2026-07-15T12:00:00Z"
+
+
+@pytest.fixture(autouse=True)
+def allow_commercial_commands(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "lecturecast.commands.project.require_commercial_access", lambda: None
+    )
+    monkeypatch.setattr(
+        "lecturecast.commands.director.require_commercial_access", lambda: None
+    )
 
 
 def _fixture(name: str) -> dict[str, Any]:
@@ -180,6 +191,13 @@ def _init_project(path: Path) -> Path:
         encoding="utf-8",
     )
     return source
+
+
+@pytest.fixture(autouse=True)
+def _allow_project_cli_after_test_onboarding(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "lecturecast.commands.project.require_commercial_access", lambda: None
+    )
 
 
 def _start(path: Path, source: Path, adapter: str = "codex") -> dict[str, Any]:
@@ -377,6 +395,8 @@ def test_same_project_rebinds_across_agents_and_refreshes_capabilities_before_cr
     assert claude_payload["resume"] == {
         "adapter_changed": True,
         "network_requested": False,
+        "director_network_requested": False,
+        "commercial_access_verified": True,
         "credit_deducted": False,
         "capabilities_policy": "refresh_before_generate_on_adapter_mismatch",
     }
@@ -535,6 +555,36 @@ class RecordingTransport:
     def request(self, **kwargs: Any) -> tuple[int, dict[str, Any]]:
         self.calls.append(kwargs)
         return self.status, self.document
+
+
+def test_director_health_probe_sends_no_credential_or_media() -> None:
+    transport = RecordingTransport({"status": "ok"})
+
+    result = probe_director(
+        "https://director.example.test",
+        transport=transport,
+    )
+
+    assert result == {
+        "reachable": True,
+        "url": "https://director.example.test/v1",
+        "status": "ok",
+    }
+    call = transport.calls[0]
+    assert call["method"] == "GET"
+    assert call["url"] == "https://director.example.test/v1/health"
+    assert "Authorization" not in call["headers"]
+    assert call["payload"] is None
+
+
+def test_director_health_probe_rejects_error_status() -> None:
+    transport = RecordingTransport({"status": "unavailable"}, status=503)
+
+    with pytest.raises(LectureCastError) as captured:
+        probe_director("https://director.example.test", transport=transport)
+
+    assert captured.value.code == "director_unavailable"
+    assert captured.value.retryable is True
 
 
 def test_director_client_normalizes_url_validates_protocol_and_keeps_key_in_header() -> None:

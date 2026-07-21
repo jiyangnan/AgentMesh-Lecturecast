@@ -11,7 +11,7 @@ from typing import Any, Mapping, Protocol
 from urllib.parse import urlparse
 
 from .auth import require_api_key
-from .config import DIRECTOR_URL_ENV
+from .config import DEFAULT_DIRECTOR_URL, DIRECTOR_URL_ENV
 from .errors import LectureCastError
 from .project import ProjectStore, atomic_write_json
 from .protocol import CreativeBrief, DecisionCardSet, ProductionManifest
@@ -75,13 +75,7 @@ def resolve_server_url(
     *,
     environment: Mapping[str, str] | None = None,
 ) -> str:
-    value = explicit or (environment or os.environ).get(DIRECTOR_URL_ENV)
-    if value is None or not value.strip():
-        raise LectureCastError(
-            code="core_unavailable",
-            message="尚未配置 Director Server URL。",
-            next_action=f"设置 {DIRECTOR_URL_ENV}，或在 start 时传入 --server。",
-        )
+    value = explicit or (environment or os.environ).get(DIRECTOR_URL_ENV) or DEFAULT_DIRECTOR_URL
     return normalize_server_url(value)
 
 
@@ -164,6 +158,36 @@ class UrlLibDirectorTransport:
                 retryable=status >= 500,
             )
         return status, document
+
+
+def probe_director(
+    server_url: str | None = None,
+    *,
+    environment: Mapping[str, str] | None = None,
+    transport: DirectorTransport | None = None,
+    timeout: float = 5.0,
+) -> dict[str, Any]:
+    """Verify that the production Director API is reachable without sending media."""
+    resolved_url = resolve_server_url(server_url, environment=environment)
+    status, document = (transport or UrlLibDirectorTransport()).request(
+        method="GET",
+        url=f"{resolved_url}/health",
+        headers={"Accept": "application/json"},
+        payload=None,
+        timeout=timeout,
+    )
+    if status >= 400:
+        raise LectureCastError(
+            code="director_unavailable",
+            message="LectureCast Director 服务当前不可用。",
+            next_action="保留本地项目，稍后重新运行 lecturecast onboard --json。",
+            retryable=status >= 500,
+        )
+    return {
+        "reachable": True,
+        "url": resolved_url,
+        "status": document.get("status") or "ok",
+    }
 
 
 class DirectorClient:

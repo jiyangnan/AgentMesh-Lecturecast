@@ -23,7 +23,7 @@ def _manifest() -> dict[str, object]:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
-def test_community_import_defers_optional_director_crypto(
+def test_manifest_import_reports_missing_signature_dependency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original_import = builtins.__import__
@@ -39,7 +39,7 @@ def test_community_import_defers_optional_director_crypto(
         verify_manifest(_manifest())
 
     assert captured.value.code == "client_upgrade_required"
-    assert "cryptography" in captured.value.next_action
+    assert "官方安装器" in captured.value.next_action
 
 
 def test_fixture_manifest_has_valid_default_signature() -> None:

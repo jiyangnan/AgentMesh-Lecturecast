@@ -1,10 +1,21 @@
 # LectureCast Director shared workflow
 
-Director is optional. Community remains fully local and needs no account or LectureCast API key. Director sends only a bounded source summary, stable option IDs, the Creative Brief, ClientCapabilities and the resulting declarative Manifest; raw media, voice, local paths and rendered files stay on the user's machine.
+Director is the required LectureCast creative workflow. It sends only a bounded
+source summary, stable option IDs, the Creative Brief, ClientCapabilities and the
+resulting declarative Manifest; raw media, voice, local paths and rendered files
+stay on the user's machine.
 
-Director is available to accounts with a current AgentMesh360 paid subscription.
+LectureCast requires a current AgentMesh360 monthly pass.
 Use an AgentMesh360 universal API key; an older Job Agent-only key does not cover
-LectureCast. There is no separate LectureCast subscription.
+LectureCast. There is no separate LectureCast pass.
+
+## Commercial gate
+
+Run `lecturecast onboard --json` before every new or resumed task. Continue only
+when `workflow.ready` is true. When `requires_user_action` is true, show the exact
+`user_prompt`, follow `next_suggested`, and wait for the human before continuing.
+Never offer an account-free route or silently continue when commercial access is
+missing.
 
 ## State rule
 
@@ -20,13 +31,14 @@ lecturecast director next <project-path> --json
 
 Read `.lecturecast/project.json` and `.lecturecast/director-state.json` through the CLI. Never write them by hand. Never put an API key in an argument, project file, prompt, log or stdout.
 
-On every existing Director project, run `director resume` with the current host before `next`, `answer`, `brief`, `generate`, or `status`. This local command makes no network request and deducts no credit. If the host changed, the CLI refreshes its saved ClientCapabilities before the paid generation request, so the server receives the current host identity instead of stale handoff state.
+On every existing Director project, run `director resume` with the current host before `next`, `answer`, `brief`, `generate`, or `status`. This command verifies commercial access with AgentMesh360 Core, makes no Director request, and deducts no credit. If the host changed, the CLI refreshes its saved ClientCapabilities before the paid generation request, so the server receives the current host identity instead of stale handoff state.
 
 ## Start
 
-1. Create or resume a local project.
-2. Write a bounded UTF-8 source-summary JSON containing exactly `source_type`, `title`, `summary`, and `language`. The user-confirmed summary must contain at least 20 characters of concrete facts or explicitly state the intended general framework. Do not include media, transcripts, local paths or credentials.
-3. Run:
+1. Confirm `lecturecast onboard --json` reports `workflow.ready: true`.
+2. Create or resume a local project.
+3. Write a bounded UTF-8 source-summary JSON containing exactly `source_type`, `title`, `summary`, and `language`. The user-confirmed summary must contain at least 20 characters of concrete facts or explicitly state the intended general framework. Do not include media, transcripts, local paths or credentials.
+4. Run:
 
 ```bash
 lecturecast director start <project-path> \
@@ -35,7 +47,15 @@ lecturecast director start <project-path> \
   --json
 ```
 
-`LECTURECAST_DIRECTOR_URL` supplies the server. A one-time `--server` is also accepted and then persisted without credentials. If this agent task started before installation, run `lecturecast director handoff <project-path> --json`. The payload keeps the generic `resume_argv` and also returns `director_resume_argv_by_adapter`; the new task must run the exact entry for its current host before continuing Director work. When the host exposes a task-creation tool, use the returned `prompt` to create the new task; otherwise give the user that exact prompt as the one short copyable fallback. Do not claim a new task was created unless the host confirms it.
+The production Director URL is built in. `LECTURECAST_DIRECTOR_URL` or a one-time
+`--server` is only for controlled staging/development and is persisted without
+credentials. If this agent task started before installation, run `lecturecast
+director handoff <project-path> --json`. The payload keeps the generic
+`resume_argv` and also returns `director_resume_argv_by_adapter`; the new task
+must run the exact entry for its current host before continuing Director work.
+When the host exposes a task-creation tool, use the returned `prompt` to create
+the new task; otherwise give the user that exact prompt as the one short copyable
+fallback. Do not claim a new task was created unless the host confirms it.
 
 ## Decision cards
 
