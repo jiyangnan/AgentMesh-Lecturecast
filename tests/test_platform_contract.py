@@ -110,5 +110,5 @@ def test_windows_canary_reads_the_package_version_instead_of_pinning_a_release()
         encoding="utf-8"
     )
 
-    assert 'tomllib.loads(pathlib.Path("pyproject.toml")' in workflow
+    assert "Select-String -Path pyproject.toml" in workflow
     assert '"lecturecast $expected"' in workflow
