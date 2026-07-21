@@ -75,6 +75,8 @@ def test_platform_specific_installers_fail_closed() -> None:
 
     assert '"$(uname -s)" != "Darwin"' in macos_installer
     assert "Linux and WSL are not supported" in macos_installer
+    assert "unsupported mixed macOS architecture" in macos_installer
+    assert 'PY_ARCH" != "$HOST_ARCH' in macos_installer
     assert "Win32NT" in windows_installer
     assert "Linux and WSL are not supported" in windows_installer
 
@@ -82,7 +84,7 @@ def test_platform_specific_installers_fail_closed() -> None:
 def test_windows_native_entrypoints_cover_install_and_both_render_routes() -> None:
     required = {
         "scripts/install.ps1": ("lecturecast.exe", "doctor --json", "manage_adapters.ps1"),
-        "scripts/manage_adapters.ps1": ("Junction", "custom lecturecast skill"),
+        "scripts/manage_adapters.ps1": ("Junction", "adapter conflict"),
         "scripts/uninstall.ps1": ("manage_adapters.ps1", "lecturecast.cmd"),
         "templates/shared/build_video.ps1": (
             "VideoVertical",

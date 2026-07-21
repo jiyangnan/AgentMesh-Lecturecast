@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Lecturecast — 一つのアイデアから、講座動画を一本 · オープンソースのローカルツール</title>
-<meta name="description" content="Lecturecast Community はオープンソースで完全ローカルの動画ワークフロー。任意の Director は構造化されたクラウド創作判断と署名付き ProductionManifest を提供し、素材・編集・レンダリングはローカルに残します。" />
+<title>Lecturecast — 一つのアイデアから、講座動画を一本 · AgentMesh360 商用製品</title>
+<meta name="description" content="Lecturecast は AgentMesh360 の商用講座動画製品です。有料アカウントを紐付け、クラウド Director が署名付き ProductionManifest を生成し、元素材・編集・レンダリングはローカルに残します。" />
 <meta property="og:title" content="Lecturecast — 一つのアイデアから、講座動画を一本" />
 <meta property="og:description" content="オープンソースのローカルツール：AI 脚本 + 配音 + 2 プラットフォーム同時出力（B 站 16:9 / 小红书 9:16）、すべてあなたのマシン上で。テーマ 1 つ、成片 2 本。" />
 <meta property="og:type" content="website" />
@@ -44,11 +44,11 @@
       "codeRepository": "https://github.com/jiyangnan/AgentMesh-Lecturecast",
       "license": "https://www.apache.org/licenses/LICENSE-2.0",
       "applicationCategory": "MultimediaApplication",
-      "applicationSubCategory": "local AI video generation workflow",
+      "applicationSubCategory": "commercial agentic video production",
       "operatingSystem": "macOS, Windows",
-      "isAccessibleForFree": true,
+      "isAccessibleForFree": false,
       "provider": { "@id": "https://agentmesh360.com/#organization" },
-      "description": "Lecturecast Community はオープンソースのローカル講座動画ワークフロー。任意の Director は構造化された創作選択と署名付き ProductionManifest を提供し、メディア制作とレンダリングはユーザーのマシン上に残ります。",
+      "description": "Lecturecast は AgentMesh360 の商用講座動画製品。クラウド Director が構造化された創作選択と署名付き ProductionManifest を提供し、メディア制作とレンダリングはユーザーのマシン上に残ります。",
       "featureList": [
         "ローカル AI 講座脚本生成",
         "ローカル配音とタイムライン整合",
@@ -56,14 +56,13 @@
         "小红书 9:16 縦版動画",
         "中国語字幕焼き付け",
         "カバー生成",
-        "任意の Director による構造化された創作選択",
+        "クラウド Director による構造化された創作選択",
         "署名付き宣言型 ProductionManifest",
         "Apache 2.0 オープンソース"
       ],
       "offers": {
         "@type": "Offer",
-        "price": "0",
-        "priceCurrency": "JPY",
+        "url": "https://agentmesh360.com/app/#pricing",
         "availability": "https://schema.org/InStock"
       }
     },
@@ -75,12 +74,12 @@
         {
           "@type": "Question",
           "name": "Lecturecast にアカウントや API キーは必要ですか？",
-          "acceptedAnswer": { "@type": "Answer", "text": "Community は無料で、アカウントも LectureCast API キーも不要です。任意の Director は有効な AgentMesh360 有料サブスクリプションと共通 API キーを持つアカウントが利用でき、ProductionManifest の生成確認時のみ 10 credits を消費します。" }
+          "acceptedAnswer": { "@type": "Answer", "text": "必要です。Lecturecast には有効な AgentMesh360 有料アカウントと共通 API キーが必要で、ProductionManifest の生成確認時に 10 credits を消費します。" }
         },
         {
           "@type": "Question",
           "name": "Lecturecast の処理過程でクラウドにアップロードされますか？",
-          "acceptedAnswer": { "@type": "Answer", "text": "Community は LectureCast サービスへ何も送信しません。Director では限定された素材要約、安定した選択肢、Brief、クライアント能力だけがクラウドへ送られ、元のメディア・配音・編集・レンダリング・出力はローカルに残ります。" }
+          "acceptedAnswer": { "@type": "Answer", "text": "限定された素材要約、安定した選択肢、Brief、クライアント能力だけがクラウド Director へ送られ、元のメディア・配音・編集・レンダリング・出力はローカルに残ります。" }
         },
         {
           "@type": "Question",
@@ -135,6 +134,7 @@
   @media(max-width:880px){.nav-links a.nav-section{display:none}}
   @media(max-width:720px){.nav-links a:not(.nav-cta):not(.lang){display:none} .lang-switch{gap:7px} .brand small{display:none}}
   @media(max-width:480px){.nav-inner{gap:12px;padding:14px 16px} .brand{font-size:15px;gap:7px} .brand-mark{width:20px;height:20px} .lang-switch{gap:5px;font-size:11px} .nav-cta{padding:8px 12px;font-size:13px}}
+  @media(max-width:520px){.nav-cta{display:none} h1.display{font-size:34px;overflow-wrap:anywhere}.route{min-width:0}.route-top{align-items:flex-start;flex-direction:column}.route-status{white-space:normal}}
 
   .hero{padding:clamp(64px,11vw,140px) 0 clamp(48px,8vw,96px)}
   .eyebrow{display:inline-flex;align-items:center;gap:10px;font-size:12.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);font-weight:500}
@@ -267,10 +267,10 @@
 
 <section class="hero">
   <div class="wrap">
-    <div class="eyebrow"><span class="dot"></span> COMMUNITY LOCAL · DIRECTOR OPTIONAL</div>
+    <div class="eyebrow"><span class="dot"></span> COMMERCIAL ACCESS · LOCAL PRODUCTION</div>
     <h1 class="display">一つのアイデアから、<em>講座動画を一本</em>。</h1>
     <p class="lede">
-      Lecturecast Community は<strong>完全ローカル・オープンソース</strong>の動画制作ワークフローです。テーマを AI エージェントに渡せば、あなたのマシンで脚本、配音、レンダリングを行い、<strong>B 站横版と小红书縦版を同時出力</strong>します。より明確な創作方針が必要な場合、任意の Director が構造化された選択を署名付き制作計画へ変換し、元の素材とメディア工程は引き続きローカルに残ります。
+      Lecturecast は<strong>AgentMesh360 の商用講座動画製品</strong>です。AI エージェントが有料アクセスを紐付け、クラウド Director が構造化された選択を署名付き制作計画へ変換し、あなたのマシンで配音・編集・レンダリングを行って<strong>B 站横版と小红书縦版を同時出力</strong>します。元素材とメディア工程はローカルに残ります。
       <span style="display:block;margin-top:8px;font-size:0.9em;color:var(--muted);">（B 站と小红书は中国の主要動画プラットフォーム——それぞれ横向き／縦向き）。利用しない場合でも、両フォーマットが揃って出力されます。）</span>
     </p>
     <div class="hero-ctas">
@@ -278,16 +278,11 @@
       <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md" class="btn btn-ghost">ローカルワークフローを見る</a>
     </div>
 
-    <div class="routes" id="routes" data-product-contract="community-director-v1" aria-label="Lecturecast の 2 つの利用経路">
-      <article class="route route-community" data-route="community" data-access="available" data-media="local">
-        <div class="route-top"><span class="route-label">Community</span><span class="route-status">現在利用可能</span></div>
-        <h3>完全ローカル。永久無料。</h3>
-        <p>アカウントも LectureCast API キーも不要。エージェントが脚本、配音、字幕、モーション、2 形式のレンダリング、カバーをあなたのマシン上で処理し、元の内容を LectureCast へ送りません。</p>
-      </article>
+    <div class="routes" id="routes" data-product-contract="commercial-only-v1" aria-label="Lecturecast の商用アクセス">
       <article class="route route-director" data-route="director" data-access="paid" data-media="local">
-        <div class="route-top"><span class="route-label">Director</span><span class="route-status">有料アカウント向け</span></div>
+        <div class="route-top"><span class="route-label">Lecturecast Director</span><span class="route-status">AgentMesh360 有料アカウント</span></div>
         <h3>クラウドで演出、ローカルで制作。</h3>
-        <p>エージェント固有の選択 UI で対象者、物語、ビジュアル、納品方針を決定。クラウドは署名付き ProductionManifest を返し、生成確認後のみ 10 credits を消費。素材、配音、編集、レンダリングはローカルです。</p>
+        <p>エージェントが共通 API キー、有料サブスクリプション、共有 credits を検証してから選択 UI を表示します。クラウドは署名付き ProductionManifest を返し、生成確認後のみ 10 credits を消費。素材、配音、編集、レンダリングはローカルです。</p>
       </article>
     </div>
 
@@ -298,10 +293,10 @@
       </div>
 <pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
 <span class="c-prompt">PS&gt;</span> <span class="c-cmd">irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex</span>
-<span class="c-prompt">$</span> <span class="c-cmd">lecturecast workflow</span>      <span class="c-dim"># ローカルワークフローの場所を出力し、AI エージェントに渡します</span>
+<span class="c-prompt">$</span> <span class="c-cmd">lecturecast auth login</span>   <span class="c-dim"># AgentMesh360 共通 API キーを検証・紐付け</span>
+<span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --json</span> <span class="c-dim"># 有料アカウント、credits、レンダラーの準備状況</span>
 
-<span class="c-dim"># エージェントは AGENTS.md / docs/LOCAL-WORKFLOW.md に従い、ローカルでエンドツーエンド実行：</span>
-<span class="c-dim"># 脚本 → 配音（edge-tts / MiniMax）→ Remotion レンダリング → ffmpeg 字幕焼き付け → 2 プラットフォーム成片</span></pre>
+<span class="c-dim"># 商用 onboarding → Director → 10 credits 承認 → ローカルで 2 形式を制作</span></pre>
     </div>
   </div>
 </section>
@@ -433,11 +428,11 @@
     <div class="faq-list">
       <details class="faq-item">
         <summary>有料ですか？アカウント登録は必要？</summary>
-        <div class="faq-answer"><strong>Community</strong> は永久無料で、アカウントも LectureCast API キーも不要です。任意の <strong>Director</strong> は有効な AgentMesh360 有料サブスクリプションと共通 API キーを持つアカウントが利用できます。既存の共通 credits を使い、LectureCast 専用契約は不要です。選択と Brief 作成は無料で、ProductionManifest の生成を確認した場合のみ 10 credits を消費します。</div>
+        <div class="faq-answer">Lecturecast には有効な <strong>AgentMesh360 有料アカウント</strong>と共通 API キーが必要です。既存の共有 credits を使い、LectureCast 専用契約は不要です。選択と Brief 作成では credits を消費せず、ProductionManifest の生成確認時のみ 10 credits を消費します。</div>
       </details>
       <details class="faq-item">
         <summary>動画はクラウドにアップロードされますか？</summary>
-        <div class="faq-answer">されません。Community は LectureCast サービスへ何も送りません。Director では限定された素材要約、安定した選択肢 ID、Brief、クライアント能力だけがクラウドへ送られます。元のメディア、配音、字幕、編集、レンダリング、完成品は常にローカルです。</div>
+        <div class="faq-answer">元のメディアはアップロードされません。限定された素材要約、安定した選択肢 ID、Brief、クライアント能力だけがクラウド Director へ送られます。元のメディア、配音、字幕、編集、レンダリング、完成品は常にローカルです。</div>
       </details>
       <details class="faq-item">
         <summary>配音は何を使いますか？もっと良い声に変えられますか？</summary>

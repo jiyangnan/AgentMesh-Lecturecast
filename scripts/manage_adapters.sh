@@ -11,6 +11,10 @@ fi
 
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 warn() { printf '  \033[33m⚠\033[0m %s\n' "$*"; }
+err()  { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; }
+
+CONFLICTS=0
+REGISTERED=0
 
 manage_one() {
   agent="$1"
@@ -18,16 +22,15 @@ manage_one() {
   source="$3"
   target="$base/lecturecast"
 
-  # An absent host directory means that agent is not installed/configured.
-  # Do not create it merely because LectureCast is being installed.
   if [ ! -d "$base" ]; then
     host_root="${base%/skills}"
-    if [ -d "$host_root" ]; then
-      warn "$agent adapter skipped: $base is missing; create it and rerun this installer"
+    if [ "$ACTION" = "install" ] && [ -d "$host_root" ]; then
+      mkdir -p "$base"
+      ok "$agent skills directory created"
     else
       warn "$agent adapter skipped: host not detected"
+      return 0
     fi
-    return 0
   fi
 
   if [ "$ACTION" = "install" ]; then
@@ -35,17 +38,23 @@ manage_one() {
       current="$(readlink "$target")"
       if [ "$current" = "$source" ]; then
         ok "$agent adapter already registered"
+        REGISTERED=$((REGISTERED + 1))
       else
-        warn "$agent already has a custom lecturecast symlink; left unchanged"
+        err "$agent adapter conflict: $target points to $current"
+        err "rename that path, then rerun: bash \"$INSTALL_DIR/scripts/manage_adapters.sh\" install"
+        CONFLICTS=$((CONFLICTS + 1))
       fi
       return 0
     fi
     if [ -e "$target" ]; then
-      warn "$agent already has a custom lecturecast skill; left unchanged"
+      err "$agent adapter conflict: $target is not installer-owned"
+      err "rename that path, then rerun: bash \"$INSTALL_DIR/scripts/manage_adapters.sh\" install"
+      CONFLICTS=$((CONFLICTS + 1))
       return 0
     fi
     ln -s "$source" "$target"
     ok "$agent adapter registered"
+    REGISTERED=$((REGISTERED + 1))
     return 0
   fi
 
@@ -65,7 +74,16 @@ if [ -d "$HOME/.openclaw/skills" ]; then
 elif [ -d "$HOME/.openclaw/workspace/skills" ]; then
   manage_one "OpenClaw" "$HOME/.openclaw/workspace/skills" "$INSTALL_DIR/skills/openclaw"
 elif [ -d "$HOME/.openclaw" ]; then
-  warn "OpenClaw adapter skipped: no skills directory detected; create one and rerun this installer"
+  manage_one "OpenClaw" "$HOME/.openclaw/skills" "$INSTALL_DIR/skills/openclaw"
 else
   warn "OpenClaw adapter skipped: host not detected"
+fi
+
+if [ "$ACTION" = "install" ] && [ "$CONFLICTS" -gt 0 ]; then
+  err "adapter registration blocked by $CONFLICTS conflict(s); LectureCast onboarding is not safe until resolved"
+  exit 3
+fi
+
+if [ "$ACTION" = "install" ] && [ "$REGISTERED" -eq 0 ]; then
+  warn "no supported agent host detected; install/register the agent Skill before using LectureCast"
 fi

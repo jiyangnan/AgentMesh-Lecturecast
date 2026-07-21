@@ -1,7 +1,7 @@
 # Lecturecast
 
-Lecturecast combines an open-source local course-video workflow with an optional
-cloud Director for structured creative decisions.
+Lecturecast is a commercial AgentMesh360 course-video product with a cloud
+Director for structured creative decisions and local media production.
 
 ## Canonical URL
 
@@ -18,9 +18,9 @@ Non-Chinese pages are machine-assisted translations; the Chinese page is authori
 
 ## Product Summary
 
-- Community: Apache 2.0, fully local, free, and available without an account or
-  LectureCast API key.
-- Director: optional paid access for native agent choice cards, a Creative
+- Commercial access: a current paid AgentMesh360 account, universal API key, and
+  sufficient shared credits are required before production begins.
+- Director: required cloud access for native agent choice cards, a Creative
   Brief, and a signed declarative ProductionManifest.
 - Input: a topic or idea for a course video.
 - Output: Bilibili landscape video and Xiaohongshu portrait video.
@@ -29,18 +29,17 @@ Non-Chinese pages are machine-assisted translations; the Chinese page is authori
   ffmpeg, covers, and rendered outputs stay on the user's machine.
 - Director data boundary: only a bounded source summary, stable choice IDs, the
   Brief, and client capabilities are sent to the cloud.
-- Director access: available to paid AgentMesh360 accounts using a universal
+- Director access: available to a paid AgentMesh360 account using a universal
   AgentMesh360 API key. It reuses the existing subscription and shared credits;
   there is no separate LectureCast subscription. Choices and Brief creation are
   free; 10 credits are deducted only after the user confirms ProductionManifest
   generation.
-- Availability: Community is available now. Director is available to paid
-  AgentMesh360 accounts.
+- Availability: paid AgentMesh360 accounts with sufficient shared credits.
 - License: Apache 2.0.
 - Source code: https://github.com/jiyangnan/AgentMesh-Lecturecast
 
 ## Best Short Description
 
-Lecturecast Community is an Apache 2.0 local video workflow; optional Director
-adds structured cloud creative decisions and a signed ProductionManifest while
-all media production and rendering stay on the user's machine.
+Lecturecast is an AgentMesh360 commercial course-video product: the required
+Director adds structured cloud creative decisions and a signed ProductionManifest
+while all media production and rendering stay on the user's machine.

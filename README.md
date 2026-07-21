@@ -9,7 +9,7 @@ English · [中文](README.zh.md)
 [![Brand](https://img.shields.io/badge/brand-AgentMesh-6E4AFF.svg)](https://agentmesh360.com)
 [![Website](https://img.shields.io/badge/website-lecturecast.agentmesh360.com-CC785C.svg)](https://lecturecast.agentmesh360.com)
 
-> An **open-source, fully local** video-production workflow for AI agents. One topic → a finished 5-minute course video for both **Bilibili** (16:9) and **Xiaohongshu** (9:16) — everything renders on **your** machine. Built to be driven by your AI agent (Claude Code, OpenClaw, Cursor, Codex) from chat.
+> A commercial AgentMesh360 course-video product for AI agents. The cloud Director creates a signed production plan; original media, voice, editing, rendering and exports remain on **your** machine. One topic → finished 16:9 and 9:16 course videos.
 
 Website: **[lecturecast.agentmesh360.com](https://lecturecast.agentmesh360.com)** · AgentMesh360 main site: **[agentmesh360.com](https://agentmesh360.com)**
 
@@ -17,21 +17,29 @@ Website: **[lecturecast.agentmesh360.com](https://lecturecast.agentmesh360.com)*
 
 <sub>↑ Same script, two visual systems. Left: Bilibili 1920×1080. Right: Xiaohongshu 1080×1920. Played at 12× speed — actual length ~5:21.</sub>
 
-**Community stays fully local.** It needs no account or LectureCast API key. Your agent can run the whole pipeline on your machine using the bundled `templates/`:
+Lecturecast requires a paid AgentMesh360 account, a universal API Key, and at
+least 10 shared credits for each confirmed ProductionManifest. The public client
+validates that commercial access before a user Agent may start production.
+
+After the cloud Director returns a signed plan, the bundled production stack runs
+on your machine:
 
 - **Remotion** (Node) renders the animated scenes for both aspect ratios.
 - **edge-tts** (Python) does the voiceover — free by default, no setup.
 - **ffmpeg** burns subtitles and stitches audio + video.
 
-**Core loop**: topic → 7-section draft script → your approval → voiceover + scenes + rendering → finished mp4s + covers, all on your machine.
+**Core loop**: commercial onboarding → Director choices → Brief approval → explicit
+10-credit approval → signed ProductionManifest → local voice/scenes/rendering →
+finished mp4s and covers.
 
-**Director is optional.** It adds structured creative choices and a paid, signed declarative ProductionManifest. It receives only a bounded source summary, your stable choice IDs, the Brief and client capabilities. Original media, voice, subtitles, editing, Remotion, ffmpeg and all outputs remain local.
+The Director receives only a bounded source summary, stable choice IDs, the Brief
+and client capabilities. It uses the account's shared AgentMesh360 credits; there
+is no separate LectureCast subscription. Original media, voice, subtitles,
+editing, Remotion, ffmpeg and all outputs remain local.
 
-Director is available to existing AgentMesh360 paid accounts with a universal
-AgentMesh360 API key. It uses the same shared credits; there is no separate
-LectureCast subscription.
-
-**Driving this from an AI agent?** Start with **[AGENTS.md](AGENTS.md)** and **[docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)** — the complete, end-to-end how-to for producing a video locally.
+**Driving this from an AI agent?** Start with **[AGENTS.md](AGENTS.md)** and the
+**[Director workflow](skills/shared/director-workflow.md)**. The local production
+runbook is used only after commercial onboarding succeeds.
 
 ---
 
@@ -76,24 +84,24 @@ python -m venv .venv
 pip install -e .
 ```
 
-You'll also need **Node 20+**, **Python 3.11+**, and **ffmpeg with libass** for the local render — see [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md) for the one-line installs.
-The base install is the fully local Community path and does not compile the
-optional Director signature verifier. Before using Director from a manual
-checkout, run `pip install -e '.[director]'`; installer users can run
-`~/.lecturecast/app/.venv/bin/pip install 'cryptography>=43'`.
+The install includes secure credential storage and signed-Manifest verification.
+You'll also need **Node 20+**, **Python 3.11+**, and **ffmpeg with libass** for the
+local render; `lecturecast onboard --json` reports both commercial and renderer
+readiness.
 
 ---
 
 ## Use
 
-Lecturecast is **agent-driven**. The `lecturecast` CLI itself is just a thin local helper:
+Lecturecast is **agent-driven**. Bind and verify commercial access first:
 
 ```bash
-lecturecast workflow   # shows where the local workflow lives
+lecturecast auth login      # validates and stores a universal AgentMesh360 API Key
+lecturecast onboard --json  # account, credits, renderer, blockers, next action
 lecturecast version    # installed version
 ```
 
-Optional Director commands use the same local project across Codex, Claude Code and OpenClaw:
+When `workflow.ready` is true, Director commands use the same local project across Codex, Claude Code and OpenClaw:
 
 ```bash
 lecturecast project init ./my-video --name "My video" --json
@@ -102,7 +110,11 @@ lecturecast director resume ./my-video --adapter openclaw --json  # after a host
 lecturecast director next ./my-video --json
 ```
 
-Set the credential with the hidden `lecturecast auth login` prompt (or `LECTURECAST_API_KEY`) and set `LECTURECAST_DIRECTOR_URL`. The API key is never written to the project. `director resume` is local and deducts no credit; it ensures the paid request uses the current host's capabilities. One confirmed ProductionManifest generation deducts 10 credits. Run `director generate` only after approving the Brief and that deduction.
+The API key is never written to the project. The production Director URL is built
+in; `LECTURECAST_DIRECTOR_URL` is a staging/development override. `director
+resume` is local and deducts no credit. One confirmed ProductionManifest
+generation deducts 10 credits; run `director generate` only after approving the
+Brief and that deduction.
 
 The real work happens when your AI agent follows the local workflow. In your agent chat:
 
@@ -112,6 +124,8 @@ The agent reads [AGENTS.md](AGENTS.md) / [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WOR
 
 ```
 topic
+  ▼ commercial onboarding (paid account + ≥10 credits)
+  ▼ Director choices + signed ProductionManifest
   ▼ scope (platforms / depth / series brand / voice)
   ▼ 7-section draft script         (your approval gate)
   ▼ voiceover   python3 build_audio_mm.py   (Edge free, MiniMax optional)
@@ -139,7 +153,10 @@ install, the full local workflow, BYOK, and troubleshooting.
 
 ## Use it from your AI agent
 
-The installer registers a host-specific Skill only when that agent's Skill directory already exists. It never overwrites a custom `lecturecast` Skill. Manual links are:
+The installer registers the current commercial Skill for detected agent hosts.
+It never overwrites a custom `lecturecast` Skill: a conflict blocks onboarding
+and prints a migration action instead of silently leaving a stale workflow.
+Manual links are:
 
 ```bash
 ln -s "$(pwd)/skills/claude-code" ~/.claude/skills/lecturecast
@@ -151,24 +168,18 @@ Then in your agent chat:
 
 > 做一条关于 RAG 工作原理的 5 分钟课程视频
 
-The agent reads the runbook and drives the local pipeline to completion.
+The agent runs `lecturecast onboard --json`, completes account binding when
+needed, and only then drives the Director and local production pipeline.
 
 ---
 
 ## Privacy
 
-- **Community sends nothing to a LectureCast service.** Audio, rendered mp4s, covers and original media remain local.
-- If you opt into Director, only the bounded summary, stable choices, Brief and capability metadata go to the Director service. Original media, TTS files, local paths and rendered outputs are not uploaded.
+- Only the bounded summary, stable choices, Brief and capability metadata go to the Director service. Original media, TTS files, local paths and rendered outputs are not uploaded.
 - If you opt into the MiniMax voice (BYOK), your topic + script text are sent to your own MiniMax account over HTTPS for synthesis. The default Edge voice runs without any third-party account.
 - No tracking, no telemetry. An invited limited-cohort participant may
   [explicitly create a local outcome receipt](docs/LOCAL-OUTCOME-EVIDENCE.md)
   and manually export a bounded anonymous report; the CLI never uploads it.
-
----
-
-## Field validation
-
-- [First-time Community customer journey validation — 2026-07-19](docs/FIRST-TIME-CUSTOMER-VALIDATION-2026-07-19.md) (Chinese)
 
 ---
 

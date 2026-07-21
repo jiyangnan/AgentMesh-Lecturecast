@@ -1,11 +1,11 @@
 # Local workflow — render the whole video on your own machine
 
-Lecturecast is **fully local and open source** — there is no cloud service, no
-account, and no API key. An AI agent (you) drives the whole pipeline on this
-machine using the bundled `templates/`. There is intentionally **no "do-it-all"
-script** — didactic visuals need per-topic design, and that's your job as the
-director. You get the pipeline, the Remotion project, and working Hook/End scenes
-to copy.
+This is the local production stage of the paid Lecturecast workflow. Before
+using it, `lecturecast onboard --json` must report `workflow.ready: true`, the
+cloud Director must return a verified signed ProductionManifest, and the human
+must have explicitly approved the 10-credit generation step. An AI agent then
+executes that Manifest on this machine using the bundled `templates/`. Original
+media, voice, editing, rendering and exports remain local.
 
 Supported native hosts are **macOS and Windows**. Linux distributions and WSL
 are not supported. See [SUPPORTED-PLATFORMS.md](SUPPORTED-PLATFORMS.md).

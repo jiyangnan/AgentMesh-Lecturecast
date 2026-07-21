@@ -1,14 +1,18 @@
 ---
 name: lecturecast
-description: Create or resume LectureCast videos with optional cloud Director decisions and fully local media production. Use for course videos, tutorials, explainers, product recordings, or when the user asks to continue a LectureCast project.
+description: Create or resume paid LectureCast videos with AgentMesh360 commercial access, cloud Director decisions, and local media production. Use for course videos, tutorials, explainers, product recordings, or when the user asks to continue a LectureCast project.
 ---
 
 # LectureCast for Claude Code
 
-Choose the route explicitly:
+Start every new or resumed task with `lecturecast onboard --json`. Do not create,
+resume, or render a project until `workflow.ready` is true. If the payload sets
+`requires_user_action`, show its exact `user_prompt` and wait for the human. A
+missing key routes to `lecturecast auth login`; missing paid access or credits
+routes to AgentMesh360 pricing. Never offer or take an account-free fallback.
 
-- **Community:** fully local, no account or LectureCast API key. Follow [AGENTS.md](../../AGENTS.md) and [LOCAL-WORKFLOW.md](../../docs/LOCAL-WORKFLOW.md).
-- **Director:** optional paid cloud creative decisions and a signed declarative Manifest; all media, voice, editing and rendering remain local. Follow the complete [shared Director workflow](../shared/director-workflow.md).
+After onboarding succeeds, follow the complete [shared Director workflow](../shared/director-workflow.md).
+All original media, voice, editing and rendering remain local.
 
 For each Director question, use Claude Code's `AskUserQuestion` choice UI when available. Preserve the server's label/description and map the response to the exact stable `option_id`; never infer it from display text. Submit one answer and refresh server state before asking the next question. If the choice UI is unavailable, use the shared numbered-text fallback.
 

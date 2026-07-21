@@ -21,6 +21,13 @@ function Write-Warn([string]$Message) {
     Write-Host "  [warn] $Message" -ForegroundColor Yellow
 }
 
+function Write-ErrorLine([string]$Message) {
+    Write-Host "  [error] $Message" -ForegroundColor Red
+}
+
+$script:AdapterConflicts = 0
+$script:AdaptersRegistered = 0
+
 function Get-OwnedTarget([string]$Path) {
     $Item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
     if (-not $Item) {
@@ -48,12 +55,13 @@ function Manage-One(
     $Target = Join-Path $Base "lecturecast"
     if (-not (Test-Path -LiteralPath $Base -PathType Container)) {
         $HostRoot = Split-Path -Parent $Base
-        if (Test-Path -LiteralPath $HostRoot -PathType Container) {
-            Write-Warn "$Agent adapter skipped: $Base is missing; create it and rerun this installer"
+        if ($Action -eq "install" -and (Test-Path -LiteralPath $HostRoot -PathType Container)) {
+            New-Item -ItemType Directory -Force -Path $Base | Out-Null
+            Write-Ok "$Agent skills directory created"
         } else {
             Write-Warn "$Agent adapter skipped: host not detected"
+            return
         }
-        return
     }
 
     $Expected = [System.IO.Path]::GetFullPath($Source).TrimEnd("\")
@@ -62,17 +70,23 @@ function Manage-One(
         if ($OwnedTarget) {
             if ($OwnedTarget -ieq $Expected) {
                 Write-Ok "$Agent adapter already registered"
+                $script:AdaptersRegistered += 1
             } else {
-                Write-Warn "$Agent already has a custom lecturecast link; left unchanged"
+                Write-ErrorLine "$Agent adapter conflict: $Target points to $OwnedTarget"
+                Write-ErrorLine "Rename that path, then rerun scripts\manage_adapters.ps1 -Action install"
+                $script:AdapterConflicts += 1
             }
             return
         }
         if (Test-Path -LiteralPath $Target) {
-            Write-Warn "$Agent already has a custom lecturecast skill; left unchanged"
+            Write-ErrorLine "$Agent adapter conflict: $Target is not installer-owned"
+            Write-ErrorLine "Rename that path, then rerun scripts\manage_adapters.ps1 -Action install"
+            $script:AdapterConflicts += 1
             return
         }
         New-Item -ItemType Junction -Path $Target -Target $Expected | Out-Null
         Write-Ok "$Agent adapter registered"
+        $script:AdaptersRegistered += 1
         return
     }
 
@@ -95,7 +109,14 @@ if (Test-Path -LiteralPath $OpenClawGlobal -PathType Container) {
 } elseif (Test-Path -LiteralPath $OpenClawWorkspace -PathType Container) {
     Manage-One "OpenClaw" $OpenClawWorkspace (Join-Path $InstallDir "skills\openclaw")
 } elseif (Test-Path -LiteralPath $OpenClawRoot -PathType Container) {
-    Write-Warn "OpenClaw adapter skipped: no skills directory detected; create one and rerun this installer"
+    Manage-One "OpenClaw" $OpenClawGlobal (Join-Path $InstallDir "skills\openclaw")
 } else {
     Write-Warn "OpenClaw adapter skipped: host not detected"
+}
+
+if ($Action -eq "install" -and $script:AdapterConflicts -gt 0) {
+    throw "Adapter registration blocked by $($script:AdapterConflicts) conflict(s); LectureCast onboarding is not safe until resolved."
+}
+if ($Action -eq "install" -and $script:AdaptersRegistered -eq 0) {
+    Write-Warn "No supported agent host detected; install/register the agent Skill before using LectureCast."
 }

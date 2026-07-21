@@ -7,6 +7,7 @@ from typing import Any
 import typer
 
 from ..capabilities import capture_capabilities
+from ..commercial import require_commercial_access
 from ..director import (
     DIRECTOR_ADAPTER_KINDS,
     DirectorClient,
@@ -28,6 +29,7 @@ app.add_typer(brief_app, name="brief", help="Show or confirm the server-backed C
 
 
 def _make_client(server_url: str) -> DirectorClient:
+    require_commercial_access()
     return DirectorClient(server_url)
 
 
