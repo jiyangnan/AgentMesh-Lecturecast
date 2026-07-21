@@ -93,8 +93,9 @@ jobs:
           $env:LECTURECAST_SKIP_PIP_UPGRADE = "1"
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $expected = python -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])'
           $version = & "$install\.venv\Scripts\lecturecast.exe" version
-          if ($version -notmatch "0.3.4") { throw "unexpected version: $version" }
+          if ($version -ne "lecturecast $expected") { throw "unexpected version: $version (expected $expected)" }
           & "$install\.venv\Scripts\lecturecast.exe" doctor | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "human-readable doctor failed" }
           $sha = git -C $install rev-parse HEAD
