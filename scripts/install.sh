@@ -41,8 +41,9 @@ if [ "$PY_MAJ" -lt 3 ] || { [ "$PY_MAJ" -eq 3 ] && [ "$PY_MIN" -lt 11 ]; }; then
 fi
 ok "python $PY_MAJ.$PY_MIN ($PY_ARCH)"
 if [ "$(uname -s)" = "Darwin" ] && [ "$PY_ARCH" != "$HOST_ARCH" ]; then
-  warn "mixed macOS architecture: host=$HOST_ARCH, python=$PY_ARCH"
-  warn "if package wheels fail, install a native $HOST_ARCH Python 3.11+ and rerun"
+  err "unsupported mixed macOS architecture: host=$HOST_ARCH, python=$PY_ARCH"
+  err "install a native $HOST_ARCH Python 3.11+ and rerun; Rosetta Python cannot install the signed commercial client reliably"
+  exit 1
 fi
 
 # --- fetch / update ---
@@ -83,9 +84,6 @@ if [ "${LECTURECAST_SKIP_PIP_UPGRADE:-0}" != "1" ]; then
   "$VENV/bin/pip" install --quiet --upgrade pip
 fi
 INSTALL_SPEC="$INSTALL_DIR"
-if [ "${LECTURECAST_INSTALL_DIRECTOR:-0}" = "1" ]; then
-  INSTALL_SPEC="$INSTALL_DIR[director]"
-fi
 if ! "$VENV/bin/pip" install --quiet -e "$INSTALL_SPEC"; then
   err "package installation failed; retrying with full diagnostics"
   "$VENV/bin/pip" install -e "$INSTALL_SPEC"
@@ -102,7 +100,7 @@ EOF
 chmod +x "$SHIM_DIR/lecturecast"
 ok "shim at $SHIM_DIR/lecturecast"
 
-# --- host-specific skills; never create host dirs or overwrite custom skills ---
+# --- host-specific commercial workflow Skill; conflicts block safe onboarding ---
 bash "$INSTALL_DIR/scripts/manage_adapters.sh" install
 
 # --- distinguish CLI installation from renderer readiness ---
@@ -127,13 +125,16 @@ case ":$PATH:" in
 esac
 
 echo
-bold "CLI installed. Next:"
-echo "    lecturecast workflow      # where the local workflow lives"
-echo "    lecturecast project resume <project-path> --json"
+bold "Commercial onboarding gate:"
+"$VENV/bin/lecturecast" onboard --json
 echo
-echo "Community remains fully local. Director is optional; media and rendering stay local."
-echo "Director signature verification is optional; install it only when needed:"
-printf '    "%s/bin/pip" install '\''cryptography>=43'\''\n' "$VENV"
+bold "Follow the onboarding result:"
+echo "    lecturecast onboard --json   # agent-readable account + renderer readiness"
+echo "    lecturecast auth login       # when onboarding asks for an API Key"
+echo
+echo "A paid AgentMesh360 account and at least 10 shared credits are required."
+echo "Account center: https://agentmesh360.com/app/"
+echo "Original media, voice, rendering and exports remain on this machine."
 echo "If this agent session started before installation, open a new session and paste:"
-echo "    请读取 LectureCast Skill，并从项目路径 <project-path> 继续。"
+echo "    请读取最新版 LectureCast Skill，先运行 lecturecast onboard --json，再继续。"
 echo "Or generate an exact handoff payload: lecturecast director handoff <project-path> --json"

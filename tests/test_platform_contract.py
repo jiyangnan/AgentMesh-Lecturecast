@@ -75,6 +75,8 @@ def test_platform_specific_installers_fail_closed() -> None:
 
     assert '"$(uname -s)" != "Darwin"' in macos_installer
     assert "Linux and WSL are not supported" in macos_installer
+    assert "unsupported mixed macOS architecture" in macos_installer
+    assert 'PY_ARCH" != "$HOST_ARCH' in macos_installer
     assert "Win32NT" in windows_installer
     assert "Linux and WSL are not supported" in windows_installer
 
@@ -82,7 +84,7 @@ def test_platform_specific_installers_fail_closed() -> None:
 def test_windows_native_entrypoints_cover_install_and_both_render_routes() -> None:
     required = {
         "scripts/install.ps1": ("lecturecast.exe", "doctor --json", "manage_adapters.ps1"),
-        "scripts/manage_adapters.ps1": ("Junction", "custom lecturecast skill"),
+        "scripts/manage_adapters.ps1": ("Junction", "adapter conflict"),
         "scripts/uninstall.ps1": ("manage_adapters.ps1", "lecturecast.cmd"),
         "templates/shared/build_video.ps1": (
             "VideoVertical",
@@ -101,3 +103,20 @@ def test_windows_native_entrypoints_cover_install_and_both_render_routes() -> No
         content = (ROOT / relative).read_text(encoding="utf-8")
         for token in tokens:
             assert token in content, f"{relative} is missing {token!r}"
+
+
+def test_windows_adapter_upgrades_directory_skills_with_a_backup() -> None:
+    script = (ROOT / "scripts" / "manage_adapters.ps1").read_text(encoding="utf-8")
+
+    assert "Move-LegacyAdapterToBackup" in script
+    assert "legacy adapter backed up" in script
+    assert "adapter upgraded" in script
+
+
+def test_windows_canary_reads_the_package_version_instead_of_pinning_a_release() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "windows-contract.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Select-String -Path pyproject.toml" in workflow
+    assert '"lecturecast $expected"' in workflow

@@ -28,7 +28,9 @@ def _run(home: Path, action: str) -> subprocess.CompletedProcess[str]:
 
 
 @BASH_ONLY
-def test_adapter_install_is_idempotent_and_preserves_custom_skill(tmp_path: Path) -> None:
+def test_adapter_install_upgrades_directory_skill_and_preserves_backup(
+    tmp_path: Path,
+) -> None:
     codex = tmp_path / ".codex" / "skills"
     claude = tmp_path / ".claude" / "skills"
     codex.mkdir(parents=True)
@@ -42,8 +44,15 @@ def test_adapter_install_is_idempotent_and_preserves_custom_skill(tmp_path: Path
     second = _run(tmp_path, "install")
 
     assert first.returncode == second.returncode == 0
-    assert marker.read_text(encoding="utf-8") == "custom user skill\n"
-    assert not custom.is_symlink()
+    assert "legacy adapter backed up" in first.stdout
+    assert "adapter upgraded" in first.stdout
+    assert "adapter already registered" in second.stdout
+    assert custom.is_symlink()
+    assert custom.resolve() == ROOT / "skills" / "codex"
+    backups = list(codex.glob("lecturecast.backup-*"))
+    assert len(backups) == 1
+    backup_marker = backups[0] / "SKILL.md"
+    assert backup_marker.read_text(encoding="utf-8") == "custom user skill\n"
     installed = claude / "lecturecast"
     assert installed.is_symlink()
     assert installed.resolve() == ROOT / "skills" / "claude-code"
@@ -52,7 +61,8 @@ def test_adapter_install_is_idempotent_and_preserves_custom_skill(tmp_path: Path
     removed = _run(tmp_path, "uninstall")
     assert removed.returncode == 0
     assert not installed.exists()
-    assert marker.exists()
+    assert not custom.exists()
+    assert backup_marker.exists()
 
 
 @BASH_ONLY
@@ -87,7 +97,7 @@ def test_missing_agent_directories_are_never_created(tmp_path: Path) -> None:
 
 
 @BASH_ONLY
-def test_existing_codex_host_without_skills_gets_an_actionable_skip(
+def test_existing_codex_host_gets_skills_directory_and_adapter(
     tmp_path: Path,
 ) -> None:
     (tmp_path / ".codex").mkdir()
@@ -95,9 +105,10 @@ def test_existing_codex_host_without_skills_gets_an_actionable_skip(
     result = _run(tmp_path, "install")
 
     assert result.returncode == 0
-    assert "Codex adapter skipped" in result.stdout
-    assert ".codex/skills is missing" in result.stdout
-    assert not (tmp_path / ".codex" / "skills").exists()
+    assert "Codex skills directory created" in result.stdout
+    installed = tmp_path / ".codex" / "skills" / "lecturecast"
+    assert installed.is_symlink()
+    assert installed.resolve() == ROOT / "skills" / "codex"
 
 
 def test_three_host_skills_reference_one_shared_director_workflow() -> None:

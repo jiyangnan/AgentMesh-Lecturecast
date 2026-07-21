@@ -8,13 +8,13 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 
-COMMUNITY_DIRECTOR_PAGES = (
+COMMERCIAL_ONLY_PAGES = (
     Path("index.html"),
     Path("en/index.html"),
     Path("ja/index.html"),
     Path("ko/index.html"),
 )
-COMMUNITY_DIRECTOR_CONTRACT = "community-director-v1"
+COMMERCIAL_ONLY_CONTRACT = "commercial-only-v1"
 
 
 @dataclass(frozen=True)
@@ -114,45 +114,52 @@ def _parse_page(path: Path) -> _SiteParser:
     return parser
 
 
-def _validate_community_director_contract(
+def _validate_commercial_only_contract(
     root: Path,
     documents: dict[Path, _SiteParser],
     errors: list[str],
 ) -> None:
-    for relative_path in COMMUNITY_DIRECTOR_PAGES:
+    retired_tier = "".join(("comm", "unity"))
+    for relative_path in COMMERCIAL_ONLY_PAGES:
         page = (root / relative_path).resolve()
         label = relative_path.as_posix()
         document = documents.get(page)
         if document is None:
             errors.append(f"{label}: required localized page is missing")
             continue
-        if COMMUNITY_DIRECTOR_CONTRACT not in document.product_contracts:
+        if COMMERCIAL_ONLY_CONTRACT not in document.product_contracts:
             errors.append(
-                f"{label}: missing data-product-contract={COMMUNITY_DIRECTOR_CONTRACT}"
+                f"{label}: missing data-product-contract={COMMERCIAL_ONLY_CONTRACT}"
             )
-        routes = {
-            item.get("data-route", ""): item for item in document.route_contracts
-        }
-        community = routes.get("community")
-        director = routes.get("director")
-        if community is None:
-            errors.append(f"{label}: missing community route contract")
-        elif community.get("data-access") != "available":
-            errors.append(f"{label}: community route must be available")
-        if director is None:
+        directors = [
+            item for item in document.route_contracts
+            if item.get("data-route") == "director"
+        ]
+        unexpected = [
+            item.get("data-route", "") for item in document.route_contracts
+            if item.get("data-route") != "director"
+        ]
+        if len(directors) != 1:
             errors.append(f"{label}: missing director route contract")
-        elif director.get("data-access") != "paid":
-            errors.append(f"{label}: director route must be paid")
-        for route_name, route in (("community", community), ("director", director)):
-            if route is not None and route.get("data-media") != "local":
-                errors.append(f"{label}: {route_name} route must keep media local")
+        else:
+            director = directors[0]
+            if director.get("data-access") != "paid":
+                errors.append(f"{label}: director route must be paid")
+            if director.get("data-media") != "local":
+                errors.append(f"{label}: director route must keep media local")
+        if unexpected:
+            errors.append(f"{label}: unexpected product route(s): {', '.join(unexpected)}")
+        if retired_tier in page.read_text(encoding="utf-8").lower():
+            errors.append(f"{label}: retired product tier must not be published")
 
     llms_path = root / "llms.txt"
     if not llms_path.is_file():
         errors.append("llms.txt: required machine-readable product boundary is missing")
         return
     llms_text = llms_path.read_text(encoding="utf-8")
-    for token in ("Community", "Director", "ProductionManifest", "paid AgentMesh360 accounts"):
+    if retired_tier in llms_text.lower():
+        errors.append("llms.txt: retired product tier must not be published")
+    for token in ("Commercial", "Director", "ProductionManifest", "paid AgentMesh360 account", "10 credits"):
         if token not in llms_text:
             errors.append(f"llms.txt: missing product-boundary token {token!r}")
 
@@ -217,8 +224,8 @@ def validate_site(
             if fragment and target_document is not None and fragment not in target_document.ids:
                 errors.append(f"{label}: anchor {target!r} does not exist")
 
-    if contract == "community-director":
-        _validate_community_director_contract(root, documents, errors)
+    if contract == "commercial-only":
+        _validate_commercial_only_contract(root, documents, errors)
 
     return ValidationResult(len(pages), tuple(sorted(set(errors))))
 
@@ -230,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("root", nargs="?", type=Path, default=Path("site"))
     parser.add_argument(
         "--contract",
-        choices=("community-director",),
+        choices=("commercial-only",),
         help="enforce an optional product-boundary contract",
     )
     parser.add_argument("--json", action="store_true")

@@ -17,15 +17,14 @@ def test_version_command_reports_package_name() -> None:
     assert "lecturecast" in result.stdout
 
 
-def test_workflow_preserves_local_community_contract() -> None:
+def test_workflow_requires_commercial_onboarding() -> None:
     result = runner.invoke(app, ["workflow"])
     output = " ".join(re.sub(r"[╭╮╰╯│─]+", " ", result.stdout).split())
 
     assert result.exit_code == 0
-    assert "fully local" in output
-    assert "no cloud" in output
-    assert "no account" in output
-    assert "no API key" in output
+    assert "paid AgentMesh360 account" in output
+    assert "lecturecast onboard --json" in output
+    assert "workflow.ready" in output
     assert "Edge/MiniMax TTS" in output
     assert "Remotion render" in output
 

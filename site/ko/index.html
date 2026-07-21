@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Lecturecast — 하나의 아이디어를, 강의 영상 한 편으로 · 오픈소스 로컬 도구</title>
-<meta name="description" content="Lecturecast Community 는 오픈소스·완전 로컬 영상 워크플로입니다. 선택형 Director 는 구조화된 클라우드 창작 결정과 서명된 ProductionManifest 를 제공하며 미디어·편집·렌더링은 로컬에 남습니다." />
+<title>Lecturecast — 하나의 아이디어를, 강의 영상 한 편으로 · AgentMesh360 상용 제품</title>
+<meta name="description" content="Lecturecast 는 AgentMesh360 상용 강의 영상 제품입니다. 유료 계정을 연결하고 클라우드 Director 가 서명된 ProductionManifest 를 생성하며 원본 미디어·편집·렌더링은 로컬에 남습니다." />
 <meta property="og:title" content="Lecturecast — 하나의 아이디어를, 강의 영상 한 편으로" />
 <meta property="og:description" content="오픈소스 로컬 도구: AI 대본 + 더빙 + 이중 플랫폼 출력(Bilibili 16:9 / Xiaohongshu 9:16), 전부 당신의 머신에서. 주제 하나로 영상 두 편." />
 <meta property="og:type" content="website" />
@@ -44,11 +44,11 @@
       "codeRepository": "https://github.com/jiyangnan/AgentMesh-Lecturecast",
       "license": "https://www.apache.org/licenses/LICENSE-2.0",
       "applicationCategory": "MultimediaApplication",
-      "applicationSubCategory": "local AI video generation workflow",
+      "applicationSubCategory": "commercial agentic video production",
       "operatingSystem": "macOS, Windows",
-      "isAccessibleForFree": true,
+      "isAccessibleForFree": false,
       "provider": { "@id": "https://agentmesh360.com/#organization" },
-      "description": "Lecturecast Community 는 오픈소스 로컬 강의 영상 워크플로입니다. 선택형 Director 는 구조화된 창작 선택과 서명된 ProductionManifest 를 제공하며 미디어 제작과 렌더링은 사용자의 머신에 남습니다.",
+      "description": "Lecturecast 는 AgentMesh360 상용 강의 영상 제품입니다. 클라우드 Director 가 구조화된 창작 선택과 서명된 ProductionManifest 를 제공하며 미디어 제작과 렌더링은 사용자의 머신에 남습니다.",
       "featureList": [
         "로컬 AI 강의 대본 생성",
         "로컬 더빙과 타임라인 정렬",
@@ -56,14 +56,13 @@
         "Xiaohongshu 9:16 세로 영상",
         "중국어 자막 굽기",
         "커버 이미지 생성",
-        "선택형 Director 구조화 창작 선택",
+        "클라우드 Director 구조화 창작 선택",
         "서명된 선언형 ProductionManifest",
         "Apache 2.0 오픈소스"
       ],
       "offers": {
         "@type": "Offer",
-        "price": "0",
-        "priceCurrency": "KRW",
+        "url": "https://agentmesh360.com/app/#pricing",
         "availability": "https://schema.org/InStock"
       }
     },
@@ -75,12 +74,12 @@
         {
           "@type": "Question",
           "name": "Lecturecast 에 계정이나 API 키가 필요한가요?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Community 는 무료이며 계정이나 LectureCast API 키가 필요 없습니다. 선택형 Director 는 유효한 AgentMesh360 유료 구독과 범용 API 키를 가진 계정이 사용할 수 있으며, ProductionManifest 생성을 확인한 경우에만 10 credits가 차감됩니다." }
+          "acceptedAnswer": { "@type": "Answer", "text": "필요합니다. Lecturecast 는 유효한 AgentMesh360 유료 계정과 범용 API 키가 필요하며, ProductionManifest 생성을 확인할 때 10 credits가 차감됩니다." }
         },
         {
           "@type": "Question",
           "name": "Lecturecast 처리 과정에서 클라우드로 업로드되나요?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Community 는 LectureCast 서비스에 아무것도 보내지 않습니다. Director 사용 시 제한된 소스 요약, 안정적인 선택값, Brief, 클라이언트 기능만 클라우드로 가며 원본 미디어·더빙·편집·렌더링·결과물은 로컬에 남습니다." }
+          "acceptedAnswer": { "@type": "Answer", "text": "제한된 소스 요약, 안정적인 선택값, Brief, 클라이언트 기능만 클라우드 Director 로 가며 원본 미디어·더빙·편집·렌더링·결과물은 로컬에 남습니다." }
         },
         {
           "@type": "Question",
@@ -135,6 +134,7 @@
   @media(max-width:880px){.nav-links a.nav-section{display:none}}
   @media(max-width:720px){.nav-links a:not(.nav-cta):not(.lang){display:none} .lang-switch{gap:7px} .brand small{display:none}}
   @media(max-width:480px){.nav-inner{gap:12px;padding:14px 16px} .brand{font-size:15px;gap:7px} .brand-mark{width:20px;height:20px} .lang-switch{gap:5px;font-size:11px} .nav-cta{padding:8px 12px;font-size:13px}}
+  @media(max-width:520px){.nav-cta{display:none} h1.display{font-size:34px;overflow-wrap:anywhere}.route{min-width:0}.route-top{align-items:flex-start;flex-direction:column}.route-status{white-space:normal}}
 
   .hero{padding:clamp(64px,11vw,140px) 0 clamp(48px,8vw,96px)}
   .eyebrow{display:inline-flex;align-items:center;gap:10px;font-size:12.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);font-weight:500}
@@ -267,10 +267,10 @@
 
 <section class="hero">
   <div class="wrap">
-    <div class="eyebrow"><span class="dot"></span> COMMUNITY LOCAL · DIRECTOR OPTIONAL</div>
+    <div class="eyebrow"><span class="dot"></span> COMMERCIAL ACCESS · LOCAL PRODUCTION</div>
     <h1 class="display">하나의 아이디어를, <em>강의 영상 한 편</em>으로.</h1>
     <p class="lede">
-      Lecturecast Community 는 <strong>완전 로컬·오픈소스</strong> 영상 제작 워크플로입니다. 주제를 AI 에이전트에게 넘기면 당신의 머신에서 대본, 더빙, 렌더링을 처리하고 <strong>Bilibili 가로판과 Xiaohongshu 세로판을 동시에 출력</strong>합니다. 더 명확한 창작 방향이 필요하면 선택형 Director 가 구조화된 선택을 서명된 제작 계획으로 바꾸며, 원본 미디어와 전체 미디어 파이프라인은 계속 로컬에 남습니다.
+      Lecturecast 는 <strong>AgentMesh360 상용 강의 영상 제품</strong>입니다. AI 에이전트가 유료 액세스를 연결하고 클라우드 Director 가 구조화된 선택을 서명된 제작 계획으로 바꾸며, 당신의 머신에서 더빙·편집·렌더링을 처리해 <strong>Bilibili 가로판과 Xiaohongshu 세로판을 동시에 출력</strong>합니다. 원본 미디어와 전체 미디어 파이프라인은 로컬에 남습니다.
       <span style="display:block;margin-top:8px;font-size:0.9em;color:var(--muted);">(Bilibili 와 Xiaohongshu 는 중국의 주요 영상 플랫폼—각각 가로판/세로판. 사용하지 않더라도 두 포맷을 함께 출력합니다.)</span>
     </p>
     <div class="hero-ctas">
@@ -278,16 +278,11 @@
       <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md" class="btn btn-ghost">로컬 워크플로 보기</a>
     </div>
 
-    <div class="routes" id="routes" data-product-contract="community-director-v1" aria-label="Lecturecast 의 두 가지 사용 경로">
-      <article class="route route-community" data-route="community" data-access="available" data-media="local">
-        <div class="route-top"><span class="route-label">Community</span><span class="route-status">지금 사용 가능</span></div>
-        <h3>완전 로컬. 영구 무료.</h3>
-        <p>계정이나 LectureCast API 키가 필요 없습니다. 에이전트가 대본, 더빙, 자막, 모션, 이중 포맷 렌더링, 커버를 당신의 머신에서 처리하며 원본 콘텐츠를 LectureCast 로 보내지 않습니다.</p>
-      </article>
+    <div class="routes" id="routes" data-product-contract="commercial-only-v1" aria-label="Lecturecast 상용 액세스">
       <article class="route route-director" data-route="director" data-access="paid" data-media="local">
-        <div class="route-top"><span class="route-label">Director</span><span class="route-status">유료 계정 이용 가능</span></div>
+        <div class="route-top"><span class="route-label">Lecturecast Director</span><span class="route-status">AgentMesh360 유료 계정</span></div>
         <h3>클라우드 디렉팅, 로컬 제작.</h3>
-        <p>에이전트 네이티브 선택 UI 로 대상, 서사, 비주얼, 전달 방식을 결정합니다. 클라우드는 서명된 ProductionManifest 를 반환하고, 생성 확인 후에만 10 credits가 차감됩니다. 미디어, 더빙, 편집, 렌더링은 로컬입니다.</p>
+        <p>에이전트가 범용 API 키, 유료 구독, 공유 credits 를 검증한 뒤 네이티브 선택 UI 를 표시합니다. 클라우드는 서명된 ProductionManifest 를 반환하고, 생성 확인 후에만 10 credits가 차감됩니다. 미디어, 더빙, 편집, 렌더링은 로컬입니다.</p>
       </article>
     </div>
 
@@ -298,10 +293,10 @@
       </div>
 <pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
 <span class="c-prompt">PS&gt;</span> <span class="c-cmd">irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex</span>
-<span class="c-prompt">$</span> <span class="c-cmd">lecturecast workflow</span>      <span class="c-dim"># 로컬 워크플로 위치를 출력해 AI 에이전트에게 전달</span>
+<span class="c-prompt">$</span> <span class="c-cmd">lecturecast auth login</span>   <span class="c-dim"># AgentMesh360 범용 API 키 검증 및 연결</span>
+<span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --json</span> <span class="c-dim"># 유료 계정, credits, 렌더러 준비 상태</span>
 
-<span class="c-dim"># 에이전트는 AGENTS.md / docs/LOCAL-WORKFLOW.md 에 따라 로컬에서 엔드 투 엔드 실행:</span>
-<span class="c-dim"># 대본 → 더빙(edge-tts / MiniMax) → Remotion 렌더링 → ffmpeg 자막 굽기 → 이중 플랫폼 영상</span></pre>
+<span class="c-dim"># 상용 onboarding → Director → 10 credits 승인 → 로컬 이중 포맷 제작</span></pre>
     </div>
   </div>
 </section>
@@ -433,11 +428,11 @@
     <div class="faq-list">
       <details class="faq-item">
         <summary>유료인가요? 계정 가입이 필요한가요?</summary>
-        <div class="faq-answer"><strong>Community</strong> 는 영구 무료이며 계정이나 LectureCast API 키가 필요 없습니다. 선택형 <strong>Director</strong> 는 유효한 AgentMesh360 유료 구독과 범용 API 키를 가진 계정이 사용할 수 있습니다. 기존 공유 credits 를 사용하며 별도 LectureCast 구독은 필요 없습니다. 선택과 Brief 작성은 무료이고, ProductionManifest 생성을 확인한 경우에만 10 credits가 차감됩니다.</div>
+        <div class="faq-answer">Lecturecast 는 유효한 <strong>AgentMesh360 유료 계정</strong>과 범용 API 키가 필요합니다. 기존 공유 credits 를 사용하며 별도 LectureCast 구독은 필요 없습니다. 선택과 Brief 작성에는 credits 가 차감되지 않고, ProductionManifest 생성을 확인한 경우에만 10 credits가 차감됩니다.</div>
       </details>
       <details class="faq-item">
         <summary>영상이 클라우드로 업로드되나요?</summary>
-        <div class="faq-answer">아니요. Community 는 LectureCast 서비스에 아무것도 보내지 않습니다. Director 를 선택하면 제한된 소스 요약, 안정적인 선택 ID, Brief, 클라이언트 기능만 클라우드로 전송됩니다. 원본 미디어, 더빙, 자막, 편집, 렌더링, 완성본은 항상 로컬에 남습니다.</div>
+        <div class="faq-answer">원본 미디어는 업로드되지 않습니다. 제한된 소스 요약, 안정적인 선택 ID, Brief, 클라이언트 기능만 클라우드 Director 로 전송됩니다. 원본 미디어, 더빙, 자막, 편집, 렌더링, 완성본은 항상 로컬에 남습니다.</div>
       </details>
       <details class="faq-item">
         <summary>더빙은 무엇을 쓰나요? 더 좋은 음색으로 바꿀 수 있나요?</summary>

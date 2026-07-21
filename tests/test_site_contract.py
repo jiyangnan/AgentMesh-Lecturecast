@@ -105,36 +105,46 @@ def test_validate_site_rejects_path_escape(tmp_path: Path) -> None:
     assert any("escapes site root" in error for error in errors)
 
 
-def _contract_page(*, director_access: str = "paid") -> str:
+def _contract_page(*, director_access: str = "paid", extra_route: bool = False) -> str:
+    legacy = (
+        '<article data-route="legacy" data-access="available">Legacy</article>'
+        if extra_route
+        else ""
+    )
     return _page(
         body=(
-            '<section data-product-contract="community-director-v1">'
-            '<article data-route="community" data-access="available" '
-            'data-media="local">Community</article>'
+            '<section data-product-contract="commercial-only-v1">'
             f'<article data-route="director" data-access="{director_access}" '
             'data-media="local">Director ProductionManifest</article>'
-            "</section>"
+            f"{legacy}</section>"
         )
     )
 
 
-def _write_contract_site(root: Path, *, director_access: str = "paid") -> None:
+def _write_contract_site(
+    root: Path,
+    *,
+    director_access: str = "paid",
+    extra_route: bool = False,
+) -> None:
     for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_contract_page(director_access=director_access))
+        path.write_text(
+            _contract_page(director_access=director_access, extra_route=extra_route)
+        )
     (root / "llms.txt").write_text(
-        "Community Director ProductionManifest paid AgentMesh360 accounts"
+        "Commercial Director ProductionManifest paid AgentMesh360 account 10 credits"
     )
 
 
-def test_community_director_contract_accepts_paid_local_media_routes(
+def test_commercial_only_contract_accepts_one_paid_local_media_route(
     tmp_path: Path,
 ) -> None:
     site = tmp_path / "site"
     _write_contract_site(site)
 
-    process, result = _validate(site, contract="community-director")
+    process, result = _validate(site, contract="commercial-only")
 
     assert process.returncode == 0
     assert result["ok"] is True
@@ -155,13 +165,13 @@ def test_current_site_supports_macos_and_windows_without_linux() -> None:
         assert "install.ps1" in page
 
 
-def test_community_director_contract_rejects_unmetered_director_access(
+def test_commercial_only_contract_rejects_unmetered_director_access(
     tmp_path: Path,
 ) -> None:
     site = tmp_path / "site"
     _write_contract_site(site, director_access="available")
 
-    process, result = _validate(site, contract="community-director")
+    process, result = _validate(site, contract="commercial-only")
 
     assert process.returncode == 1
     errors = result["errors"]
@@ -169,19 +179,39 @@ def test_community_director_contract_rejects_unmetered_director_access(
     assert sum("director route must be paid" in error for error in errors) == 4
 
 
-def test_community_director_contract_requires_machine_readable_boundary(
+def test_commercial_only_contract_requires_machine_readable_boundary(
     tmp_path: Path,
 ) -> None:
     site = tmp_path / "site"
     _write_contract_site(site)
-    (site / "llms.txt").write_text("Community only")
+    (site / "llms.txt").write_text("Director only")
 
-    process, result = _validate(site, contract="community-director")
+    process, result = _validate(site, contract="commercial-only")
 
     assert process.returncode == 1
     errors = result["errors"]
     assert isinstance(errors, list)
     assert any("llms.txt" in error for error in errors)
+
+
+def test_commercial_only_contract_rejects_a_second_product_route(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    _write_contract_site(site, extra_route=True)
+
+    process, result = _validate(site, contract="commercial-only")
+
+    assert process.returncode == 1
+    assert any("unexpected product route" in error for error in result["errors"])
+
+
+def test_current_site_does_not_publish_retired_product_tier() -> None:
+    retired_tier = "".join(("comm", "unity"))
+    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+        page = (ROOT / "site" / relative).read_text(encoding="utf-8")
+        assert retired_tier not in page.lower()
+    assert retired_tier not in (ROOT / "site" / "llms.txt").read_text(
+        encoding="utf-8"
+    ).lower()
 
 
 def test_production_hosting_stays_behind_agentmesh_caddy() -> None:

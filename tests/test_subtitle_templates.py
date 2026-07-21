@@ -83,7 +83,7 @@ def test_manifest_subtitle_generator_uses_override(tmp_path: Path) -> None:
         ("srt_to_ass_vertical.py", "subtitle_vertical.ass"),
     ],
 )
-def test_community_subtitle_generators_use_override(
+def test_subtitle_generators_use_override(
     tmp_path: Path, script_name: str, output_name: str
 ) -> None:
     assets = tmp_path / "assets"

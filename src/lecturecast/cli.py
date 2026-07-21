@@ -1,7 +1,7 @@
-"""LectureCast CLI entrypoint.
+"""LectureCast commercial CLI entrypoint.
 
-Community creation remains fully local. Director adds an optional cloud decision
-layer while media, voice, rendering, editing, and durable project state stay local.
+AgentMesh360 owns identity, paid access, and credits. Creative direction is cloud
+assisted while media, voice, rendering, editing, and durable project state stay local.
 """
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from pathlib import Path
@@ -14,13 +14,14 @@ from .commands.auth import app as auth_app
 from .commands.director import app as director_app
 from .commands.doctor import doctor
 from .commands.manifest import app as manifest_app
+from .commands.onboard import onboard
 from .commands.outcome import app as outcome_app
 from .commands.project import app as project_app
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, rich_markup_mode="rich")
 console = Console()
-app.add_typer(auth_app, name="auth", help="Manage the optional Director API credential.")
-app.add_typer(director_app, name="director", help="Use the optional cloud creative Director.")
+app.add_typer(auth_app, name="auth", help="Bind the required AgentMesh360 commercial account.")
+app.add_typer(director_app, name="director", help="Use the cloud creative Director.")
 app.add_typer(project_app, name="project", help="Create and resume durable local projects.")
 app.add_typer(manifest_app, name="manifest", help="Inspect and verify signed manifests.")
 app.add_typer(
@@ -29,6 +30,7 @@ app.add_typer(
     help="Create explicit local outcome evidence without tracking or upload.",
 )
 app.command()(doctor)
+app.command()(onboard)
 
 
 def _repo_root() -> Path:
@@ -48,19 +50,19 @@ def version() -> None:
 
 @app.command()
 def workflow() -> None:
-    """Show where the local workflow lives and how to drive it from an AI agent."""
+    """Show the commercial agent workflow and its local production runbook."""
     root = _repo_root()
     agents = root / "AGENTS.md"
     local = root / "docs" / "LOCAL-WORKFLOW.md"
     body = (
-        "LectureCast Community is a [bold]fully local[/bold] video workflow — no cloud, no "
-        "account, no API key. Director is optional and only sends structured creative "
-        "inputs for cloud decisions.\n\n"
-        "The pipeline is driven by an AI agent (Claude Code / OpenClaw / Cursor / "
-        "Codex) using the bundled [bold]templates/[/bold]:\n"
+        "LectureCast requires a paid AgentMesh360 account and universal API Key. "
+        "The cloud Director provides the signed creative plan; original media, voice, "
+        "rendering and exports stay on this machine.\n\n"
+        "Start every agent run with [bold]lecturecast onboard --json[/bold]. Do not create "
+        "a project until workflow.ready is true. Then use the bundled templates for:\n"
         "  script -> Edge/MiniMax TTS -> Remotion render -> ffmpeg subtitle burn -> covers\n\n"
         f"Agent runbook:   [bold]{agents}[/bold]\n"
         f"Full pipeline:   [bold]{local}[/bold]\n\n"
         "[dim]Tell your agent:  做一条关于 RAG 工作原理的 5 分钟课程视频[/dim]"
     )
-    console.print(Panel(body, title="lecturecast — local workflow", border_style="magenta"))
+    console.print(Panel(body, title="lecturecast — commercial workflow", border_style="magenta"))

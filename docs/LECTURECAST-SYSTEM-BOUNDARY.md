@@ -4,7 +4,7 @@ Canonical decision: [lecturecast system boundary](https://github.com/jiyangnan/l
 
 ## This repository owns
 
-- The public Community client, agent adapters, local renderer, component
+- The public commercial client, agent adapters, local renderer, component
   allowlist, signed-manifest verification, local project state, and offline
   rerender/recovery.
 - The canonical public website source under `site/`.
@@ -23,12 +23,12 @@ Canonical decision: [lecturecast system boundary](https://github.com/jiyangnan/l
 
 ## Product boundary
 
-Community stays fully local and account-free. Optional Director may return
-choices, a Creative Brief, and a signed declarative `ProductionManifest`, but
-original media, voice, subtitles, editing, rendering, covers, and exports stay
-on the user's machine. Director is fail-closed: internal/limited stages use an
-account allowlist, while customer access requires the current paid subscription
-returned by AgentMesh Core. Manifest generation remains metered through shared
+LectureCast has one commercial product path. The client must validate a universal
+AgentMesh360 API Key, an active monthly pass and sufficient shared credits
+before production begins. Director returns choices, a Creative Brief and a
+signed declarative `ProductionManifest`; original media, voice, subtitles,
+editing, rendering, covers and exports stay on the user's machine. All commercial
+checks fail closed, and Manifest generation remains metered through shared
 AgentMesh360 credits.
 
 ## Reverse links
