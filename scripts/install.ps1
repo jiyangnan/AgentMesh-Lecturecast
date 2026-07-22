@@ -145,6 +145,8 @@ try {
 } finally {
     $env:LECTURECAST_DIR = $PreviousInstallDir
 }
+& $LectureCastExe agent adapters --json
+Assert-LastExit "adapter inspection"
 
 $DoctorJson = & $LectureCastExe doctor --json
 Assert-LastExit "lecturecast doctor"
@@ -167,16 +169,18 @@ if ($PathEntries -contains $ShimDir) {
 }
 
 Write-Host ""
-Write-Host "Commercial onboarding gate:" -ForegroundColor Cyan
+Write-Host "Commercial and host-session onboarding gate:" -ForegroundColor Cyan
 & $LectureCastExe onboard --json
 Assert-LastExit "commercial onboarding"
 Write-Host ""
-Write-Host "Follow the onboarding result:" -ForegroundColor Cyan
-Write-Host "    lecturecast onboard --json"
+Write-Host "Start a NEW host-agent task and run its exact Skill command:" -ForegroundColor Cyan
+Write-Host "    Codex:       lecturecast onboard --adapter codex --host-contract 1.0.0 --json"
+Write-Host "    Claude Code: lecturecast onboard --adapter claude-code --host-contract 1.0.0 --json"
+Write-Host "    OpenClaw:    lecturecast onboard --adapter openclaw --host-contract 1.0.0 --json"
 Write-Host "    lecturecast auth login    # when onboarding asks for an API Key"
 Write-Host ""
 Write-Host "A paid AgentMesh360 account and at least 10 shared credits are required."
 Write-Host "Account center: https://agentmesh360.com/app/"
 Write-Host "Original media, voice, rendering and exports remain on this machine."
-Write-Host "If this agent session started before installation, open a new session and paste:"
-Write-Host "    Read the current LectureCast Skill, run lecturecast onboard --json, then continue."
+Write-Host "The installer cannot attest the already-running agent session. Always open a new session."
+Write-Host "    Read the current LectureCast Skill and execute only the machine-returned next_action."

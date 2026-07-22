@@ -53,7 +53,9 @@ def test_missing_key_returns_agent_readable_user_action(monkeypatch) -> None:
     monkeypatch.setattr(onboard_module, "_renderer", lambda _root=None: _renderer(True))
     monkeypatch.setattr(onboard_module, "_director", lambda: _director())
 
-    result = onboard_module.onboarding_status()
+    result = onboard_module.onboarding_status(
+        adapter="codex", host_contract="1.0.0"
+    )
 
     assert result["ok"] is False
     assert result["requires_user_action"] is True
@@ -81,7 +83,9 @@ def test_paid_account_and_renderer_make_workflow_ready(monkeypatch) -> None:
 
     monkeypatch.setattr(onboard_module, "CommercialClient", FakeClient)
 
-    result = onboard_module.onboarding_status()
+    result = onboard_module.onboarding_status(
+        adapter="codex", host_contract="1.0.0"
+    )
 
     assert result["ok"] is True
     assert result["workflow"]["ready"] is True
@@ -113,7 +117,9 @@ def test_no_paid_access_never_falls_back_to_local_render(monkeypatch) -> None:
 
     monkeypatch.setattr(onboard_module, "CommercialClient", FakeClient)
 
-    result = onboard_module.onboarding_status()
+    result = onboard_module.onboarding_status(
+        adapter="codex", host_contract="1.0.0"
+    )
 
     assert result["ok"] is False
     assert result["workflow"]["blocked_by"] == ["monthly_pass_required"]
@@ -140,9 +146,52 @@ def test_unavailable_director_blocks_otherwise_ready_workflow(monkeypatch) -> No
 
     monkeypatch.setattr(onboard_module, "CommercialClient", FakeClient)
 
-    result = onboard_module.onboarding_status()
+    result = onboard_module.onboarding_status(
+        adapter="codex", host_contract="1.0.0"
+    )
 
     assert result["ok"] is False
     assert result["environment_healthy"] is False
     assert result["workflow"]["blocked_by"] == ["director_unavailable"]
     assert result["next_suggested"] == "lecturecast onboard --json"
+
+
+def test_project_specific_renderer_setup_is_a_staged_machine_action(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        onboard_module,
+        "auth_status",
+        lambda: AuthStatus(True, "keyring", False),
+    )
+    monkeypatch.setattr(onboard_module, "get_api_key", lambda: "am_live_key")
+    monkeypatch.setattr(onboard_module, "_renderer", lambda _root=None: _renderer(False))
+    monkeypatch.setattr(onboard_module, "_director", lambda: _director())
+
+    class FakeClient:
+        def __init__(self, *, api_key: str) -> None:
+            pass
+
+        def access(self) -> CommercialAccess:
+            return _access()
+
+    monkeypatch.setattr(onboard_module, "CommercialClient", FakeClient)
+
+    before_project = onboard_module.onboarding_status(
+        adapter="codex", host_contract="1.0.0"
+    )
+    in_project = onboard_module.onboarding_status(
+        tmp_path,
+        adapter="codex",
+        host_contract="1.0.0",
+    )
+
+    assert before_project["ok"] is True
+    assert before_project["renderer"]["ready"] is False
+    assert before_project["workflow"]["next_action"]["id"] == "project.init"
+    assert in_project["ok"] is False
+    assert in_project["workflow"]["blocked_by"] == ["renderer_not_ready"]
+    assert in_project["workflow"]["next_action"]["id"] == "renderer.setup"
+    assert in_project["workflow"]["next_action"]["steps"] == [
+        "install ffmpeg-full"
+    ]

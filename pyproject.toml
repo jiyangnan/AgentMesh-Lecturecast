@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lecturecast"
-version = "0.4.1"
+version = "0.5.0"
 description = "Commercial AgentMesh course-video workflow with cloud creative direction and local media production"
 readme = "README.md"
 requires-python = ">=3.11"

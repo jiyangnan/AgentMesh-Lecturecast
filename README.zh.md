@@ -82,8 +82,9 @@ pip install -e .
 ```
 
 安装包默认包含安全凭证存储与签名 Manifest 验证。本地渲染还需要
-**Node 20+**、**Python 3.11+**、**带 libass 的 ffmpeg**；`lecturecast onboard
---json` 会同时报告商业账户和渲染器是否就绪。
+**Node 20+**、**Python 3.11+**、**带 libass 的 ffmpeg**。安装后必须新建宿主
+Agent 任务；新版 Skill 会运行带 `--adapter` 与 `--host-contract 1.0.0` 的
+onboard 命令，同时验证 Skill、商业账户和渲染器。
 
 ---
 
@@ -93,16 +94,17 @@ Lecturecast 是 **agent 驱动**的。第一步必须绑定并验证商业权限
 
 ```bash
 lecturecast auth login      # 验证并保存 AgentMesh360 通用 API Key
-lecturecast onboard --json  # 账户、credits、渲染器、阻塞原因与下一步
+lecturecast onboard --adapter codex --host-contract 1.0.0 --json
+lecturecast agent status ./my-video --adapter codex --host-contract 1.0.0 --json
 lecturecast version    # 当前版本
 ```
 
 当 `workflow.ready` 为 true 后，Director 在 Codex、Claude Code、OpenClaw 之间共享同一个本地项目：
 
 ```bash
-lecturecast project init ./my-video --name "我的视频" --json
+lecturecast project init ./my-video --name "我的视频" --adapter codex --host-contract 1.0.0 --json
 lecturecast director start ./my-video --source source-summary.json --adapter codex --json
-lecturecast director resume ./my-video --adapter openclaw --json  # 切换宿主后
+lecturecast director resume ./my-video --adapter openclaw --host-contract 1.0.0 --json  # 切换宿主后
 lecturecast director next ./my-video --json
 ```
 
@@ -146,8 +148,8 @@ key 只留在你的环境变量里，出错自动回退免费的 Edge 音色。
 
 ## 让你的 AI agent 来调
 
-安装器会为检测到的 Agent 宿主注册当前商业 Skill。遇到自定义同名 Skill 时不会
-静默跳过，而是阻塞 onboarding 并输出迁移操作。手动链接方式：
+安装器会为检测到的 Agent 宿主注册当前商业 Skill。普通目录形式的旧 Skill 会
+先备份再升级；只有指向其他安装源的 symlink/junction 才会阻塞。手动链接方式：
 
 ```bash
 ln -s "$(pwd)/skills/claude-code" ~/.claude/skills/lecturecast
@@ -159,8 +161,10 @@ ln -s "$(pwd)/skills/openclaw" ~/.openclaw/skills/lecturecast
 
 > 做一条关于 RAG 工作原理的 5 分钟课程视频
 
-Agent 会先运行 `lecturecast onboard --json`，完成账户绑定后再驱动 Director 与
-本地制作流水线。
+安装器会把普通目录形式的旧 Skill 先做时间戳备份，再换成当前安装拥有的
+adapter；每次安装或升级后都必须新建宿主 Agent 任务。新任务会证明已加载当前
+Skill，随后只执行 CLI 返回的唯一 `workflow.next_action`。缺失或过期的 Skill
+摘要会在项目写入和本地渲染前硬阻断。
 
 ---
 

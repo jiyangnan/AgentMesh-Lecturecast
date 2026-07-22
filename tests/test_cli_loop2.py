@@ -12,6 +12,7 @@ from lecturecast.errors import LectureCastError
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 runner = CliRunner()
+HOST_ARGS = ["--adapter", "codex", "--host-contract", "1.0.0"]
 
 
 @pytest.fixture(autouse=True)
@@ -27,14 +28,28 @@ def allow_commercial_commands(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_project_init_and_resume_are_machine_readable(tmp_path: Path) -> None:
     created = runner.invoke(
         app,
-        ["project", "init", str(tmp_path), "--name", "CLI handoff", "--json"],
+        [
+            "project",
+            "init",
+            str(tmp_path),
+            "--name",
+            "CLI handoff",
+            *HOST_ARGS,
+            "--json",
+        ],
     )
     assert created.exit_code == 0, created.output
     initial = json.loads(created.stdout)
+    assert initial["workflow"]["next_action"]["id"] == "source.prepare"
 
-    resumed = runner.invoke(app, ["project", "resume", str(tmp_path), "--json"])
+    resumed = runner.invoke(
+        app, ["project", "resume", str(tmp_path), *HOST_ARGS, "--json"]
+    )
     assert resumed.exit_code == 0, resumed.output
-    assert json.loads(resumed.stdout) == initial
+    resumed_payload = json.loads(resumed.stdout)
+    assert resumed_payload["project"] == initial["project"]
+    assert resumed_payload["host_workflow"]["adapter"]["kind"] == "codex"
+    assert resumed_payload["workflow"]["next_action"]["id"] == "agent.status"
 
 
 @pytest.mark.parametrize("command", ["init", "resume"])
@@ -49,7 +64,9 @@ def test_project_commands_fail_closed_without_commercial_access(
         )
 
     monkeypatch.setattr("lecturecast.commands.project.require_commercial_access", deny)
-    result = runner.invoke(app, ["project", command, str(tmp_path), "--json"])
+    result = runner.invoke(
+        app, ["project", command, str(tmp_path), *HOST_ARGS, "--json"]
+    )
 
     assert result.exit_code == 1
     assert json.loads(result.stderr)["code"] == "monthly_pass_required"
@@ -82,7 +99,15 @@ def test_manifest_verify_and_preflight_fixture() -> None:
 def test_manifest_full_script_requires_explicit_digest_bound_approval(tmp_path: Path) -> None:
     created = runner.invoke(
         app,
-        ["project", "init", str(tmp_path), "--name", "Script review", "--json"],
+        [
+            "project",
+            "init",
+            str(tmp_path),
+            "--name",
+            "Script review",
+            *HOST_ARGS,
+            "--json",
+        ],
     )
     assert created.exit_code == 0, created.output
 
@@ -100,6 +125,7 @@ def test_manifest_full_script_requires_explicit_digest_bound_approval(tmp_path: 
     review_payload = json.loads(review.stdout)
     assert review_payload["script"][0]["narration"]
     assert review_payload["approval"]["approved"] is False
+    assert review_payload["workflow"]["next_action"]["id"] == "manifest.approve"
 
     blocked = runner.invoke(app, ["manifest", "approval", str(tmp_path), "--json"])
     assert blocked.exit_code == 1
@@ -116,6 +142,9 @@ def test_manifest_full_script_requires_explicit_digest_bound_approval(tmp_path: 
         ],
     )
     assert approved.exit_code == 0, approved.output
+    assert json.loads(approved.stdout)["workflow"]["next_action"]["id"] == (
+        "render.local"
+    )
 
     ready = runner.invoke(app, ["manifest", "approval", str(tmp_path), "--json"])
     assert ready.exit_code == 0, ready.output
@@ -127,7 +156,15 @@ def test_manifest_review_stays_read_only_but_approval_fails_closed_without_acces
 ) -> None:
     created = runner.invoke(
         app,
-        ["project", "init", str(tmp_path), "--name", "Commercial approval", "--json"],
+        [
+            "project",
+            "init",
+            str(tmp_path),
+            "--name",
+            "Commercial approval",
+            *HOST_ARGS,
+            "--json",
+        ],
     )
     assert created.exit_code == 0, created.output
 

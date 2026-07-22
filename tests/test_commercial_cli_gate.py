@@ -8,11 +8,13 @@ from typer.testing import CliRunner
 
 from lecturecast.cli import app
 from lecturecast.errors import LectureCastError
+from lecturecast.host_agent import HostWorkflowStore
 from lecturecast.project import ProjectStore
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 runner = CliRunner()
+HOST_ARGS = ["--adapter", "codex", "--host-contract", "1.0.0"]
 
 
 def _denied() -> None:
@@ -37,7 +39,15 @@ def test_project_init_is_hard_gated_before_local_state_creation(
 
     result = runner.invoke(
         app,
-        ["project", "init", str(tmp_path), "--name", "blocked", "--json"],
+        [
+            "project",
+            "init",
+            str(tmp_path),
+            "--name",
+            "blocked",
+            *HOST_ARGS,
+            "--json",
+        ],
     )
 
     _assert_denied(result)
@@ -49,12 +59,15 @@ def test_project_resume_and_capabilities_are_gated_without_mutation(
 ) -> None:
     store = ProjectStore(tmp_path)
     store.init(name="existing")
+    HostWorkflowStore(tmp_path).bind(adapter="codex", contract_version="1.0.0")
     project_before = store.project_path.read_bytes()
     monkeypatch.setattr(
         "lecturecast.commands.project.require_commercial_access", _denied
     )
 
-    resumed = runner.invoke(app, ["project", "resume", str(tmp_path), "--json"])
+    resumed = runner.invoke(
+        app, ["project", "resume", str(tmp_path), *HOST_ARGS, "--json"]
+    )
     capabilities = runner.invoke(
         app, ["project", "capabilities", str(tmp_path), "--json"]
     )
@@ -102,6 +115,8 @@ def test_director_resume_is_gated_before_local_rebind(
             str(tmp_path),
             "--adapter",
             "codex",
+            "--host-contract",
+            "1.0.0",
             "--json",
         ],
     )

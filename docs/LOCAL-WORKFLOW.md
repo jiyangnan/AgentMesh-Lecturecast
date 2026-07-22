@@ -3,7 +3,8 @@
 This is the only production path for the commercial LectureCast client. Before
 using it:
 
-1. `lecturecast onboard --json` reports `workflow.ready: true`;
+1. the exact host-Skill command, such as `lecturecast onboard --adapter codex
+   --host-contract 1.0.0 --json`, reports `workflow.ready: true`;
 2. the Director returned a verified signed `ProductionManifest`;
 3. the human explicitly approved the 10-credit generation;
 4. the complete signed script was shown and explicitly approved.
@@ -15,8 +16,8 @@ WSL are not. See [SUPPORTED-PLATFORMS.md](SUPPORTED-PLATFORMS.md).
 ## 1. Resume durable project state
 
 ```bash
-lecturecast project resume ./my-video --json
-lecturecast director resume ./my-video --adapter codex --json
+lecturecast project resume ./my-video --adapter codex --host-contract 1.0.0 --json
+lecturecast director resume ./my-video --adapter codex --host-contract 1.0.0 --json
 lecturecast director status ./my-video --json
 ```
 

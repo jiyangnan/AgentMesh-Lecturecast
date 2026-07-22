@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from lecturecast.assets import materialize_manifest_assets
+from lecturecast.host_agent import require_project_host_workflow
 from lecturecast.timing import render_timing_from_audio_plan
 
 
@@ -27,6 +28,8 @@ def main() -> None:
     parser.add_argument("--public-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+
+    require_project_host_workflow(args.project_root)
 
     overrides_document = object_from(args.overrides)
     signed_manifest = object_from(args.manifest)

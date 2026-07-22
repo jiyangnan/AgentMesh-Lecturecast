@@ -11,20 +11,39 @@ LectureCast. There is no separate LectureCast pass.
 
 ## Commercial gate
 
-Run `lecturecast onboard --json` before every new or resumed task. Continue only
+Run the host-specific command declared by the loaded Skill, for example
+`lecturecast onboard --adapter codex --host-contract 1.0.0 --json`, before every
+new or resumed task. Continue only
 when `workflow.ready` is true. When `requires_user_action` is true, show the exact
 `user_prompt`, follow `next_suggested`, and wait for the human before continuing.
 Never offer an account-free route or silently continue when commercial access is
 missing.
+
+The adapter and contract arguments are not cosmetic. They prove that the current
+host task loaded the installer-owned Skill. Project creation/resume writes a
+digest-bound `.lecturecast/host-workflow.json`; every Director mutation,
+Manifest approval/preflight and official render entrypoint validates it. If the
+CLI reports `client_upgrade_required`, stop and start a new host task. Do not
+copy the contract version into an older task, edit the receipt, or invoke helper
+scripts directly.
+
+After every successful command, execute only its returned
+`workflow.next_action`. If a recovery/read-only response has no workflow field,
+run `lecturecast agent status <project-path> --adapter <current-host>
+--host-contract 1.0.0 --json`. The only substitutions allowed are the exact
+stable IDs from a returned DecisionCardSet and values explicitly obtained from
+the human or local project. Stop at every action marked
+`requires_user_approval`.
 
 ## State rule
 
 The local project is the durable state source. Never reconstruct IDs from chat history.
 
 ```bash
-lecturecast project resume <project-path> --json
+lecturecast project resume <project-path> \
+  --adapter <codex|claude-code|openclaw> --host-contract 1.0.0 --json
 lecturecast director resume <project-path> \
-  --adapter <codex|claude-code|openclaw|text> \
+  --adapter <codex|claude-code|openclaw> --host-contract 1.0.0 \
   --json
 lecturecast director next <project-path> --json
 ```
@@ -35,7 +54,8 @@ On every existing Director project, run `director resume` with the current host 
 
 ## Start
 
-1. Confirm `lecturecast onboard --json` reports `workflow.ready: true`.
+1. Confirm the host-specific `lecturecast onboard --adapter ... --host-contract
+   1.0.0 --json` reports `workflow.ready: true`.
 2. Create or resume a local project.
 3. Write a bounded UTF-8 source-summary JSON containing exactly `source_type`, `title`, `summary`, and `language`. The user-confirmed summary must contain at least 20 characters of concrete facts or explicitly state the intended general framework. Do not include media, transcripts, local paths or credentials.
 4. Run:

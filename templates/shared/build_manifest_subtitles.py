@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from lecturecast.timing import validate_audio_timing_plan
+from lecturecast.host_agent import require_project_host_workflow
 from subtitle_font import subtitle_font_name
 
 
@@ -97,6 +98,8 @@ def main() -> None:
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("--timing", type=Path)
     args = parser.parse_args()
+    if args.manifest.parent.name == ".lecturecast":
+        require_project_host_workflow(args.manifest.parent.parent)
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     timing = json.loads(args.timing.read_text(encoding="utf-8")) if args.timing else None
     items = cues(manifest, timing)

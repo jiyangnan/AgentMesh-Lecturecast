@@ -102,6 +102,7 @@ ok "shim at $SHIM_DIR/lecturecast"
 
 # --- host-specific commercial workflow Skill; conflicts block safe onboarding ---
 bash "$INSTALL_DIR/scripts/manage_adapters.sh" install
+"$VENV/bin/lecturecast" agent adapters --json
 
 # --- distinguish CLI installation from renderer readiness ---
 DOCTOR_JSON=$("$VENV/bin/lecturecast" doctor --json)
@@ -125,16 +126,18 @@ case ":$PATH:" in
 esac
 
 echo
-bold "Commercial onboarding gate:"
+bold "Commercial and host-session onboarding gate:"
 "$VENV/bin/lecturecast" onboard --json
 echo
-bold "Follow the onboarding result:"
-echo "    lecturecast onboard --json   # agent-readable account + renderer readiness"
+bold "Start a NEW host-agent task and run its exact Skill command:"
+echo "    Codex:       lecturecast onboard --adapter codex --host-contract 1.0.0 --json"
+echo "    Claude Code: lecturecast onboard --adapter claude-code --host-contract 1.0.0 --json"
+echo "    OpenClaw:    lecturecast onboard --adapter openclaw --host-contract 1.0.0 --json"
 echo "    lecturecast auth login       # when onboarding asks for an API Key"
 echo
 echo "A paid AgentMesh360 account and at least 10 shared credits are required."
 echo "Account center: https://agentmesh360.com/app/"
 echo "Original media, voice, rendering and exports remain on this machine."
-echo "If this agent session started before installation, open a new session and paste:"
-echo "    请读取最新版 LectureCast Skill，先运行 lecturecast onboard --json，再继续。"
+echo "The installer cannot attest the already-running agent session. Always open a new session."
+echo "Paste: 请读取最新版 LectureCast Skill，严格执行机器返回的唯一 next_action，不要手工跳步。"
 echo "Or generate an exact handoff payload: lecturecast director handoff <project-path> --json"

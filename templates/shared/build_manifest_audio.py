@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 
 from lecturecast.protocol import ProductionManifest, canonical_digest
+from lecturecast.host_agent import require_project_host_workflow
 from lecturecast.timing import AudioTimingError, build_audio_timing_plan
 
 
@@ -172,6 +173,8 @@ def main() -> None:
     parser.add_argument("--timing-out", type=Path)
     parser.add_argument("--reuse", action="store_true")
     args = parser.parse_args()
+    if args.manifest.parent.name == ".lecturecast":
+        require_project_host_workflow(args.manifest.parent.parent)
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     if manifest["voice"]["engine"] not in {"edge", "minimax"}:
         raise SystemExit("unsupported local voice engine")
