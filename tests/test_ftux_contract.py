@@ -40,6 +40,8 @@ def test_repeat_install_can_reuse_current_editable_package_without_network() -> 
     assert "INSTALLED_VERSION" in macos
     assert "lecturecast package already current" in windows
     assert "$InstalledVersion" in windows
+    assert "read_text(encoding='utf-8')" in windows
+    assert "version('lecturecast')" in windows
 
 
 def test_official_remotion_templates_pass_the_mandatory_compliance_terms() -> None:
