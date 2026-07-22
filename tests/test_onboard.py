@@ -3,6 +3,7 @@ from __future__ import annotations
 from lecturecast.auth import AuthStatus
 from lecturecast.commercial import CommercialAccess
 from lecturecast.commands import onboard as onboard_module
+from lecturecast.errors import LectureCastError
 
 
 def _renderer(ready: bool) -> dict[str, object]:
@@ -62,6 +63,36 @@ def test_missing_key_returns_agent_readable_user_action(monkeypatch) -> None:
     assert result["workflow"]["blocked_by"] == ["api_key_required"]
     assert result["next_suggested"] == "https://agentmesh360.com/app/"
     assert "lecturecast auth login" in result["user_prompt"]
+
+
+def test_unavailable_keychain_is_a_recoverable_onboarding_state(monkeypatch) -> None:
+    def unavailable_keychain() -> AuthStatus:
+        raise LectureCastError(
+            code="missing_credential",
+            message="无法读取系统凭证存储。",
+            next_action="请设置 LECTURECAST_API_KEY 环境变量后重试。",
+            cause="KeyringError",
+        )
+
+    monkeypatch.setattr(onboard_module, "auth_status", unavailable_keychain)
+    monkeypatch.setattr(
+        onboard_module,
+        "get_api_key",
+        lambda: (_ for _ in ()).throw(AssertionError("must not read twice")),
+    )
+    monkeypatch.setattr(onboard_module, "_renderer", lambda _root=None: _renderer(True))
+    monkeypatch.setattr(onboard_module, "_director", lambda: _director())
+
+    result = onboard_module.onboarding_status(
+        adapter="codex", host_contract="1.0.0"
+    )
+
+    assert result["ok"] is False
+    assert result["workflow"]["blocked_by"] == ["api_key_required"]
+    assert result["auth"]["error"]["code"] == "missing_credential"
+    assert result["auth"]["error"]["cause"] == "KeyringError"
+    assert result["user_prompt"] == "无法读取系统凭证存储。"
+    assert result["next_suggested"].startswith("请设置 LECTURECAST_API_KEY")
 
 
 def test_paid_account_and_renderer_make_workflow_ready(monkeypatch) -> None:

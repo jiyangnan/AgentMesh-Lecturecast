@@ -32,7 +32,10 @@ def load_component_catalog() -> tuple[dict[str, Any], str]:
 
 
 def _default_run(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, check=False, capture_output=True, text=True, timeout=5)
+    # The first invocation of an Intel Homebrew ffmpeg under Rosetta can take
+    # longer than five seconds on an otherwise healthy Apple Silicon machine.
+    # Capability detection is read-only, so allow that one-time startup cost.
+    return subprocess.run(command, check=False, capture_output=True, text=True, timeout=15)
 
 
 def _version(command: Sequence[str], *, runner: RunCommand) -> str | None:

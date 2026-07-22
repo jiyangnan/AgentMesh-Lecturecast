@@ -5,7 +5,7 @@ from typing import Any
 
 import typer
 
-from ..auth import auth_status, get_api_key
+from ..auth import AuthStatus, auth_status, get_api_key
 from ..capabilities import capture_capabilities, doctor_report
 from ..commercial import CommercialClient, missing_commercial_access
 from ..config import ACCOUNT_URL, PRICING_URL
@@ -51,8 +51,17 @@ def onboarding_status(
     host_contract: str | None = None,
 ) -> dict[str, Any]:
     host_agent = host_adapter_status(adapter, host_contract)
-    credential = auth_status()
-    key = get_api_key()
+    credential_error: dict[str, Any] | None = None
+    try:
+        credential = auth_status()
+        key = get_api_key()
+    except LectureCastError as error:
+        # A host agent can run in an isolated HOME where the native keychain is
+        # unavailable. Onboarding is a status probe, so report the recovery
+        # action instead of crashing the installer with a traceback.
+        credential = AuthStatus(False, None, False)
+        key = None
+        credential_error = error.to_dict()
     account_error: dict[str, Any] | None = None
     if key is None:
         access = missing_commercial_access()
@@ -111,6 +120,9 @@ def onboarding_status(
             if host_agent["bootstrap_argv"]
             else "重新运行官方安装器并新建受支持的宿主 Agent 任务"
         )
+    elif credential_error is not None:
+        user_prompt = str(credential_error["message"])
+        next_suggested = str(credential_error["next_action"])
     elif not credential.configured:
         user_prompt = (
             "请前往 AgentMesh360 账户中心创建通用 API Key，然后运行 "
@@ -205,6 +217,7 @@ def onboarding_status(
         "auth": {
             **credential.to_dict(),
             "valid": access.valid,
+            "error": credential_error,
         },
         "account": (
             {
