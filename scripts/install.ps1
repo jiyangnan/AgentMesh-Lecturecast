@@ -124,8 +124,8 @@ if ($env:LECTURECAST_SKIP_PIP_UPGRADE -ne "1") {
 $InstallSpec = $InstallDir
 $SourceVersionScript = "import pathlib, sys, tomllib; print(tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))['project']['version'])"
 $SourceVersion = (& $VenvPython -c $SourceVersionScript (Join-Path $InstallDir "pyproject.toml")).Trim()
-$InstalledVersionScript = "import importlib.metadata; print(importlib.metadata.version('lecturecast'))"
-$InstalledVersion = (& $VenvPython -c $InstalledVersionScript 2>$null)
+$InstalledVersionScript = "import importlib.metadata as m; print(next((d.version for d in m.distributions() if (d.metadata.get('Name') or '').lower() == 'lecturecast'), ''))"
+[string]$InstalledVersion = (& $VenvPython -c $InstalledVersionScript)
 $PackageCurrent = $false
 if ($LASTEXITCODE -eq 0 -and $InstalledVersion.Trim() -eq $SourceVersion) {
     & $VenvPython -c 'import cryptography, edge_tts, jsonschema, keyring, lecturecast.cli, rich, typer' 2>$null
