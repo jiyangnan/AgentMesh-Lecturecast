@@ -71,7 +71,10 @@ def host_adapter_status(
 ) -> dict[str, Any]:
     clean_adapter = (adapter or "").strip()
     root = repo_root or _repo_root()
-    user_home = home or Path(os.path.expanduser("~"))
+    # Windows' expanduser() follows USERPROFILE and ignores a deliberately
+    # isolated HOME. The installer and host-agent canaries both use HOME, so
+    # honor it before falling back to the platform profile directory.
+    user_home = home or Path(os.environ.get("HOME") or Path.home())
     bootstrap_argv = (
         [
             "lecturecast",

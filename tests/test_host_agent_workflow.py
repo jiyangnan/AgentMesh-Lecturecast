@@ -35,6 +35,22 @@ def test_current_installer_owned_skill_attests_loaded_contract() -> None:
     assert status["expected_skill_digest"] == status["installed_skill_digest"]
 
 
+def test_host_adapter_discovery_honors_explicit_home_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    target = tmp_path / ".codex" / "skills" / "lecturecast"
+    target.parent.mkdir(parents=True)
+    target.symlink_to(root / "skills" / "codex", target_is_directory=True)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    status = host_adapter_status("codex", HOST_WORKFLOW_CONTRACT_VERSION)
+
+    assert status["ready"] is True
+    assert status["installed_path"] == str(target)
+
+
 def test_same_skill_without_loaded_contract_requires_a_new_host_task() -> None:
     status = host_adapter_status("codex", None)
 
