@@ -116,7 +116,9 @@ def test_manifest_full_script_requires_explicit_digest_bound_approval(tmp_path: 
     store = ProjectStore(tmp_path)
     state = store.load()
     store.save_manifest(
-        json.loads((FIXTURE_DIR / "production-manifest-v1.json").read_text()),
+        json.loads(
+            (FIXTURE_DIR / "production-manifest-v1.json").read_text(encoding="utf-8")
+        ),
         expected_revision=state.revision,
     )
 
@@ -173,7 +175,9 @@ def test_manifest_review_stays_read_only_but_approval_fails_closed_without_acces
     store = ProjectStore(tmp_path)
     state = store.load()
     store.save_manifest(
-        json.loads((FIXTURE_DIR / "production-manifest-v1.json").read_text()),
+        json.loads(
+            (FIXTURE_DIR / "production-manifest-v1.json").read_text(encoding="utf-8")
+        ),
         expected_revision=state.revision,
     )
 
