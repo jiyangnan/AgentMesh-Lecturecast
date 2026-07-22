@@ -79,6 +79,93 @@ def test_manifest_verify_and_preflight_fixture() -> None:
     assert json.loads(preflight.stdout)["passed"] is True
 
 
+def test_manifest_full_script_requires_explicit_digest_bound_approval(tmp_path: Path) -> None:
+    created = runner.invoke(
+        app,
+        ["project", "init", str(tmp_path), "--name", "Script review", "--json"],
+    )
+    assert created.exit_code == 0, created.output
+
+    from lecturecast.project import ProjectStore
+
+    store = ProjectStore(tmp_path)
+    state = store.load()
+    store.save_manifest(
+        json.loads((FIXTURE_DIR / "production-manifest-v1.json").read_text()),
+        expected_revision=state.revision,
+    )
+
+    review = runner.invoke(app, ["manifest", "review", str(tmp_path), "--json"])
+    assert review.exit_code == 0, review.output
+    review_payload = json.loads(review.stdout)
+    assert review_payload["script"][0]["narration"]
+    assert review_payload["approval"]["approved"] is False
+
+    blocked = runner.invoke(app, ["manifest", "approval", str(tmp_path), "--json"])
+    assert blocked.exit_code == 1
+    assert json.loads(blocked.stderr)["code"] == "brief_not_ready"
+
+    approved = runner.invoke(
+        app,
+        [
+            "manifest",
+            "approve",
+            str(tmp_path),
+            "--confirm-reviewed-script",
+            "--json",
+        ],
+    )
+    assert approved.exit_code == 0, approved.output
+
+    ready = runner.invoke(app, ["manifest", "approval", str(tmp_path), "--json"])
+    assert ready.exit_code == 0, ready.output
+    assert json.loads(ready.stdout)["approved"] is True
+
+
+def test_manifest_review_stays_read_only_but_approval_fails_closed_without_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    created = runner.invoke(
+        app,
+        ["project", "init", str(tmp_path), "--name", "Commercial approval", "--json"],
+    )
+    assert created.exit_code == 0, created.output
+
+    from lecturecast.project import ProjectStore
+
+    store = ProjectStore(tmp_path)
+    state = store.load()
+    store.save_manifest(
+        json.loads((FIXTURE_DIR / "production-manifest-v1.json").read_text()),
+        expected_revision=state.revision,
+    )
+
+    def deny() -> None:
+        raise LectureCastError(
+            code="monthly_pass_required",
+            message="需要有效的 AgentMesh360 月度通行证。",
+            next_action="运行 lecturecast onboard --json。",
+        )
+
+    monkeypatch.setattr("lecturecast.commands.manifest.require_commercial_access", deny)
+    review = runner.invoke(app, ["manifest", "review", str(tmp_path), "--json"])
+    assert review.exit_code == 0, review.output
+
+    blocked = runner.invoke(
+        app,
+        [
+            "manifest",
+            "approve",
+            str(tmp_path),
+            "--confirm-reviewed-script",
+            "--json",
+        ],
+    )
+    assert blocked.exit_code == 1
+    assert json.loads(blocked.stderr)["code"] == "monthly_pass_required"
+    assert not store.manifest_approval_path.exists()
+
+
 def test_auth_login_only_accepts_hidden_prompt() -> None:
     result = runner.invoke(app, ["auth", "login", "--help"])
 

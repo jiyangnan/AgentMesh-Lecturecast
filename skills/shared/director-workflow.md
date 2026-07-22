@@ -103,7 +103,30 @@ The CLI reserves and persists one stable generation ID before the network call. 
 
 ## Local production and deletion
 
-After `status` returns `ready`, run the local preflight and local render workflow. Voice, subtitles, Remotion, ffmpeg, covers and all media remain local. The signed Manifest is read-only; timeline and style edits go into `local-overrides.json`.
+After `status` returns `ready`, do not start TTS or rendering yet. First run:
+
+```bash
+lecturecast manifest review <project-path> --json
+```
+
+Show the complete returned script, planned section durations and timing result to
+the human. Wait for explicit `通过 / approved`. Only then record approval of the
+exact Manifest and script digests:
+
+```bash
+lecturecast manifest approve <project-path> \
+  --confirm-reviewed-script --json
+```
+
+Approval fails closed when the narration is too sparse or dense for the signed
+timeline. The bundled render workflow also checks that this approval receipt is
+current before it creates audio.
+
+Then run the local preflight and local render workflow. Voice, subtitles,
+Remotion, ffmpeg, covers and all media remain local. The signed Manifest is
+read-only. Per-section TTS produces a digest-bound local audio timing plan; that
+measured execution plan drives scene timing, subtitles and final duration.
+Intentional style edits remain in `local-overrides.json`.
 
 To remove retained cloud content while keeping local work:
 

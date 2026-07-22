@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from lecturecast.assets import materialize_manifest_assets
+from lecturecast.timing import render_timing_from_audio_plan
 
 
 def object_from(path: Path) -> dict:
@@ -21,14 +22,16 @@ def main() -> None:
     parser.add_argument("--overrides", type=Path, required=True)
     parser.add_argument("--variant", choices=("vertical", "landscape"), required=True)
     parser.add_argument("--audio-src")
+    parser.add_argument("--timing", type=Path)
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--public-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
     overrides_document = object_from(args.overrides)
+    signed_manifest = object_from(args.manifest)
     manifest = materialize_manifest_assets(
-        object_from(args.manifest),
+        signed_manifest,
         project_root=args.project_root,
         public_root=args.public_root,
     )
@@ -37,6 +40,11 @@ def main() -> None:
         "overrides": overrides_document.get("overrides", overrides_document),
         "variant": args.variant,
     }
+    if args.timing:
+        props["renderTiming"] = render_timing_from_audio_plan(
+            signed_manifest,
+            object_from(args.timing),
+        )
     if args.audio_src:
         props["audioSrc"] = args.audio_src
     args.output.parent.mkdir(parents=True, exist_ok=True)

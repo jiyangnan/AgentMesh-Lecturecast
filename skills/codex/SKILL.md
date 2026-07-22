@@ -14,6 +14,12 @@ routes to AgentMesh360 pricing. Never offer or take an account-free fallback.
 After onboarding succeeds, follow the complete [shared Director workflow](../shared/director-workflow.md).
 All original media, voice, editing and rendering remain local.
 
+When the signed Manifest becomes ready, use `lecturecast manifest review` and
+surface the complete narration to the user. Do not run TTS or render until the
+user explicitly approves and `lecturecast manifest approve
+--confirm-reviewed-script` succeeds. Never replace a rejected signed script with
+an improvised local script.
+
 For each Director question, use Codex's native interactive choice control when it is available. Preserve the server's 2–3 options, label/description and stable `option_id`. If the control accepts at most three questions, split larger card sets and call `lecturecast director next --json` after every submitted answer. If native choices are unavailable, use the shared numbered-text fallback.
 
 When continuing an existing Director project, first run `lecturecast director resume <project-path> --adapter codex --json`. This verifies commercial access with AgentMesh360 Core, sends no Director request, and deducts no credit; run it before any further Director operation.

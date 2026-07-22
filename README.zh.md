@@ -121,12 +121,11 @@ Agent 会读 [AGENTS.md](AGENTS.md) / [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFL
 主题
   ▼ 商业 onboarding（付费账户 + 至少 10 credits）
   ▼ Director 选择 + 签名 ProductionManifest
-  ▼ 定范围（平台 / 深度 / 系列品牌 / 嗓音）
-  ▼ 7 段草稿脚本           （你审批）
-  ▼ 配音   python3 build_audio_mm.py   （Edge 免费、MiniMax 可选）
-  ▼ 场景   Remotion（竖版 + 横版）
-  ▼ 渲染   build_video.sh / build_video.ps1 <slug>（ffmpeg + libass）
-  ▼ 工作目录里出 2 个 mp4 + 2 张封面
+  ▼ 展示完整签名脚本         （你审批）
+  ▼ 分节本地配音 + 实测执行时间线
+  ▼ 场景与字幕共同使用同一份实测时间线
+  ▼ 渲染   build_manifest_video.sh / .ps1（Remotion + ffmpeg + libass）
+  ▼ 旁白覆盖验收 + 2 个 mp4 + 2 张封面
 ```
 
 ### 配音 — 默认免费，MiniMax 可选（BYOK 自带 key）

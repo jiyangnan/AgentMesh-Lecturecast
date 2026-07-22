@@ -11,6 +11,7 @@ from .capabilities import load_component_catalog
 from .errors import LectureCastError
 from .manifest import PublicKeyRing, VerificationResult, verify_manifest
 from .protocol import ClientCapabilities, ProductionManifest, canonical_digest
+from .timing import narration_timing_issues
 
 
 @dataclass(frozen=True)
@@ -138,6 +139,22 @@ def run_preflight(
         "voice_engine",
         payload["voice"]["engine"] in available["tts_engines"],
         "客户端支持 Manifest 指定的旁白引擎。",
+    )
+    timing_issues = narration_timing_issues(document)
+    check(
+        "narration_timing",
+        not timing_issues,
+        "旁白文本密度与 Manifest 时间线一致。"
+        + (
+            " 失败："
+            + ", ".join(
+                f"{issue.section_id or issue.scope}:{issue.code}:"
+                f"{issue.units_per_minute:.1f}/min"
+                for issue in timing_issues
+            )
+            if timing_issues
+            else ""
+        ),
     )
     check(
         "local_runtime",

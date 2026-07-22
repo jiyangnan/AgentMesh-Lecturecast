@@ -51,11 +51,19 @@ export type LocalOverrides = {
   cover?: {eyebrow?: string; title?: string; subtitle?: string};
 };
 
+export type RenderTiming = {
+  schema_version: '1.0';
+  manifest_digest: string;
+  total_frames: number;
+  scene_timing: Record<string, {start_frame: number; duration_frames: number}>;
+};
+
 export type DirectorRenderProps = {
   manifest: ProductionManifest;
   overrides: LocalOverrides;
   variant: 'vertical' | 'landscape';
   audioSrc?: string;
+  renderTiming?: RenderTiming;
 };
 
 export type SceneComponentProps = {
@@ -63,4 +71,3 @@ export type SceneComponentProps = {
   props: Record<string, unknown>;
   variant: 'vertical' | 'landscape';
 };
-

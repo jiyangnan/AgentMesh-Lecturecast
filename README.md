@@ -126,12 +126,11 @@ The agent reads [AGENTS.md](AGENTS.md) / [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WOR
 topic
   ▼ commercial onboarding (paid account + ≥10 credits)
   ▼ Director choices + signed ProductionManifest
-  ▼ scope (platforms / depth / series brand / voice)
-  ▼ 7-section draft script         (your approval gate)
-  ▼ voiceover   python3 build_audio_mm.py   (Edge free, MiniMax optional)
-  ▼ scenes      Remotion (vertical + landscape)
-  ▼ render      build_video.sh / build_video.ps1 <slug> (ffmpeg + libass)
-  ▼ 2 mp4s + 2 covers in your working dir
+  ▼ complete signed script review  (your approval gate)
+  ▼ per-section local TTS + measured execution timeline
+  ▼ scenes + subtitles driven by the same measured timing plan
+  ▼ render      build_manifest_video.sh / .ps1 (Remotion + ffmpeg + libass)
+  ▼ narration-coverage validation + 2 mp4s + 2 covers
 ```
 
 ### Voiceover — free by default, MiniMax optional (BYOK)

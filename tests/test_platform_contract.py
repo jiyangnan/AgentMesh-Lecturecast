@@ -66,7 +66,7 @@ def test_platform_runbook_is_canonical_and_cross_linked() -> None:
     assert "Linux distributions and WSL are not supported" in platform_doc
     assert "SUPPORTED-PLATFORMS.md" in agents
     assert "SUPPORTED-PLATFORMS.md" in workflow
-    assert "build_video.ps1" in workflow
+    assert "build_manifest_video.ps1" in workflow
 
 
 def test_platform_specific_installers_fail_closed() -> None:
@@ -103,6 +103,18 @@ def test_windows_native_entrypoints_cover_install_and_both_render_routes() -> No
         content = (ROOT / relative).read_text(encoding="utf-8")
         for token in tokens:
             assert token in content, f"{relative} is missing {token!r}"
+
+
+def test_manifest_build_is_episode_scoped_and_cannot_skip_audio_contract() -> None:
+    for relative in (
+        "templates/shared/build_manifest_video.sh",
+        "templates/shared/build_manifest_video.ps1",
+    ):
+        content = (ROOT / relative).read_text(encoding="utf-8")
+        assert "PROJECT_ROOT/remotion" in content or 'Join-Path $ProjectRoot "remotion"' in content
+        assert "LECTURECAST_SKIP_AUDIO" not in content
+        assert "audio-timing.json" in content
+        assert "--narration" in content
 
 
 def test_windows_adapter_upgrades_directory_skills_with_a_backup() -> None:

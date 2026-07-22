@@ -51,7 +51,11 @@ are not supported; read [docs/SUPPORTED-PLATFORMS.md](docs/SUPPORTED-PLATFORMS.m
    **[skills/shared/director-workflow.md](skills/shared/director-workflow.md)**:
    source summary → choice cards → Brief approval → explicit 10-credit approval →
    signed ProductionManifest.
-4. **Execute the approved Manifest locally** with
+4. **Review and approve the complete signed script:** run
+   `lecturecast manifest review <project> --json`, show every narration section
+   to the human, wait for explicit approval, then run
+   `lecturecast manifest approve <project> --confirm-reviewed-script --json`.
+5. **Execute the approved Manifest locally** with
    **[docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)** and deliver two mp4s plus
    two covers.
 

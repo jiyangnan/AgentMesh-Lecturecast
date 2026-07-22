@@ -6,6 +6,7 @@ import json
 import re
 from pathlib import Path
 
+from lecturecast.timing import validate_audio_timing_plan
 from subtitle_font import subtitle_font_name
 
 
@@ -34,12 +35,25 @@ def chunks(text: str, limit: int = 22) -> list[str]:
     return result or [text.strip()]
 
 
-def cues(manifest: dict) -> list[tuple[float, float, str]]:
+def cues(manifest: dict, timing: dict | None = None) -> list[tuple[float, float, str]]:
     fps = manifest["fps"]
+    timing_by_section = {}
+    if timing is not None:
+        validate_audio_timing_plan(manifest, timing)
+        timing_by_section = {item["section_id"]: item for item in timing["sections"]}
     result: list[tuple[float, float, str]] = []
     for section in manifest["script"]:
-        start = section["start_frame"] / fps
-        duration = section["duration_frames"] / fps
+        execution = timing_by_section.get(section["section_id"])
+        start_frame = (
+            execution["render_start_frame"] if execution is not None else section["start_frame"]
+        )
+        duration_frames = (
+            execution["render_duration_frames"]
+            if execution is not None
+            else section["duration_frames"]
+        )
+        start = start_frame / fps
+        duration = duration_frames / fps
         texts = chunks(section["narration"])
         total = sum(max(1, len(text)) for text in texts)
         cursor = start
@@ -81,9 +95,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("manifest", type=Path)
     parser.add_argument("output_dir", type=Path)
+    parser.add_argument("--timing", type=Path)
     args = parser.parse_args()
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-    items = cues(manifest)
+    timing = json.loads(args.timing.read_text(encoding="utf-8")) if args.timing else None
+    items = cues(manifest, timing)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     srt = []

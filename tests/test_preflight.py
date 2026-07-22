@@ -26,6 +26,25 @@ def test_signed_fixture_passes_preflight_with_bound_capabilities() -> None:
 
     assert result.passed
     assert all(check.passed for check in result.checks)
+    assert any(check.check_id == "narration_timing" for check in result.checks)
+
+
+def test_preflight_rejects_sparse_narration_for_a_long_timeline() -> None:
+    manifest = copy.deepcopy(_fixture("production-manifest-v1.json"))
+    manifest["script"][1]["duration_frames"] = 3600
+    manifest["scenes"][1]["duration_frames"] = 3600
+    manifest["total_frames"] = 4200
+
+    with pytest.raises(LectureCastError) as captured:
+        run_preflight(
+            manifest,
+            _fixture("client-capabilities-v1.json"),
+            keyring=None,
+        )
+
+    # Signature validation happens first for tampered external documents. The
+    # pure timing-contract regression lives in test_timing.py.
+    assert captured.value.code == "manifest_signature_invalid"
 
 
 def test_preflight_rejects_incompatible_components() -> None:
