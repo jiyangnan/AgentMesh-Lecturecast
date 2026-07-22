@@ -32,6 +32,16 @@ def test_installers_run_the_machine_readable_commercial_gate() -> None:
     assert "& $LectureCastExe onboard --json" in windows
 
 
+def test_repeat_install_can_reuse_current_editable_package_without_network() -> None:
+    macos = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+    windows = (ROOT / "scripts" / "install.ps1").read_text(encoding="utf-8")
+
+    assert "lecturecast package already current" in macos
+    assert "INSTALLED_VERSION" in macos
+    assert "lecturecast package already current" in windows
+    assert "$InstalledVersion" in windows
+
+
 def test_official_remotion_templates_pass_the_mandatory_compliance_terms() -> None:
     matches: list[str] = []
     for path in (ROOT / "templates" / "remotion" / "src").rglob("*.tsx"):

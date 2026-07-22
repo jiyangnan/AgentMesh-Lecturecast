@@ -122,13 +122,24 @@ if ($env:LECTURECAST_SKIP_PIP_UPGRADE -ne "1") {
     Assert-LastExit "pip upgrade"
 }
 $InstallSpec = $InstallDir
-& $VenvPip install --quiet -e $InstallSpec
-if ($LASTEXITCODE -ne 0) {
-    Write-Warn "package installation failed; retrying with full diagnostics"
-    & $VenvPip install -e $InstallSpec
-    Assert-LastExit "package installation"
+$SourceVersion = (& $VenvPython -c 'import pathlib, sys, tomllib; print(tomllib.loads(pathlib.Path(sys.argv[1]).read_text())["project"]["version"])' (Join-Path $InstallDir "pyproject.toml")).Trim()
+$InstalledVersion = (& $VenvPython -c 'import importlib.metadata; print(importlib.metadata.version("lecturecast"))' 2>$null)
+$PackageCurrent = $false
+if ($LASTEXITCODE -eq 0 -and $InstalledVersion.Trim() -eq $SourceVersion) {
+    & $VenvPython -c 'import cryptography, edge_tts, jsonschema, keyring, lecturecast.cli, rich, typer' 2>$null
+    $PackageCurrent = $LASTEXITCODE -eq 0
 }
-Write-Ok "lecturecast package installed"
+if ($PackageCurrent) {
+    Write-Ok "lecturecast package already current ($SourceVersion)"
+} else {
+    & $VenvPip install --quiet -e $InstallSpec
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "package installation failed; retrying with full diagnostics"
+        & $VenvPip install -e $InstallSpec
+        Assert-LastExit "package installation"
+    }
+    Write-Ok "lecturecast package installed"
+}
 
 $ShimDir = Join-Path $HOME ".local\bin"
 $Shim = Join-Path $ShimDir "lecturecast.cmd"
