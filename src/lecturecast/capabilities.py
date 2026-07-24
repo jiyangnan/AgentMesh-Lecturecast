@@ -32,7 +32,10 @@ def load_component_catalog() -> tuple[dict[str, Any], str]:
 
 
 def _default_run(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, check=False, capture_output=True, text=True, timeout=5)
+    # The first invocation of an Intel Homebrew ffmpeg under Rosetta can take
+    # longer than five seconds on an otherwise healthy Apple Silicon machine.
+    # Capability detection is read-only, so allow that one-time startup cost.
+    return subprocess.run(command, check=False, capture_output=True, text=True, timeout=15)
 
 
 def _version(command: Sequence[str], *, runner: RunCommand) -> str | None:
@@ -162,14 +165,15 @@ def doctor_report(capabilities: ClientCapabilities) -> dict[str, Any]:
         missing.append("ffmpeg-libass")
     next_actions: list[str] = []
     if runtime["node_version"] is None:
-        next_actions.append("安装 Node 20+；macOS 可运行：brew install node")
+        next_actions.append("安装 Node.js 20+ LTS，并确认 node 与 npm 在当前 PATH")
     if runtime["remotion_version"] is None:
         next_actions.append(
             "在 LectureCast 项目中复制 remotion 模板并运行：cd remotion && npm install"
         )
     if runtime["ffmpeg_version"] is None:
         next_actions.append(
-            "安装带 libass 的 ffmpeg；macOS 可运行：brew install ffmpeg-full"
+            "安装带 libass 的 ffmpeg；macOS 使用 ffmpeg-full，并只在当前 shell "
+            "将其 bin 放到 PATH 最前面"
         )
     elif not runtime["has_libass"]:
         next_actions.append(

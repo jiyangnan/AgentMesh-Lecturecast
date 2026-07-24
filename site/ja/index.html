@@ -294,7 +294,7 @@
 <pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
 <span class="c-prompt">PS&gt;</span> <span class="c-cmd">irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex</span>
 <span class="c-prompt">$</span> <span class="c-cmd">lecturecast auth login</span>   <span class="c-dim"># AgentMesh360 共通 API キーを検証・紐付け</span>
-<span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --json</span> <span class="c-dim"># 有料アカウント、credits、レンダラーの準備状況</span>
+<span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --adapter codex --host-contract 1.0.0 --json</span> <span class="c-dim"># 新しいタスクの Skill、アカウント、レンダラー</span>
 
 <span class="c-dim"># 商用 onboarding → Director → 10 credits 承認 → ローカルで 2 形式を制作</span></pre>
     </div>

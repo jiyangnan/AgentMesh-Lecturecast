@@ -10,17 +10,40 @@ Set-StrictMode -Version Latest
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir "..\.."))
-$RemotionDir = Join-Path $RepoRoot "templates\remotion"
 $ProjectRoot = [System.IO.Path]::GetFullPath($ProjectRoot)
+$RemotionDir = if ($env:LECTURECAST_REMOTION_DIR) {
+    [System.IO.Path]::GetFullPath($env:LECTURECAST_REMOTION_DIR)
+} else {
+    Join-Path $ProjectRoot "remotion"
+}
 if ([string]::IsNullOrWhiteSpace($Capabilities)) {
     $Capabilities = Join-Path $ProjectRoot ".lecturecast\client-capabilities.json"
 }
 $Manifest = Join-Path $ProjectRoot ".lecturecast\production-manifest.json"
 $Overrides = Join-Path $ProjectRoot ".lecturecast\local-overrides.json"
 $BuildDir = Join-Path $ProjectRoot ".lecturecast\build"
+$Timing = Join-Path $BuildDir "audio-timing.json"
 $OutputDir = Join-Path $ProjectRoot "output"
-$PythonBin = if ($env:PYTHON_BIN) { $env:PYTHON_BIN } else { "python" }
-$LectureCastBin = if ($env:LECTURECAST_BIN) { $env:LECTURECAST_BIN } else { "lecturecast" }
+$InstallerPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+$InstallerLectureCast = Join-Path $RepoRoot ".venv\Scripts\lecturecast.exe"
+$PythonBin = if ($env:PYTHON_BIN) {
+    $env:PYTHON_BIN
+} elseif (Test-Path -LiteralPath $InstallerPython) {
+    $InstallerPython
+} else {
+    "python"
+}
+$LectureCastBin = if ($env:LECTURECAST_BIN) {
+    $env:LECTURECAST_BIN
+} elseif (Test-Path -LiteralPath $InstallerLectureCast) {
+    $InstallerLectureCast
+} else {
+    "lecturecast"
+}
+
+if (-not (Test-Path -LiteralPath (Join-Path $RemotionDir "package.json"))) {
+    throw "Episode Remotion runtime missing: $RemotionDir. Copy templates/remotion into PROJECT_ROOT/remotion and run npm install first."
+}
 
 function Assert-LastExit([string]$Description) {
     if ($LASTEXITCODE -ne 0) {
@@ -30,30 +53,31 @@ function Assert-LastExit([string]$Description) {
 
 New-Item -ItemType Directory -Force -Path $BuildDir, $OutputDir, (Join-Path $RemotionDir "public\director") | Out-Null
 
-Write-Host "[1/7] Verify signature, capabilities, and component contract"
+Write-Host "[1/8] Verify full-script approval receipt"
+& $LectureCastBin manifest approval $ProjectRoot --json
+Assert-LastExit "manifest script approval"
+
+Write-Host "[2/8] Verify signature, capabilities, narration timing, and component contract"
 & $LectureCastBin manifest preflight $Manifest --capabilities $Capabilities --project-root $ProjectRoot --json
 Assert-LastExit "manifest preflight"
 
-Write-Host "[2/7] Build local narration and subtitles"
-$AudioSrc = ""
-if ($env:LECTURECAST_SKIP_AUDIO -ne "1") {
-    & $PythonBin (Join-Path $ScriptDir "build_manifest_audio.py") $Manifest (Join-Path $BuildDir "narration.mp3") --reuse
-    Assert-LastExit "manifest audio"
-    Copy-Item -LiteralPath (Join-Path $BuildDir "narration.mp3") -Destination (Join-Path $RemotionDir "public\director\narration.mp3") -Force
-    $AudioSrc = "director/narration.mp3"
-}
-& $PythonBin (Join-Path $ScriptDir "build_manifest_subtitles.py") $Manifest $BuildDir
+Write-Host "[3/8] Build section narration and measure the execution timeline"
+& $PythonBin (Join-Path $ScriptDir "build_manifest_audio.py") $Manifest (Join-Path $BuildDir "narration.mp3") --timing-out $Timing --reuse
+Assert-LastExit "manifest audio"
+Copy-Item -LiteralPath (Join-Path $BuildDir "narration.mp3") -Destination (Join-Path $RemotionDir "public\director\narration.mp3") -Force
+$AudioSrc = "director/narration.mp3"
+& $PythonBin (Join-Path $ScriptDir "build_manifest_subtitles.py") $Manifest $BuildDir --timing $Timing
 Assert-LastExit "manifest subtitles"
 
-Write-Host "[3/7] Prepare declarative Remotion props"
+Write-Host "[4/8] Prepare local execution props from signed plan and measured audio"
 $PropsVertical = Join-Path $BuildDir "props-vertical.json"
 $PropsLandscape = Join-Path $BuildDir "props-landscape.json"
-& $PythonBin (Join-Path $ScriptDir "prepare_manifest_render.py") --manifest $Manifest --overrides $Overrides --variant vertical --audio-src $AudioSrc --project-root $ProjectRoot --public-root (Join-Path $RemotionDir "public") --output $PropsVertical
+& $PythonBin (Join-Path $ScriptDir "prepare_manifest_render.py") --manifest $Manifest --overrides $Overrides --variant vertical --audio-src $AudioSrc --timing $Timing --project-root $ProjectRoot --public-root (Join-Path $RemotionDir "public") --output $PropsVertical
 Assert-LastExit "vertical render props"
-& $PythonBin (Join-Path $ScriptDir "prepare_manifest_render.py") --manifest $Manifest --overrides $Overrides --variant landscape --audio-src $AudioSrc --project-root $ProjectRoot --public-root (Join-Path $RemotionDir "public") --output $PropsLandscape
+& $PythonBin (Join-Path $ScriptDir "prepare_manifest_render.py") --manifest $Manifest --overrides $Overrides --variant landscape --audio-src $AudioSrc --timing $Timing --project-root $ProjectRoot --public-root (Join-Path $RemotionDir "public") --output $PropsLandscape
 Assert-LastExit "landscape render props"
 
-Write-Host "[4/7] Render Director videos"
+Write-Host "[5/8] Render Director videos"
 Push-Location $RemotionDir
 try {
     & npx.cmd remotion render DirectorVertical (Join-Path $BuildDir "video-vertical-raw.mp4") "--props=$PropsVertical"
@@ -73,7 +97,7 @@ Assert-LastExit "vertical cover name"
 $CoverLandscape = (& $PythonBin (Join-Path $ScriptDir "manifest_output_name.py") $Manifest cover "16:9").Trim()
 Assert-LastExit "landscape cover name"
 
-Write-Host "[5/7] Burn subtitles locally"
+Write-Host "[6/8] Burn subtitles locally"
 $ManifestData = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json
 if ($ManifestData.subtitles.burn_in) {
     Push-Location $BuildDir
@@ -90,7 +114,7 @@ if ($ManifestData.subtitles.burn_in) {
     Copy-Item -LiteralPath (Join-Path $BuildDir "video-landscape-raw.mp4") -Destination (Join-Path $OutputDir $VideoLandscape) -Force
 }
 
-Write-Host "[6/7] Render both covers"
+Write-Host "[7/8] Render both covers"
 Push-Location $RemotionDir
 try {
     & npx.cmd remotion still DirectorCoverVertical (Join-Path $OutputDir $CoverVertical) "--props=$PropsVertical"
@@ -101,7 +125,7 @@ try {
     Pop-Location
 }
 
-Write-Host "[7/7] Validate output dimensions, duration, and files"
-& $PythonBin (Join-Path $ScriptDir "validate_manifest_outputs.py") $Manifest $OutputDir
+Write-Host "[8/8] Validate dimensions, measured duration, narration coverage, and files"
+& $PythonBin (Join-Path $ScriptDir "validate_manifest_outputs.py") $Manifest $OutputDir --timing $Timing --narration (Join-Path $BuildDir "narration.mp3")
 Assert-LastExit "manifest output validation"
 Write-Host "Complete: $OutputDir" -ForegroundColor Green

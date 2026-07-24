@@ -86,8 +86,9 @@ pip install -e .
 
 The install includes secure credential storage and signed-Manifest verification.
 You'll also need **Node 20+**, **Python 3.11+**, and **ffmpeg with libass** for the
-local render; `lecturecast onboard --json` reports both commercial and renderer
-readiness.
+local render. In a newly started host-agent task, the installed Skill runs the
+host-specific `lecturecast onboard --adapter ... --host-contract 1.0.0 --json`
+command and reports adapter, commercial, and renderer readiness.
 
 ---
 
@@ -97,16 +98,17 @@ Lecturecast is **agent-driven**. Bind and verify commercial access first:
 
 ```bash
 lecturecast auth login      # validates and stores a universal AgentMesh360 API Key
-lecturecast onboard --json  # account, credits, renderer, blockers, next action
+lecturecast onboard --adapter codex --host-contract 1.0.0 --json
+lecturecast agent status ./my-video --adapter codex --host-contract 1.0.0 --json
 lecturecast version    # installed version
 ```
 
 When `workflow.ready` is true, Director commands use the same local project across Codex, Claude Code and OpenClaw:
 
 ```bash
-lecturecast project init ./my-video --name "My video" --json
+lecturecast project init ./my-video --name "My video" --adapter codex --host-contract 1.0.0 --json
 lecturecast director start ./my-video --source source-summary.json --adapter codex --json
-lecturecast director resume ./my-video --adapter openclaw --json  # after a host handoff
+lecturecast director resume ./my-video --adapter openclaw --host-contract 1.0.0 --json  # after a host handoff
 lecturecast director next ./my-video --json
 ```
 
@@ -126,12 +128,11 @@ The agent reads [AGENTS.md](AGENTS.md) / [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WOR
 topic
   ▼ commercial onboarding (paid account + ≥10 credits)
   ▼ Director choices + signed ProductionManifest
-  ▼ scope (platforms / depth / series brand / voice)
-  ▼ 7-section draft script         (your approval gate)
-  ▼ voiceover   python3 build_audio_mm.py   (Edge free, MiniMax optional)
-  ▼ scenes      Remotion (vertical + landscape)
-  ▼ render      build_video.sh / build_video.ps1 <slug> (ffmpeg + libass)
-  ▼ 2 mp4s + 2 covers in your working dir
+  ▼ complete signed script review  (your approval gate)
+  ▼ per-section local TTS + measured execution timeline
+  ▼ scenes + subtitles driven by the same measured timing plan
+  ▼ render      build_manifest_video.sh / .ps1 (Remotion + ffmpeg + libass)
+  ▼ narration-coverage validation + 2 mp4s + 2 covers
 ```
 
 ### Voiceover — free by default, MiniMax optional (BYOK)
@@ -154,8 +155,11 @@ install, the full local workflow, BYOK, and troubleshooting.
 ## Use it from your AI agent
 
 The installer registers the current commercial Skill for detected agent hosts.
-It never overwrites a custom `lecturecast` Skill: a conflict blocks onboarding
-and prints a migration action instead of silently leaving a stale workflow.
+An ordinary legacy `lecturecast` Skill directory is preserved as a timestamped
+backup and replaced by the installer-owned adapter. A symlink/junction owned by
+another installation remains a blocking conflict. Start a new host-agent task
+after every install or upgrade; an already-running task cannot attest the new
+Skill.
 Manual links are:
 
 ```bash
@@ -168,8 +172,9 @@ Then in your agent chat:
 
 > 做一条关于 RAG 工作原理的 5 分钟课程视频
 
-The agent runs `lecturecast onboard --json`, completes account binding when
-needed, and only then drives the Director and local production pipeline.
+The new agent task loads the current Skill, attests its host contract, and then
+executes only the CLI's machine-returned `workflow.next_action`. Project and
+render mutations fail closed if the bound Skill digest is missing or stale.
 
 ---
 

@@ -40,7 +40,7 @@ export const RemotionRoot: React.FC = () => {
         width={1080}
         height={1920}
         defaultProps={verticalDirectorProps}
-        calculateMetadata={({props}) => ({durationInFrames: props.manifest.total_frames, fps: props.manifest.fps})}
+        calculateMetadata={({props}) => ({durationInFrames: props.renderTiming?.total_frames ?? props.manifest.total_frames, fps: props.manifest.fps})}
       />
       <Composition
         id="DirectorLandscape"
@@ -50,7 +50,7 @@ export const RemotionRoot: React.FC = () => {
         width={1920}
         height={1080}
         defaultProps={landscapeDirectorProps}
-        calculateMetadata={({props}) => ({durationInFrames: props.manifest.total_frames, fps: props.manifest.fps})}
+        calculateMetadata={({props}) => ({durationInFrames: props.renderTiming?.total_frames ?? props.manifest.total_frames, fps: props.manifest.fps})}
       />
       <Composition
         id="DirectorCoverVertical"

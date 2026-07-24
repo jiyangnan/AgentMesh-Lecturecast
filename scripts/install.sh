@@ -84,11 +84,28 @@ if [ "${LECTURECAST_SKIP_PIP_UPGRADE:-0}" != "1" ]; then
   "$VENV/bin/pip" install --quiet --upgrade pip
 fi
 INSTALL_SPEC="$INSTALL_DIR"
-if ! "$VENV/bin/pip" install --quiet -e "$INSTALL_SPEC"; then
-  err "package installation failed; retrying with full diagnostics"
-  "$VENV/bin/pip" install -e "$INSTALL_SPEC"
+SOURCE_VERSION=$("$VENV/bin/python" -c \
+  'import pathlib, sys, tomllib; print(tomllib.loads(pathlib.Path(sys.argv[1]).read_text())["project"]["version"])' \
+  "$INSTALL_DIR/pyproject.toml")
+INSTALLED_VERSION=$("$VENV/bin/python" -c \
+  'import importlib.metadata; print(importlib.metadata.version("lecturecast"))' \
+  2>/dev/null || true)
+PACKAGE_CURRENT=0
+if [ "$INSTALLED_VERSION" = "$SOURCE_VERSION" ] && \
+   "$VENV/bin/python" -c \
+     'import cryptography, edge_tts, jsonschema, keyring, lecturecast.cli, rich, typer' \
+     >/dev/null 2>&1; then
+  PACKAGE_CURRENT=1
 fi
-ok "lecturecast package installed"
+if [ "$PACKAGE_CURRENT" = "1" ]; then
+  ok "lecturecast package already current ($SOURCE_VERSION)"
+else
+  if ! "$VENV/bin/pip" install --quiet -e "$INSTALL_SPEC"; then
+    err "package installation failed; retrying with full diagnostics"
+    "$VENV/bin/pip" install -e "$INSTALL_SPEC"
+  fi
+  ok "lecturecast package installed"
+fi
 
 # --- shim on PATH ---
 SHIM_DIR="$HOME/.local/bin"
@@ -102,6 +119,7 @@ ok "shim at $SHIM_DIR/lecturecast"
 
 # --- host-specific commercial workflow Skill; conflicts block safe onboarding ---
 bash "$INSTALL_DIR/scripts/manage_adapters.sh" install
+"$VENV/bin/lecturecast" agent adapters --json
 
 # --- distinguish CLI installation from renderer readiness ---
 DOCTOR_JSON=$("$VENV/bin/lecturecast" doctor --json)
@@ -125,16 +143,18 @@ case ":$PATH:" in
 esac
 
 echo
-bold "Commercial onboarding gate:"
+bold "Commercial and host-session onboarding gate:"
 "$VENV/bin/lecturecast" onboard --json
 echo
-bold "Follow the onboarding result:"
-echo "    lecturecast onboard --json   # agent-readable account + renderer readiness"
+bold "Start a NEW host-agent task and run its exact Skill command:"
+echo "    Codex:       lecturecast onboard --adapter codex --host-contract 1.0.0 --json"
+echo "    Claude Code: lecturecast onboard --adapter claude-code --host-contract 1.0.0 --json"
+echo "    OpenClaw:    lecturecast onboard --adapter openclaw --host-contract 1.0.0 --json"
 echo "    lecturecast auth login       # when onboarding asks for an API Key"
 echo
 echo "A paid AgentMesh360 account and at least 10 shared credits are required."
 echo "Account center: https://agentmesh360.com/app/"
 echo "Original media, voice, rendering and exports remain on this machine."
-echo "If this agent session started before installation, open a new session and paste:"
-echo "    请读取最新版 LectureCast Skill，先运行 lecturecast onboard --json，再继续。"
+echo "The installer cannot attest the already-running agent session. Always open a new session."
+echo "Paste: 请读取最新版 LectureCast Skill，严格执行机器返回的唯一 next_action，不要手工跳步。"
 echo "Or generate an exact handoff payload: lecturecast director handoff <project-path> --json"

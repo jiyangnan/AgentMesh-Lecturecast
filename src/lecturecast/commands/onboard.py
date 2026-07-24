@@ -5,12 +5,17 @@ from typing import Any
 
 import typer
 
-from ..auth import auth_status, get_api_key
+from ..auth import AuthStatus, auth_status, get_api_key
 from ..capabilities import capture_capabilities, doctor_report
 from ..commercial import CommercialClient, missing_commercial_access
 from ..config import ACCOUNT_URL, PRICING_URL
 from ..director import probe_director
 from ..errors import LectureCastError
+from ..host_agent import (
+    HOST_WORKFLOW_CONTRACT_VERSION,
+    HostWorkflowStore,
+    host_adapter_status,
+)
 from .output import emit
 
 
@@ -39,9 +44,24 @@ def _director() -> dict[str, Any]:
         }
 
 
-def onboarding_status(project_root: Path | None = None) -> dict[str, Any]:
-    credential = auth_status()
-    key = get_api_key()
+def onboarding_status(
+    project_root: Path | None = None,
+    *,
+    adapter: str | None = None,
+    host_contract: str | None = None,
+) -> dict[str, Any]:
+    host_agent = host_adapter_status(adapter, host_contract)
+    credential_error: dict[str, Any] | None = None
+    try:
+        credential = auth_status()
+        key = get_api_key()
+    except LectureCastError as error:
+        # A host agent can run in an isolated HOME where the native keychain is
+        # unavailable. Onboarding is a status probe, so report the recovery
+        # action instead of crashing the installer with a traceback.
+        credential = AuthStatus(False, None, False)
+        key = None
+        credential_error = error.to_dict()
     account_error: dict[str, Any] | None = None
     if key is None:
         access = missing_commercial_access()
@@ -75,19 +95,35 @@ def onboarding_status(project_root: Path | None = None) -> dict[str, Any]:
         }
     )
     blocked_by: list[str] = []
+    if not host_agent["ready"]:
+        blocked_by.append(str(host_agent["reason"]))
     if not credential.configured:
         blocked_by.append("api_key_required")
     elif not access.valid:
         blocked_by.append(access.reason)
     elif not access.usable:
         blocked_by.append(access.reason)
-    if not renderer["ready"]:
+    if project_root is not None and not renderer["ready"]:
         blocked_by.append("renderer_not_ready")
     if access.usable and not director["reachable"]:
         blocked_by.append("director_unavailable")
 
     ready = not blocked_by
-    if not credential.configured:
+    if not host_agent["ready"]:
+        user_prompt = (
+            "当前宿主 Agent 会话没有证明已加载本次安装的 LectureCast Skill。"
+            "请停止当前流程，新建宿主 Agent 任务，读取最新版 Skill，并运行其中的精确 "
+            "onboard 命令；不要在旧会话中手工继续。"
+        )
+        next_suggested = (
+            " ".join(host_agent["bootstrap_argv"])
+            if host_agent["bootstrap_argv"]
+            else "重新运行官方安装器并新建受支持的宿主 Agent 任务"
+        )
+    elif credential_error is not None:
+        user_prompt = str(credential_error["message"])
+        next_suggested = str(credential_error["next_action"])
+    elif not credential.configured:
         user_prompt = (
             "请前往 AgentMesh360 账户中心创建通用 API Key，然后运行 "
             "lecturecast auth login；完成后重新运行 lecturecast onboard --json。"
@@ -107,12 +143,71 @@ def onboarding_status(project_root: Path | None = None) -> dict[str, Any]:
             "请保留本地项目并稍后重试。"
         )
         next_suggested = "lecturecast onboard --json"
-    elif not renderer["ready"]:
+    elif project_root is not None and not renderer["ready"]:
         user_prompt = "商业账户已绑定；请按 renderer.next_actions 补齐本地渲染能力。"
         next_suggested = "lecturecast doctor --json"
     else:
         user_prompt = None
-        next_suggested = "lecturecast project init <project-path> --name <name> --json"
+        next_suggested = (
+            "lecturecast project init <project-path> --name <name> "
+            f"--adapter {adapter} --host-contract {HOST_WORKFLOW_CONTRACT_VERSION} --json"
+        )
+
+    if ready:
+        next_action = {
+            "id": "project.init",
+            "kind": "command",
+            "argv": [
+                "lecturecast",
+                "project",
+                "init",
+                "<project-path>",
+                "--name",
+                "<name>",
+                "--adapter",
+                adapter,
+                "--host-contract",
+                HOST_WORKFLOW_CONTRACT_VERSION,
+                "--json",
+            ],
+            "mutates": True,
+            "requires_user_approval": False,
+        }
+    elif not host_agent["ready"]:
+        next_action = {
+            "id": "host.restart",
+            "kind": "new_host_task",
+            "argv": host_agent["bootstrap_argv"],
+            "mutates": False,
+            "requires_user_approval": True,
+        }
+    elif project_root is not None and not renderer["ready"]:
+        next_action = {
+            "id": "renderer.setup",
+            "kind": "local_setup",
+            "steps": renderer["next_actions"],
+            "then_argv": [
+                "lecturecast",
+                "agent",
+                "status",
+                str(project_root.expanduser().resolve()),
+                "--adapter",
+                adapter,
+                "--host-contract",
+                HOST_WORKFLOW_CONTRACT_VERSION,
+                "--json",
+            ],
+            "mutates": True,
+            "requires_user_approval": False,
+        }
+    else:
+        next_action = {
+            "id": "onboarding.blocked",
+            "kind": "user_action",
+            "target": next_suggested,
+            "mutates": False,
+            "requires_user_approval": True,
+        }
 
     return {
         "ok": ready,
@@ -122,6 +217,7 @@ def onboarding_status(project_root: Path | None = None) -> dict[str, Any]:
         "auth": {
             **credential.to_dict(),
             "valid": access.valid,
+            "error": credential_error,
         },
         "account": (
             {
@@ -133,6 +229,7 @@ def onboarding_status(project_root: Path | None = None) -> dict[str, Any]:
             else None
         ),
         "cloud_access": access.to_dict(),
+        "host_agent": host_agent,
         "director": director,
         "renderer": renderer,
         "workflow": {
@@ -140,6 +237,7 @@ def onboarding_status(project_root: Path | None = None) -> dict[str, Any]:
             "blocked_by": blocked_by,
             "requires_user_action": not ready,
             "next_suggested": next_suggested,
+            "next_action": next_action,
         },
         "requires_user_action": not ready,
         "user_prompt": user_prompt,
@@ -153,10 +251,33 @@ def onboard(
         "--project-root",
         help="LectureCast project containing remotion/node_modules.",
     ),
+    adapter: str | None = typer.Option(
+        None,
+        "--adapter",
+        help="Current native host: codex, claude-code, or openclaw.",
+    ),
+    host_contract: str | None = typer.Option(
+        None,
+        "--host-contract",
+        help="Exact workflow contract declared by the currently loaded Skill.",
+    ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Bind commercial access and report the next safe agent action."""
-    payload = onboarding_status(project_root)
+    payload = onboarding_status(
+        project_root,
+        adapter=adapter,
+        host_contract=host_contract,
+    )
+    if (
+        payload["ok"]
+        and project_root is not None
+        and (project_root / ".lecturecast" / "project.json").is_file()
+    ):
+        payload["host_workflow"] = HostWorkflowStore(project_root).bind(
+            adapter=str(adapter),
+            contract_version=str(host_contract),
+        )
     message = (
         "LectureCast 商业工作流已就绪。"
         if payload["ok"]

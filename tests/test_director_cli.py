@@ -179,10 +179,21 @@ class FakeDirectorClient:
         }
 
 
-def _init_project(path: Path) -> Path:
+def _init_project(path: Path, adapter: str = "codex") -> Path:
     created = runner.invoke(
         app,
-        ["project", "init", str(path), "--name", "Director CLI", "--json"],
+        [
+            "project",
+            "init",
+            str(path),
+            "--name",
+            "Director CLI",
+            "--adapter",
+            adapter,
+            "--host-contract",
+            "1.0.0",
+            "--json",
+        ],
     )
     assert created.exit_code == 0, created.output
     source = path / "source-summary.json"
@@ -236,11 +247,29 @@ def _confirm(path: Path, client: FakeDirectorClient) -> None:
         ],
     )
     assert answered.exit_code == 0, answered.output
+    assert json.loads(answered.stdout)["workflow"]["next_action"]["id"] == (
+        "director.brief.show"
+    )
     confirmed = runner.invoke(
         app, ["director", "brief", "confirm", str(path), "--json"]
     )
     assert confirmed.exit_code == 0, confirmed.output
-    assert json.loads(confirmed.stdout)["session"]["status"] == "confirmed"
+    confirmed_payload = json.loads(confirmed.stdout)
+    assert confirmed_payload["session"]["status"] == "confirmed"
+    assert confirmed_payload["workflow"]["next_action"] == {
+        "id": "director.generate",
+        "kind": "command",
+        "argv": [
+            "lecturecast",
+            "director",
+            "generate",
+            str(path.resolve()),
+            "--json",
+        ],
+        "mutates": True,
+        "requires_user_approval": True,
+        "credit_cost": 10,
+    }
 
 
 def _save_fixture_capabilities(path: Path) -> None:
@@ -263,6 +292,7 @@ def test_full_director_cli_flow_is_machine_readable_and_resumable(
     started = _start(tmp_path, source)
     assert started["director"]["server_url"] == "https://director.example.test/v1"
     assert started["decision_card_set"] == client.card
+    assert started["workflow"]["next_action"]["id"] == "director.answer"
 
     handoff = runner.invoke(
         app, ["director", "handoff", str(tmp_path), "--json"]
@@ -278,6 +308,8 @@ def test_full_director_cli_flow_is_machine_readable_and_resumable(
         str(tmp_path.resolve()),
         "--adapter",
         "openclaw",
+        "--host-contract",
+        "1.0.0",
         "--json",
     ]
     assert "api_key" not in handoff.stdout.lower()
@@ -310,6 +342,9 @@ def test_full_director_cli_flow_is_machine_readable_and_resumable(
     )
     assert generated.exit_code == 0, generated.output
     assert json.loads(generated.stdout)["generation"]["status"] == "queued"
+    assert json.loads(generated.stdout)["workflow"]["next_action"]["id"] == (
+        "director.status"
+    )
 
     status = runner.invoke(
         app, ["director", "status", str(tmp_path), "--json"]
@@ -318,6 +353,7 @@ def test_full_director_cli_flow_is_machine_readable_and_resumable(
     ready = json.loads(status.stdout)
     assert ready["generation"]["status"] == "ready"
     assert ready["project"]["status"] == "manifest_ready"
+    assert ready["workflow"]["next_action"]["id"] == "manifest.review"
     assert (tmp_path / ".lecturecast" / "production-manifest.json").exists()
 
     deleted = runner.invoke(
@@ -342,7 +378,7 @@ def test_all_agent_adapters_receive_identical_stable_option_ids(
     for adapter in ("codex", "claude-code", "openclaw"):
         path = tmp_path / adapter
         path.mkdir()
-        source = _init_project(path)
+        source = _init_project(path, adapter=adapter)
         client = FakeDirectorClient()
         monkeypatch.setattr(
             "lecturecast.commands.director._make_client", lambda _url, c=client: c
@@ -385,7 +421,9 @@ def test_same_project_rebinds_across_agents_and_refreshes_capabilities_before_cr
             "--adapter",
             "claude-code",
             "--adapter-version",
-            "2.3.4",
+            "1.0.0",
+            "--host-contract",
+            "1.0.0",
             "--json",
         ],
     )
@@ -416,7 +454,9 @@ def test_same_project_rebinds_across_agents_and_refreshes_capabilities_before_cr
             "--adapter",
             "openclaw",
             "--adapter-version",
-            "3.1.0",
+            "1.0.0",
+            "--host-contract",
+            "1.0.0",
             "--json",
         ],
     )
@@ -431,7 +471,9 @@ def test_same_project_rebinds_across_agents_and_refreshes_capabilities_before_cr
             "--adapter",
             "openclaw",
             "--adapter-version",
-            "3.1.0",
+            "1.0.0",
+            "--host-contract",
+            "1.0.0",
             "--json",
         ],
     )
@@ -471,10 +513,10 @@ def test_same_project_rebinds_across_agents_and_refreshes_capabilities_before_cr
         ],
     )
     assert generated.exit_code == 0, generated.output
-    assert captured == [("openclaw", "3.1.0")]
+    assert captured == [("openclaw", "1.0.0")]
     assert client.generation_capabilities[-1]["adapter"] == {
         "kind": "openclaw",
-        "version": "3.1.0",
+        "version": "1.0.0",
     }
 
 
@@ -500,6 +542,8 @@ def test_director_resume_rejects_invalid_adapter_without_changing_state(
             "openclaw",
             "--adapter-version",
             "latest",
+            "--host-contract",
+            "1.0.0",
             "--json",
         ],
     )
@@ -575,6 +619,7 @@ def test_director_health_probe_sends_no_credential_or_media() -> None:
     assert call["url"] == "https://director.example.test/v1/health"
     assert "Authorization" not in call["headers"]
     assert call["payload"] is None
+    assert call["timeout"] == 15.0
 
 
 def test_director_health_probe_rejects_error_status() -> None:

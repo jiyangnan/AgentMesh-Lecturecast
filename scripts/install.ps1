@@ -122,13 +122,26 @@ if ($env:LECTURECAST_SKIP_PIP_UPGRADE -ne "1") {
     Assert-LastExit "pip upgrade"
 }
 $InstallSpec = $InstallDir
-& $VenvPip install --quiet -e $InstallSpec
-if ($LASTEXITCODE -ne 0) {
-    Write-Warn "package installation failed; retrying with full diagnostics"
-    & $VenvPip install -e $InstallSpec
-    Assert-LastExit "package installation"
+$SourceVersionScript = "import pathlib, sys, tomllib; print(tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))['project']['version'])"
+$SourceVersion = (& $VenvPython -c $SourceVersionScript (Join-Path $InstallDir "pyproject.toml")).Trim()
+$InstalledVersionScript = "import importlib.metadata as m; print(next((d.version for d in m.distributions() if (d.metadata.get('Name') or '').lower() == 'lecturecast'), ''))"
+[string]$InstalledVersion = (& $VenvPython -c $InstalledVersionScript)
+$PackageCurrent = $false
+if ($LASTEXITCODE -eq 0 -and $InstalledVersion.Trim() -eq $SourceVersion) {
+    & $VenvPython -c 'import cryptography, edge_tts, jsonschema, keyring, lecturecast.cli, rich, typer' 2>$null
+    $PackageCurrent = $LASTEXITCODE -eq 0
 }
-Write-Ok "lecturecast package installed"
+if ($PackageCurrent) {
+    Write-Ok "lecturecast package already current ($SourceVersion)"
+} else {
+    & $VenvPip install --quiet -e $InstallSpec
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "package installation failed; retrying with full diagnostics"
+        & $VenvPip install -e $InstallSpec
+        Assert-LastExit "package installation"
+    }
+    Write-Ok "lecturecast package installed"
+}
 
 $ShimDir = Join-Path $HOME ".local\bin"
 $Shim = Join-Path $ShimDir "lecturecast.cmd"
@@ -145,6 +158,8 @@ try {
 } finally {
     $env:LECTURECAST_DIR = $PreviousInstallDir
 }
+& $LectureCastExe agent adapters --json
+Assert-LastExit "adapter inspection"
 
 $DoctorJson = & $LectureCastExe doctor --json
 Assert-LastExit "lecturecast doctor"
@@ -167,16 +182,18 @@ if ($PathEntries -contains $ShimDir) {
 }
 
 Write-Host ""
-Write-Host "Commercial onboarding gate:" -ForegroundColor Cyan
+Write-Host "Commercial and host-session onboarding gate:" -ForegroundColor Cyan
 & $LectureCastExe onboard --json
 Assert-LastExit "commercial onboarding"
 Write-Host ""
-Write-Host "Follow the onboarding result:" -ForegroundColor Cyan
-Write-Host "    lecturecast onboard --json"
+Write-Host "Start a NEW host-agent task and run its exact Skill command:" -ForegroundColor Cyan
+Write-Host "    Codex:       lecturecast onboard --adapter codex --host-contract 1.0.0 --json"
+Write-Host "    Claude Code: lecturecast onboard --adapter claude-code --host-contract 1.0.0 --json"
+Write-Host "    OpenClaw:    lecturecast onboard --adapter openclaw --host-contract 1.0.0 --json"
 Write-Host "    lecturecast auth login    # when onboarding asks for an API Key"
 Write-Host ""
 Write-Host "A paid AgentMesh360 account and at least 10 shared credits are required."
 Write-Host "Account center: https://agentmesh360.com/app/"
 Write-Host "Original media, voice, rendering and exports remain on this machine."
-Write-Host "If this agent session started before installation, open a new session and paste:"
-Write-Host "    Read the current LectureCast Skill, run lecturecast onboard --json, then continue."
+Write-Host "The installer cannot attest the already-running agent session. Always open a new session."
+Write-Host "    Read the current LectureCast Skill and execute only the machine-returned next_action."
