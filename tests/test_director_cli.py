@@ -619,6 +619,7 @@ def test_director_health_probe_sends_no_credential_or_media() -> None:
     assert call["url"] == "https://director.example.test/v1/health"
     assert "Authorization" not in call["headers"]
     assert call["payload"] is None
+    assert call["timeout"] == 15.0
 
 
 def test_director_health_probe_rejects_error_status() -> None:

@@ -165,7 +165,7 @@ def probe_director(
     *,
     environment: Mapping[str, str] | None = None,
     transport: DirectorTransport | None = None,
-    timeout: float = 5.0,
+    timeout: float = 15.0,
 ) -> dict[str, Any]:
     """Verify that the production Director API is reachable without sending media."""
     resolved_url = resolve_server_url(server_url, environment=environment)

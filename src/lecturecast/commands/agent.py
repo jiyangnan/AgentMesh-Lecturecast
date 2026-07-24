@@ -26,7 +26,8 @@ def _command(action_id: str, argv: list[str], *, approval: bool = False) -> dict
         "id": action_id,
         "kind": "command",
         "argv": argv,
-        "mutates": action_id not in {"director.next", "manifest.review"},
+        "mutates": action_id
+        not in {"director.next", "director.brief.show", "manifest.review"},
         "requires_user_approval": approval,
     }
 
@@ -141,7 +142,6 @@ def _project_action(root: Path, adapter: str) -> tuple[str, dict[str, Any]]:
             _command(
                 "director.brief.show",
                 ["lecturecast", "director", "brief", "show", str(root), "--json"],
-                approval=True,
             ),
         )
     if session_status == "confirmed":

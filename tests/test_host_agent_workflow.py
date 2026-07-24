@@ -8,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from lecturecast.cli import app
+from lecturecast.commands.agent import _command
 from lecturecast.host_agent import (
     HOST_WORKFLOW_CONTRACT_VERSION,
     HostWorkflowStore,
@@ -23,6 +24,13 @@ HOST_ARGS = [
     "--host-contract",
     HOST_WORKFLOW_CONTRACT_VERSION,
 ]
+
+
+def test_brief_show_recovery_action_is_read_only_without_preapproval() -> None:
+    action = _command("director.brief.show", ["lecturecast", "director", "brief", "show"])
+
+    assert action["mutates"] is False
+    assert action["requires_user_approval"] is False
 
 
 def test_current_installer_owned_skill_attests_loaded_contract() -> None:
