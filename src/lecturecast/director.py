@@ -621,6 +621,37 @@ class DirectorStateStore:
             atomic_write_json(self.path, next_state.payload)
             return next_state
 
+    def release_refunded_generation(self, state: DirectorState) -> DirectorState:
+        with self.project._locked():
+            current = self._load_unlocked()
+            if current.revision != state.revision:
+                raise LectureCastError(
+                    code="project_revision_conflict",
+                    message="Director 状态已被另一个 Agent 更新。",
+                    next_action="重新运行 director status 后重试。",
+                    retryable=True,
+                )
+            if (
+                current.generation_id is None
+                or current.payload["generation_status"] != "credit_returned"
+            ):
+                raise LectureCastError(
+                    code="generation_conflict",
+                    message="只有已完成退款的 generation 才能释放本地稳定 ID。",
+                    next_action="继续查询原 generation_id，确认退款终态。",
+                )
+            payload = current.to_dict()
+            payload.update(
+                {
+                    "state_revision": current.revision + 1,
+                    "generation_id": None,
+                    "generation_status": None,
+                }
+            )
+            next_state = self._validate(payload)
+            atomic_write_json(self.path, next_state.payload)
+            return next_state
+
 
 def load_source_file(path: Path) -> dict[str, Any]:
     try:

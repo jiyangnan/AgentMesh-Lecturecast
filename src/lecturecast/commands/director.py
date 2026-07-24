@@ -664,6 +664,8 @@ def status(
             project = project_store.save_manifest(
                 manifest, expected_revision=project.revision
             )
+        if generation["status"] == "credit_returned":
+            state = state_store.release_refunded_generation(state)
         next_action = (
             _command_action(
                 "manifest.review",
@@ -677,6 +679,19 @@ def status(
                 approval=True,
             )
             if generation["status"] == "ready"
+            else _command_action(
+                "director.generate",
+                [
+                    "lecturecast",
+                    "director",
+                    "generate",
+                    str(directory.expanduser().resolve()),
+                    "--json",
+                ],
+                approval=True,
+                credit_cost=10,
+            )
+            if generation["status"] == "credit_returned"
             else _command_action(
                 "director.status",
                 [
@@ -697,6 +712,8 @@ def status(
                     "phase": (
                         "script_review_required"
                         if generation["status"] == "ready"
+                        else "credit_approval_required"
+                        if generation["status"] == "credit_returned"
                         else f"generation_{generation['status']}"
                     ),
                     "policy": "execute_only_returned_next_action",

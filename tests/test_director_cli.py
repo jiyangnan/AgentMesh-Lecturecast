@@ -66,7 +66,12 @@ def _session(
 
 
 class FakeDirectorClient:
-    def __init__(self, *, fail_first_generation: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_first_generation: bool = False,
+        final_generation_status: str = "ready",
+    ) -> None:
         self.card = _fixture("decision-card-set-v1.json")
         self.brief = _fixture("creative-brief-v1.json")
         self.manifest = _fixture("production-manifest-v1.json")
@@ -79,6 +84,7 @@ class FakeDirectorClient:
         self.generation_ids: list[str] = []
         self.generation_capabilities: list[dict[str, Any]] = []
         self.fail_first_generation = fail_first_generation
+        self.final_generation_status = final_generation_status
         self.generation_failures = 0
 
     def create_session(self, source: dict[str, Any]) -> dict[str, Any]:
@@ -164,10 +170,17 @@ class FakeDirectorClient:
         assert generation_id == "generation_demo_001"
         return {
             "generation_id": generation_id,
-            "status": "ready",
+            "status": self.final_generation_status,
             "updated_at": NOW,
-            "manifest": self.manifest,
+            "manifest": (
+                self.manifest if self.final_generation_status == "ready" else None
+            ),
             "deducted_credits": 10,
+            "credit_return_status": (
+                "returned"
+                if self.final_generation_status == "credit_returned"
+                else "not_required"
+            ),
         }
 
     def delete_session(self, session_id: str) -> dict[str, Any]:
@@ -588,6 +601,58 @@ def test_failed_generation_retry_reuses_reserved_id(
     )
     assert second.exit_code == 0, second.output
     assert client.generation_ids == ["generation_demo_001", "generation_demo_001"]
+
+
+def test_refunded_generation_releases_id_and_requires_new_credit_approval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = FakeDirectorClient(final_generation_status="credit_returned")
+    monkeypatch.setattr(
+        "lecturecast.commands.director._make_client", lambda _url: client
+    )
+    source = _init_project(tmp_path)
+    _start(tmp_path, source)
+    _confirm(tmp_path, client)
+    _save_fixture_capabilities(tmp_path)
+    generated = runner.invoke(
+        app,
+        [
+            "director",
+            "generate",
+            str(tmp_path),
+            "--generation-id",
+            "generation_demo_001",
+            "--json",
+        ],
+    )
+    assert generated.exit_code == 0, generated.output
+
+    refunded = runner.invoke(
+        app, ["director", "status", str(tmp_path), "--json"]
+    )
+    assert refunded.exit_code == 0, refunded.output
+    payload = json.loads(refunded.stdout)
+    assert payload["generation"]["status"] == "credit_returned"
+    assert payload["director"]["generation_id"] is None
+    assert payload["director"]["generation_status"] is None
+    assert payload["workflow"] == {
+        "phase": "credit_approval_required",
+        "policy": "execute_only_returned_next_action",
+        "next_action": {
+            "id": "director.generate",
+            "kind": "command",
+            "argv": [
+                "lecturecast",
+                "director",
+                "generate",
+                str(tmp_path.resolve()),
+                "--json",
+            ],
+            "mutates": True,
+            "requires_user_approval": True,
+            "credit_cost": 10,
+        },
+    }
 
 
 class RecordingTransport:
