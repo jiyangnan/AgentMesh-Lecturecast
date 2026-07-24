@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from .commands.auth import app as auth_app
+from .commands.agent import app as agent_app
 from .commands.director import app as director_app
 from .commands.doctor import doctor
 from .commands.manifest import app as manifest_app
@@ -21,6 +22,7 @@ from .commands.project import app as project_app
 app = typer.Typer(no_args_is_help=True, add_completion=False, rich_markup_mode="rich")
 console = Console()
 app.add_typer(auth_app, name="auth", help="Bind the required AgentMesh360 commercial account.")
+app.add_typer(agent_app, name="agent", help="Drive the current native host through one safe next action.")
 app.add_typer(director_app, name="director", help="Use the cloud creative Director.")
 app.add_typer(project_app, name="project", help="Create and resume durable local projects.")
 app.add_typer(manifest_app, name="manifest", help="Inspect and verify signed manifests.")
@@ -58,8 +60,9 @@ def workflow() -> None:
         "LectureCast requires a paid AgentMesh360 account and universal API Key. "
         "The cloud Director provides the signed creative plan; original media, voice, "
         "rendering and exports stay on this machine.\n\n"
-        "Start every agent run with [bold]lecturecast onboard --json[/bold]. Do not create "
-        "a project until workflow.ready is true. Then use the bundled templates for:\n"
+        "Start every agent run with the exact host-specific onboard command from the "
+        "installed Skill. Do not create a project until workflow.ready is true. After "
+        "each step, execute only the machine-returned workflow.next_action for:\n"
         "  script -> Edge/MiniMax TTS -> Remotion render -> ffmpeg subtitle burn -> covers\n\n"
         f"Agent runbook:   [bold]{agents}[/bold]\n"
         f"Full pipeline:   [bold]{local}[/bold]\n\n"

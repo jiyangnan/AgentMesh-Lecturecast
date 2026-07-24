@@ -36,10 +36,15 @@ are not supported; read [docs/SUPPORTED-PLATFORMS.md](docs/SUPPORTED-PLATFORMS.m
 
 ## Produce a video — the workflow
 
-1. **Verify commercial access first:** run `lecturecast onboard --json`.
+1. **Verify host contract and commercial access first:** run the exact command in
+   the installed host Skill, such as `lecturecast onboard --adapter codex
+   --host-contract 1.0.0 --json`.
    - If `requires_user_action` is true, show its exact `user_prompt`, follow
      `next_suggested`, and stop until the human completes the action.
    - Do not create, resume, or render a project until `workflow.ready` is true.
+   - After each command, execute only its returned `workflow.next_action`. Use
+     `lecturecast agent status <project> --adapter <host> --host-contract 1.0.0
+     --json` only when a recovery/read-only response has no workflow field.
 2. **Install missing renderer tools** using `renderer.next_actions`:
    - Node 20+ + npm — macOS: `brew install node`; Windows: install Node LTS
    - Python 3.11+ — for `edge-tts` + the SRT/ASS converters
@@ -51,7 +56,11 @@ are not supported; read [docs/SUPPORTED-PLATFORMS.md](docs/SUPPORTED-PLATFORMS.m
    **[skills/shared/director-workflow.md](skills/shared/director-workflow.md)**:
    source summary → choice cards → Brief approval → explicit 10-credit approval →
    signed ProductionManifest.
-4. **Execute the approved Manifest locally** with
+4. **Review and approve the complete signed script:** run
+   `lecturecast manifest review <project> --json`, show every narration section
+   to the human, wait for explicit approval, then run
+   `lecturecast manifest approve <project> --confirm-reviewed-script --json`.
+5. **Execute the approved Manifest locally** with
    **[docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)** and deliver two mp4s plus
    two covers.
 

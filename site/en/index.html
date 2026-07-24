@@ -294,7 +294,7 @@
 <pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
 <span class="c-prompt">PS&gt;</span> <span class="c-cmd">irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex</span>
 <span class="c-prompt">$</span> <span class="c-cmd">lecturecast auth login</span>   <span class="c-dim"># verify and bind a universal AgentMesh360 API key</span>
-<span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --json</span> <span class="c-dim"># paid account, credits, and renderer readiness</span>
+<span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --adapter codex --host-contract 1.0.0 --json</span> <span class="c-dim"># Skill, paid account, credits, renderer</span>
 
 <span class="c-dim"># commercial onboarding -> Director -> approve 10 credits -> local dual-format production</span></pre>
     </div>
@@ -400,14 +400,14 @@
         <div class="step-n">01</div>
         <div class="step-body">
           <h3>Install the CLI</h3>
-          <p>Use <code>install.sh</code> on macOS or <code>install.ps1</code> in Windows PowerShell. Both install the commercial CLI, signature verification, and Agent Skill. Then run <code>lecturecast auth login</code> and <code>lecturecast onboard --json</code>.<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">See on GitHub →</a></p>
+          <p>Use <code>install.sh</code> on macOS or <code>install.ps1</code> in Windows PowerShell. Both install the commercial CLI, signature verification, and Agent Skill. Then start a new Agent task; its current Skill runs onboard with exact <code>--adapter</code> and <code>--host-contract</code> arguments.<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">See on GitHub →</a></p>
         </div>
       </div>
       <div class="step">
         <div class="step-n">02</div>
         <div class="step-body">
           <h3>Your Agent completes commercial onboarding</h3>
-          <p>The current Skill checks the account, monthly pass, credits, and renderer. Missing commercial access stops the workflow and routes you to AgentMesh360 instead of silently switching paths.<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/AGENTS.md">See AGENTS.md →</a></p>
+          <p>The new task attests the installer-owned current Skill, then checks the account, monthly pass, credits, and renderer. It executes only the CLI's returned next_action; missing or stale Skill state stops before project mutation or rendering.<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/AGENTS.md">See AGENTS.md →</a></p>
         </div>
       </div>
       <div class="step">

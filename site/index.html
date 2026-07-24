@@ -290,7 +290,7 @@
 <pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
 <span class="c-prompt">PS&gt;</span> <span class="c-cmd">irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex</span>
 <span class="c-prompt">$</span> <span class="c-cmd">lecturecast auth login</span>   <span class="c-dim"># 验证并绑定 AgentMesh360 通用 API Key</span>
-<span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --json</span> <span class="c-dim"># 付费账户、credits 与渲染器就绪状态</span>
+<span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --adapter codex --host-contract 1.0.0 --json</span> <span class="c-dim"># 新任务中的 Skill、账户与渲染器</span>
 
 <span class="c-dim"># 商业 onboarding → Director → 明确批准 10 credits → 本地制作双平台成片</span></pre>
     </div>
@@ -396,14 +396,14 @@
         <div class="step-n">01</div>
         <div class="step-body">
           <h3>装上 CLI</h3>
-          <p>macOS 使用 <code>install.sh</code>，Windows PowerShell 使用 <code>install.ps1</code>；两者都会安装商业 CLI、签名验证和 Agent Skill。接着运行 <code>lecturecast auth login</code> 与 <code>lecturecast onboard --json</code>。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">看 GitHub →</a></p>
+          <p>macOS 使用 <code>install.sh</code>，Windows PowerShell 使用 <code>install.ps1</code>；两者都会安装商业 CLI、签名验证和 Agent Skill。安装后新建 Agent 任务，由当前 Skill 运行带 <code>--adapter</code> 与 <code>--host-contract</code> 的 onboard 命令。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">看 GitHub →</a></p>
         </div>
       </div>
       <div class="step">
         <div class="step-n">02</div>
         <div class="step-body">
           <h3>Agent 完成商业 onboarding</h3>
-          <p>Agent 读取当前 Skill，检查账户、月卡、credits 与渲染器。缺少权限时会停下来引导你前往 AgentMesh360 账户中心，不会静默切换到别的路线。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/AGENTS.md">看 AGENTS.md →</a></p>
+          <p>新任务证明已加载安装器拥有的当前 Skill，再检查账户、月卡、credits 与渲染器；之后只执行 CLI 返回的唯一 next_action。Skill 缺失、过期或宿主漂移都会在项目写入和渲染前停止。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/AGENTS.md">看 AGENTS.md →</a></p>
         </div>
       </div>
       <div class="step">

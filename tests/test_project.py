@@ -85,6 +85,22 @@ def test_local_overrides_never_modify_manifest_original(tmp_path: Path) -> None:
     assert _fixture("production-manifest-v1.json")["signature"]
 
 
+def test_manifest_approval_is_bound_to_exact_script_and_project_revision(tmp_path: Path) -> None:
+    store = ProjectStore(tmp_path)
+    state = store.init(name="Approval gate", project_id="project_approval")
+    state = store.save_manifest(
+        _fixture("production-manifest-v1.json"), expected_revision=state.revision
+    )
+
+    assert store.manifest_approval_status()["approved"] is False
+    approved_state, approval = store.approve_manifest(expected_revision=state.revision)
+
+    assert approved_state.payload["status"] == "manifest_approved"
+    assert approved_state.revision == state.revision + 1
+    assert approval["manifest_digest"] == state.payload["production_manifest_digest"]
+    assert store.manifest_approval_status()["approved"] is True
+
+
 def test_revision_conflict_requires_reload(tmp_path: Path) -> None:
     store = ProjectStore(tmp_path)
     state = store.init(name="Concurrent agents")

@@ -23,7 +23,8 @@ def test_workflow_requires_commercial_onboarding() -> None:
 
     assert result.exit_code == 0
     assert "paid AgentMesh360 account" in output
-    assert "lecturecast onboard --json" in output
+    assert "exact host-specific onboard command" in output
+    assert "workflow.next_action" in output
     assert "workflow.ready" in output
     assert "Edge/MiniMax TTS" in output
     assert "Remotion render" in output

@@ -17,6 +17,7 @@ from .errors import LectureCastError
 from .file_lock import exclusive_file_lock
 from .manifest import verify_manifest
 from .protocol import ClientCapabilities, CreativeBrief, ProductionManifest, canonical_digest
+from .timing import narration_timing_issues
 
 
 PROJECT_REQUIRED_FIELDS = {
@@ -135,6 +136,7 @@ class ProjectStore:
         self.brief_path = self.directory / "creative-brief.json"
         self.capabilities_path = self.directory / "client-capabilities.json"
         self.manifest_path = self.directory / "production-manifest.json"
+        self.manifest_approval_path = self.directory / "manifest-approval.json"
         self.overrides_path = self.directory / "local-overrides.json"
         self.assets_directory = self.directory / "assets"
         self.lock_path = self.directory / ".project.lock"
@@ -355,6 +357,78 @@ class ProjectStore:
             )
             atomic_write_json(self.project_path, next_state)
             return ProjectState(next_state)
+
+    def manifest_approval_status(self) -> dict[str, Any]:
+        with self._locked():
+            state = self._load_unlocked()
+            self._verify_documents(state)
+            manifest_digest = state.payload["production_manifest_digest"]
+            if manifest_digest is None or not self.manifest_path.is_file():
+                return {
+                    "approved": False,
+                    "reason": "manifest_missing",
+                    "manifest_digest": manifest_digest,
+                }
+            manifest = ProductionManifest.model_validate(_read_object(self.manifest_path))
+            script_digest = canonical_digest(manifest.payload["script"])
+            try:
+                approval = _read_object(self.manifest_approval_path)
+            except FileNotFoundError:
+                return {
+                    "approved": False,
+                    "reason": "approval_missing",
+                    "manifest_digest": manifest_digest,
+                    "script_digest": script_digest,
+                }
+            approved = (
+                approval.get("schema_version") == PROJECT_SCHEMA_VERSION
+                and approval.get("project_id") == state.payload["project_id"]
+                and approval.get("manifest_digest") == manifest_digest
+                and approval.get("script_digest") == script_digest
+            )
+            return {
+                "approved": approved,
+                "reason": "approved" if approved else "approval_mismatch",
+                "manifest_digest": manifest_digest,
+                "script_digest": script_digest,
+                "approved_at": approval.get("approved_at") if approved else None,
+            }
+
+    def approve_manifest(self, *, expected_revision: int) -> tuple[ProjectState, dict[str, Any]]:
+        with self._locked():
+            state = self._load_unlocked()
+            self._check_revision(state, expected_revision)
+            self._verify_documents(state)
+            manifest_digest = state.payload["production_manifest_digest"]
+            if manifest_digest is None or not self.manifest_path.is_file():
+                raise LectureCastError(
+                    code="brief_not_ready",
+                    message="当前项目还没有可审核的 ProductionManifest。",
+                    next_action="先完成 Director generation 并等待 status=ready。",
+                )
+            manifest = ProductionManifest.model_validate(_read_object(self.manifest_path))
+            verify_manifest(manifest)
+            timing_issues = narration_timing_issues(manifest)
+            if timing_issues:
+                sections = ", ".join(
+                    issue.section_id or issue.scope for issue in timing_issues
+                )
+                raise LectureCastError(
+                    code="manifest_incompatible",
+                    message=f"Manifest 旁白与时间线不匹配：{sections}。",
+                    next_action="不要生成音频或渲染；请让 Director 重新生成通过时长合同的 Manifest。",
+                )
+            approval = {
+                "schema_version": PROJECT_SCHEMA_VERSION,
+                "project_id": state.payload["project_id"],
+                "manifest_digest": manifest_digest,
+                "script_digest": canonical_digest(manifest.payload["script"]),
+                "approved_at": _utc_now(),
+            }
+            next_state = self._next_state(state, status="manifest_approved")
+            atomic_write_json(self.manifest_approval_path, approval)
+            atomic_write_json(self.project_path, next_state)
+            return ProjectState(next_state), approval
 
     def _next_state(self, state: ProjectState, **changes: Any) -> dict[str, Any]:
         payload = state.to_dict()

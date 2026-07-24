@@ -4,10 +4,14 @@ import {ManifestProvider} from './ManifestContext';
 import {palette} from './layout';
 import {componentRegistry} from './registry';
 import {DirectorRenderProps, ManifestScene} from './types';
-import {validateManifestForRender} from './validate';
+import {validateManifestForRender, validateRenderTiming, validateSceneExecution} from './validate';
 
-const withOverrides = (scene: ManifestScene, overrides: DirectorRenderProps['overrides']): ManifestScene => {
-  const timing = overrides.scene_timing?.[scene.scene_id] ?? {};
+const withOverrides = (
+  scene: ManifestScene,
+  renderTiming: DirectorRenderProps['renderTiming'],
+  overrides: DirectorRenderProps['overrides'],
+): ManifestScene => {
+  const timing = overrides.scene_timing?.[scene.scene_id] ?? renderTiming?.scene_timing[scene.scene_id] ?? {};
   return {
     ...scene,
     start_frame: timing.start_frame ?? scene.start_frame,
@@ -17,9 +21,14 @@ const withOverrides = (scene: ManifestScene, overrides: DirectorRenderProps['ove
 };
 
 export const ManifestVideo: React.FC<DirectorRenderProps> = (renderProps) => {
-  const {manifest, overrides, variant, audioSrc} = renderProps;
+  const {manifest, overrides, variant, audioSrc, renderTiming} = renderProps;
   validateManifestForRender(manifest);
-  const scenes = useMemo(() => manifest.scenes.map((scene) => withOverrides(scene, overrides)), [manifest, overrides]);
+  validateRenderTiming(renderTiming, manifest);
+  const scenes = useMemo(
+    () => manifest.scenes.map((scene) => withOverrides(scene, renderTiming, overrides)),
+    [manifest, overrides, renderTiming],
+  );
+  validateSceneExecution(scenes, renderTiming?.total_frames ?? manifest.total_frames);
   return (
     <ManifestProvider {...renderProps}>
       <AbsoluteFill style={{background: palette.background}}>
@@ -36,4 +45,3 @@ export const ManifestVideo: React.FC<DirectorRenderProps> = (renderProps) => {
     </ManifestProvider>
   );
 };
-
