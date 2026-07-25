@@ -17,9 +17,10 @@
 
 <sub>↑ 同一份脚本，两套视觉系统。左：B 站 1920×1080。右：小红书 1080×1920。12 倍速播放，原片各 ~5:21。</sub>
 
-Lecturecast 要求有效的 AgentMesh360 付费账户、通用 API Key，以及每次确认
-ProductionManifest 至少 10 个共享 credits。公开客户端会先验证商业权限，用户
-Agent 通过后才可以开始制作。
+Lecturecast 要求有效的 AgentMesh360 monthly pass、通用 API Key，以及每次明确批准
+Manifest generation 前至少 10 个共享 credits。公开客户端会先验证商业权限，用户
+Agent 通过后才可以开始制作。`monthly_pass_required` 指 AgentMesh360 账户权益，
+不是另购一份 LectureCast pass。
 
 云端 Director 返回签名方案后，以下制作能力在本机运行：
 
@@ -28,7 +29,8 @@ Agent 通过后才可以开始制作。
 - **ffmpeg** 烧字幕、拼接音视频。
 
 **核心流程**：商业账户绑定 → Director 选择 → Brief 审批 → 明确批准扣除
-10 credits → 签名 ProductionManifest → 本机配音、场景与渲染 → 成片与封面。
+10 credits → 签名 ProductionManifest → 完整签名脚本审批 → 本机配音、场景与渲染
+→ 成片与封面。
 
 Director 只接收受限素材摘要、稳定选项 ID、Brief 与客户端能力。它使用
 AgentMesh360 账户的共享 credits，无需另购 LectureCast 独立订阅；原始媒体、
@@ -36,7 +38,9 @@ AgentMesh360 账户的共享 credits，无需另购 LectureCast 独立订阅；�
 
 **用 AI agent 驱动？** 先看 **[AGENTS.md](AGENTS.md)** 和
 **[Director 工作流](skills/shared/director-workflow.md)**。商业 onboarding 成功后
-才进入本地制作指南。
+才进入本地制作指南。一次完整真实客户路径沉淀出的宿主、凭证、素材、浏览器、时长
+与交付规则见
+[商业工作流经验与防回归清单](docs/COMMERCIAL-WORKFLOW-LESSONS.zh.md)。
 
 ---
 
@@ -90,16 +94,18 @@ onboard 命令，同时验证 Skill、商业账户和渲染器。
 
 ## 用
 
-Lecturecast 是 **agent 驱动**的。第一步必须绑定并验证商业权限：
+Lecturecast 是 **agent 驱动**的。第一步运行 `onboard` 并读取其下一安全动作；
+只有 `requires_user_action` 要求配置 key 时才运行 `auth login`：
 
 ```bash
-lecturecast auth login      # 验证并保存 AgentMesh360 通用 API Key
 lecturecast onboard --adapter codex --host-contract 1.0.0 --json
-lecturecast agent status ./my-video --adapter codex --host-contract 1.0.0 --json
-lecturecast version    # 当前版本
+# 如果提示需要 key：
+lecturecast auth login
+lecturecast onboard --adapter codex --host-contract 1.0.0 --json
 ```
 
-当 `workflow.ready` 为 true 后，Director 在 Codex、Claude Code、OpenClaw 之间共享同一个本地项目：
+当 `workflow.ready` 为 true 后，只执行返回的 `workflow.next_action`。下列命令是
+工作流可能返回的示例，不是让用户手工顺序执行：
 
 ```bash
 lecturecast project init ./my-video --name "我的视频" --adapter codex --host-contract 1.0.0 --json
@@ -107,6 +113,11 @@ lecturecast director start ./my-video --source source-summary.json --adapter cod
 lecturecast director resume ./my-video --adapter openclaw --host-contract 1.0.0 --json  # 切换宿主后
 lecturecast director next ./my-video --json
 ```
+
+`renderer.next_actions` 只在 onboarding 被本地依赖阻塞时修复 renderer，不推进项目
+状态。完成其返回的修复动作后重新运行 `onboard`；只有 `workflow.ready=true` 才回到
+唯一 `workflow.next_action` 链。`--host-contract 1.0.0` 证明宿主 Skill，与
+ProductionManifest schema `1.0` 是两份不同合同。
 
 API Key 不会写入项目。生产 Director URL 已内置，`LECTURECAST_DIRECTOR_URL`
 只用于受控的测试环境。`director resume` 仅本地重新绑定，不扣 credit。每次确认
@@ -121,7 +132,7 @@ Agent 会读 [AGENTS.md](AGENTS.md) / [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFL
 
 ```
 主题
-  ▼ 商业 onboarding（付费账户 + 至少 10 credits）
+  ▼ 商业 onboarding（有效 monthly pass + 至少 10 credits）
   ▼ Director 选择 + 签名 ProductionManifest
   ▼ 展示完整签名脚本         （你审批）
   ▼ 分节本地配音 + 实测执行时间线
@@ -138,10 +149,12 @@ Agent 会读 [AGENTS.md](AGENTS.md) / [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFL
 会自动启用：
 
 ```bash
-export MINIMAX_API_KEY=<你自己的-minimax-key>   # 只在你本机的环境变量里，绝不落盘
+export MINIMAX_API_KEY=<你自己的-minimax-key>   # LectureCast 不主动持久化
 ```
 
-key 只留在你的环境变量里，出错自动回退免费的 Edge 音色。
+LectureCast 不会持久化 MiniMax key；但 shell 可能把字面量 `export` 命令写入历史，
+因此优先使用宿主的安全环境注入。MiniMax 不可用时，builder 会先报告原因再使用
+Edge；不能假定所有 fallback 都是同一个原因。
 **用 AI agent 来驱动？请读 [AGENTS.md](AGENTS.md)**——涵盖安装、完整本地工作流、BYOK 与排障。
 
 ---
@@ -166,13 +179,22 @@ adapter；每次安装或升级后都必须新建宿主 Agent 任务。新任务
 Skill，随后只执行 CLI 返回的唯一 `workflow.next_action`。缺失或过期的 Skill
 摘要会在项目写入和本地渲染前硬阻断。
 
+修改安装器、宿主 adapter、恢复或渲染行为之前，先读
+[商业工作流经验与防回归清单](docs/COMMERCIAL-WORKFLOW-LESSONS.zh.md)。
+
 ---
 
 ## 隐私
 
 - 只有受限摘要、稳定选项、Brief 和能力元数据进入 Director；原始媒体、TTS 文件、本地路径和成片不上传。
-- 如果你选用 MiniMax 音色（BYOK），你的主题 + 脚本文本会经 HTTPS 发到**你自己的** MiniMax 账户做合成。默认 Edge 音色无需任何第三方账户。
+- 默认 Edge TTS 由本地客户端调用、无需账户，但旁白文本会发送到 Microsoft Edge
+  语音服务做合成；它不会收到原始媒体或成片。
+- 如果你选用 MiniMax 音色（BYOK），签名旁白脚本文本会经 HTTPS 发到**你自己的**
+  MiniMax 账户做合成。
 - 无追踪、无遥测。
+- 受邀 limited cohort 用户可以
+  [显式生成本地 outcome receipt](docs/LOCAL-OUTCOME-EVIDENCE.md)，并手工导出受限的
+  匿名报告；CLI 不会自动上传。
 
 ---
 
