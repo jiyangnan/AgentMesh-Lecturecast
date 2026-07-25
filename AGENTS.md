@@ -5,6 +5,9 @@
 Before changing product scope, hosting, DNS, Caddy, deployment, credits, or
 media handling, read
 [`docs/LECTURECAST-SYSTEM-BOUNDARY.md`](docs/LECTURECAST-SYSTEM-BOUNDARY.md).
+Before changing installer, host-adapter, recovery, credential or render
+behavior, also read
+[`docs/COMMERCIAL-WORKFLOW-LESSONS.zh.md`](docs/COMMERCIAL-WORKFLOW-LESSONS.zh.md).
 
 - The official site is served through the existing AgentMesh360
   `jobagent-caddy`; GitHub Pages is not a production origin.
@@ -20,9 +23,12 @@ paid account with enough shared credits, and use the cloud Director to produce a
 signed declarative Manifest. Raw media, voice, editing and rendering remain on
 this machine. This file tells you how to enter that workflow safely.
 
-Lecturecast turns one topic into a finished 5-minute course video in **both**
-Bilibili 16:9 and Xiaohongshu 9:16 (script → voiceover → animated scenes → burned
-subtitles → dual covers → compliant end card).
+Lecturecast turns one topic into an approximately five-minute course video
+(planned 240–390 seconds) in **both** Bilibili 16:9 and Xiaohongshu 9:16
+(script → voiceover → animated scenes → burned subtitles → dual covers →
+compliant end card). The measured-TTS safety envelope is 75–125% of that signed
+plan (an aggregate 180–487.5 seconds at the extremes); it is a rejection guard,
+not a promise that every accepted output has the same “five-minute” duration.
 
 The cloud Director owns the structured creative plan. You present its stable
 choice cards, obtain the human's approvals, and then execute the signed Manifest
@@ -46,20 +52,25 @@ are not supported; read [docs/SUPPORTED-PLATFORMS.md](docs/SUPPORTED-PLATFORMS.m
      `lecturecast agent status <project> --adapter <host> --host-contract 1.0.0
      --json` only when a recovery/read-only response has no workflow field.
 2. **Install missing renderer tools** using `renderer.next_actions`:
-   - Node 20+ + npm — macOS: `brew install node`; Windows: install Node LTS
+   - Node 20+ + npm — use a supported Node LTS installation and verify the
+     exact `node` and `npm` selected in the current PATH
    - Python 3.11+ — for `edge-tts` + the SRT/ASS converters
    - ffmpeg **with libass** — on current Homebrew use `brew install ffmpeg-full`,
      then `export PATH="$(brew --prefix ffmpeg-full)/bin:$PATH`; on Windows use
      a Windows build with libass and let `lecturecast doctor` verify it
    - *(optional)* a MiniMax key from your human → `export MINIMAX_API_KEY=…`
+   These actions repair local prerequisites only; they do not advance project
+   state. Rerun `onboard` afterward and return to the single
+   `workflow.next_action` chain only when `workflow.ready` is true.
 3. **Follow the Director workflow** in
    **[skills/shared/director-workflow.md](skills/shared/director-workflow.md)**:
    source summary → choice cards → Brief approval → explicit 10-credit approval →
    signed ProductionManifest.
-4. **Review and approve the complete signed script:** run
-   `lecturecast manifest review <project> --json`, show every narration section
-   to the human, wait for explicit approval, then run
-   `lecturecast manifest approve <project> --confirm-reviewed-script --json`.
+4. **Review and approve the complete signed script:** when the returned
+   `workflow.next_action` is `manifest.review`, execute its exact argv, show every
+   narration section to the human, and wait. Only after approval, execute the
+   returned `manifest.approve` argv. The concrete CLI commands are documented
+   for recognition, not as a parallel hand-written control flow.
 5. **Execute the approved Manifest locally** with
    **[docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)** and deliver two mp4s plus
    two covers.
@@ -78,20 +89,25 @@ never create a second generation ID after a timeout.
 
 ## Voiceover & BYOK — ask your human for a MiniMax key to upgrade the voice
 
-- **Default: Edge TTS.** Free, no key, always works. Good enough to ship.
+- **Default: Edge TTS.** Free and no account/key required. It still depends on
+  the local package, network and Microsoft's Edge speech service, so surface a
+  real synthesis failure instead of promising it always works. Narration text
+  is sent to that speech service; original media and rendered output are not.
 - **Upgrade: MiniMax T2A** (warmer). This is **BYOK** — bring your own key:
   1. Ask your human for a **MiniMax API key** — a third-party service
      (<https://www.minimaxi.com>) *they* register for. **It is not our product
      key** and is not provided by Lecturecast.
   2. `export MINIMAX_API_KEY=<their_minimax_key>`
   3. `build_audio_mm.py` auto-detects it; no key → it uses the free Edge voice.
-- **The key is never persisted** — env only, never written to disk/config/repo.
+- **LectureCast does not intentionally persist the key.** Keep it out of
+  project/config/repo and prefer secure process-environment injection; a literal
+  shell `export` may be recorded by shell history.
 
 ## Checklist — what to get from your human
 
 | Thing | Required? | How they get it | Used for |
 |---|---|---|---|
-| AgentMesh360 paid account + universal API Key | Yes | [AgentMesh360 account center](https://agentmesh360.com/app/) | Director access and shared credits |
+| Active AgentMesh360 monthly pass + universal API Key | Yes | [AgentMesh360 account center](https://agentmesh360.com/app/) | Director access and shared credits |
 | Node + ffmpeg installed | Yes | macOS: Homebrew; Windows: native Node and an ffmpeg build with libass | Local render |
 | MiniMax API key | Optional | Their own signup at minimaxi.com | Upgrade voiceover to MiniMax |
 
@@ -100,8 +116,8 @@ never create a second generation ID after a timeout.
 | Symptom | What to do |
 |---|---|
 | `api_key_required` | Open the AgentMesh360 account center, then run `lecturecast auth login`. |
-| `monthly_pass_required` / `insufficient_credits` | Follow `next_suggested` to pricing; never continue through a local-only fallback. |
-| MiniMax warned + fell back to Edge | No `MINIMAX_API_KEY` set. Want MiniMax? Ask your human for a key. Else ignore — Edge still ships. |
+| `monthly_pass_required` / `insufficient_credits` | This refers to the AgentMesh360 account entitlement/credit balance, not a separate LectureCast pass. Follow `next_suggested`; never continue through a local-only fallback. |
+| MiniMax warned + fell back to Edge | Read the reported reason: the key may be absent, invalid, rate-limited or the provider may be unavailable. Confirm the human accepts Edge before delivery. |
 | `bun` / `@rspack/binding` error | Use `npm install`, not bun. See LOCAL-WORKFLOW failure modes. |
 | ffmpeg `No option name near 'subtitle.ass'` | System ffmpeg lacks libass — use `ffmpeg-full` on macOS or a Windows build with libass, then rerun `lecturecast doctor`. |
 | Burned Chinese subtitles are squares | Keep the platform default, or set `LECTURECAST_SUBTITLE_FONT` to a locally installed CJK font family before generating ASS. macOS defaults to `Arial Unicode MS`; Windows defaults to `Microsoft YaHei`. |
@@ -109,7 +125,8 @@ never create a second generation ID after a timeout.
 
 ## Don'ts
 
-- **Never** hardcode or commit any key. Env vars only (`MINIMAX_API_KEY`).
+- **Never** hardcode or commit any key. Use secure process-environment injection
+  for `MINIMAX_API_KEY` and keep literal values out of shell history.
 - **Never** offer, describe, or execute an account-free LectureCast route.
 - **Don't** put 导流 / 诱导关注 / links in the 小红书 video or description — it
   gets the note rate-limited (限流). End card = soft hook only.
@@ -121,6 +138,8 @@ never create a second generation ID after a timeout.
 ## More
 
 - Local pipeline (full): [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)
+- Commercial workflow lessons and regression checklist:
+  [docs/COMMERCIAL-WORKFLOW-LESSONS.zh.md](docs/COMMERCIAL-WORKFLOW-LESSONS.zh.md)
 - Supported hosts: [docs/SUPPORTED-PLATFORMS.md](docs/SUPPORTED-PLATFORMS.md)
 - Human-facing docs: [README.md](README.md) · [中文](README.zh.md)
 - Agent Skills: [Codex](skills/codex/SKILL.md) · [Claude Code](skills/claude-code/SKILL.md) · [OpenClaw](skills/openclaw/SKILL.md)

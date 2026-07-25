@@ -17,9 +17,11 @@ Website: **[lecturecast.agentmesh360.com](https://lecturecast.agentmesh360.com)*
 
 <sub>↑ Same script, two visual systems. Left: Bilibili 1920×1080. Right: Xiaohongshu 1080×1920. Played at 12× speed — actual length ~5:21.</sub>
 
-Lecturecast requires a paid AgentMesh360 account, a universal API Key, and at
-least 10 shared credits for each confirmed ProductionManifest. The public client
-validates that commercial access before a user Agent may start production.
+Lecturecast requires an active AgentMesh360 monthly pass, a universal API Key,
+and at least 10 shared credits before each explicitly approved Manifest
+generation request. The public client validates that commercial access before a
+user Agent may start production. `monthly_pass_required` refers to this
+AgentMesh360 account entitlement; there is no separate LectureCast pass.
 
 After the cloud Director returns a signed plan, the bundled production stack runs
 on your machine:
@@ -28,9 +30,9 @@ on your machine:
 - **edge-tts** (Python) does the voiceover — free by default, no setup.
 - **ffmpeg** burns subtitles and stitches audio + video.
 
-**Core loop**: commercial onboarding → Director choices → Brief approval → explicit
-10-credit approval → signed ProductionManifest → local voice/scenes/rendering →
-finished mp4s and covers.
+**Core loop**: commercial onboarding → Director choices → Brief approval →
+explicit 10-credit approval → signed ProductionManifest → complete signed-script
+approval → local voice/scenes/rendering → finished mp4s and covers.
 
 The Director receives only a bounded source summary, stable choice IDs, the Brief
 and client capabilities. It uses the account's shared AgentMesh360 credits; there
@@ -39,7 +41,10 @@ editing, Remotion, ffmpeg and all outputs remain local.
 
 **Driving this from an AI agent?** Start with **[AGENTS.md](AGENTS.md)** and the
 **[Director workflow](skills/shared/director-workflow.md)**. The local production
-runbook is used only after commercial onboarding succeeds.
+runbook is used only after commercial onboarding succeeds. The
+[commercial workflow lessons](docs/COMMERCIAL-WORKFLOW-LESSONS.zh.md) record the
+host, credential, asset, browser, timing and delivery checks learned from a
+complete real-customer run.
 
 ---
 
@@ -94,16 +99,19 @@ command and reports adapter, commercial, and renderer readiness.
 
 ## Use
 
-Lecturecast is **agent-driven**. Bind and verify commercial access first:
+Lecturecast is **agent-driven**. Start with `onboard`; it returns the next safe
+action. Run `auth login` only when `requires_user_action` asks for a key:
 
 ```bash
-lecturecast auth login      # validates and stores a universal AgentMesh360 API Key
 lecturecast onboard --adapter codex --host-contract 1.0.0 --json
-lecturecast agent status ./my-video --adapter codex --host-contract 1.0.0 --json
-lecturecast version    # installed version
+# if prompted:
+lecturecast auth login
+lecturecast onboard --adapter codex --host-contract 1.0.0 --json
 ```
 
-When `workflow.ready` is true, Director commands use the same local project across Codex, Claude Code and OpenClaw:
+When `workflow.ready` is true, execute only its returned
+`workflow.next_action`. The following are examples of the commands the workflow
+may return; they are not a manual sequence:
 
 ```bash
 lecturecast project init ./my-video --name "My video" --adapter codex --host-contract 1.0.0 --json
@@ -111,6 +119,12 @@ lecturecast director start ./my-video --source source-summary.json --adapter cod
 lecturecast director resume ./my-video --adapter openclaw --host-contract 1.0.0 --json  # after a host handoff
 lecturecast director next ./my-video --json
 ```
+
+`renderer.next_actions` repair missing local dependencies while onboarding is
+blocked; they do not advance project state. Run the returned repairs, rerun
+`onboard`, and resume the single `workflow.next_action` chain only after
+`workflow.ready` becomes true. `--host-contract 1.0.0` attests the host Skill and
+is separate from ProductionManifest schema version `1.0`.
 
 The API key is never written to the project. The production Director URL is built
 in; `LECTURECAST_DIRECTOR_URL` is a staging/development override. `director
@@ -126,7 +140,7 @@ The agent reads [AGENTS.md](AGENTS.md) / [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WOR
 
 ```
 topic
-  ▼ commercial onboarding (paid account + ≥10 credits)
+  ▼ commercial onboarding (active monthly pass + ≥10 credits)
   ▼ Director choices + signed ProductionManifest
   ▼ complete signed script review  (your approval gate)
   ▼ per-section local TTS + measured execution timeline
@@ -143,10 +157,14 @@ Voiceover defaults to **Edge TTS** (free, no setup). To upgrade to the warmer
 your env and the local `build_audio_mm.py` uses it automatically:
 
 ```bash
-export MINIMAX_API_KEY=<your-minimax-key>   # your own key — never stored, env only
+export MINIMAX_API_KEY=<your-minimax-key>   # LectureCast does not persist it
 ```
 
-The key stays in your env and falls back to the free Edge voice on any error.
+LectureCast does not persist the MiniMax key. A shell may still record a literal
+`export` command in history, so prefer your host's secure environment injection.
+If MiniMax is unavailable, the builder reports the reason before using Edge;
+verify the resulting voice rather than assuming every fallback has the same
+cause.
 **Driving this from an AI agent? Read [AGENTS.md](AGENTS.md)** — it covers
 install, the full local workflow, BYOK, and troubleshooting.
 
@@ -176,12 +194,19 @@ The new agent task loads the current Skill, attests its host contract, and then
 executes only the CLI's machine-returned `workflow.next_action`. Project and
 render mutations fail closed if the bound Skill digest is missing or stale.
 
+Before changing installer, host-adapter, recovery or render behavior, read the
+[commercial workflow lessons and regression checklist](docs/COMMERCIAL-WORKFLOW-LESSONS.zh.md).
+
 ---
 
 ## Privacy
 
 - Only the bounded summary, stable choices, Brief and capability metadata go to the Director service. Original media, TTS files, local paths and rendered outputs are not uploaded.
-- If you opt into the MiniMax voice (BYOK), your topic + script text are sent to your own MiniMax account over HTTPS for synthesis. The default Edge voice runs without any third-party account.
+- The default Edge TTS is invoked by the local client and needs no account, but
+  narration text is sent to Microsoft's Edge speech service for synthesis. It
+  never receives the original media or rendered output.
+- If you opt into the MiniMax voice (BYOK), the signed narration script text is
+  sent to your own MiniMax account over HTTPS for synthesis.
 - No tracking, no telemetry. An invited limited-cohort participant may
   [explicitly create a local outcome receipt](docs/LOCAL-OUTCOME-EVIDENCE.md)
   and manually export a bounded anonymous report; the CLI never uploads it.
