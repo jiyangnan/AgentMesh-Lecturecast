@@ -159,13 +159,15 @@ def _write_contract_site(
                 director_access=director_access,
                 extra_route=extra_route,
                 localized_tokens=localized_tokens[relative],
-            )
+            ),
+            encoding="utf-8",
         )
     (root / "llms.txt").write_text(
         "Commercial Director ProductionManifest paid AgentMesh360 accounts with an "
         "active AgentMesh360 monthly pass; 10 credits; workflow.next_action; "
         "immutable signed narration; four files; Edge TTS; "
-        "Linux and WSL are not supported; no account-free route"
+        "Linux and WSL are not supported; no account-free route",
+        encoding="utf-8",
     )
 
 
