@@ -4,17 +4,17 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Lecturecast — 把一个想法，变成一条课程视频 · AgentMesh360 商业产品</title>
-<meta name="description" content="Lecturecast 是 AgentMesh360 商业课程视频产品：绑定付费账户后，由云端 Director 生成签名 ProductionManifest，原始素材、配音、编辑和渲染仍留在本机。" />
+<meta name="description" content="Lecturecast 是 AgentMesh360 商业课程视频产品：绑定有效月卡与通用 API Key，由云端 Director 生成签名 ProductionManifest，再在本机完成配音、编辑和渲染。" />
 <meta property="og:title" content="Lecturecast — 把一个想法，变成一条课程视频" />
-<meta property="og:description" content="开源本地工具：AI 写稿 + 配音 + 双平台成片（B 站 16:9 / 小红书 9:16），全程在你自己的机器上跑。一个主题进，两条成片出。" />
+<meta property="og:description" content="AgentMesh360 商业课程视频产品：云端 Director 负责签名方案与脚本，本机完成 TTS、横竖双版渲染、字幕和双封面。" />
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://lecturecast.agentmesh360.com/" />
 <meta property="og:site_name" content="Lecturecast · AgentMesh360" />
 <meta name="robots" content="index,follow,max-image-preview:large" />
 <meta name="theme-color" content="#0E8A6E" />
 <meta name="twitter:card" content="summary" />
-<meta name="twitter:title" content="Lecturecast — 开源本地课程视频工作流" />
-<meta name="twitter:description" content="Lecturecast 是开源本地工具：把主题交给 AI agent，在本机完成写稿、配音、渲染、烧字幕，并产出 B 站横版和小红书竖版。" />
+<meta name="twitter:title" content="Lecturecast — AgentMesh360 商业课程视频产品" />
+<meta name="twitter:description" content="绑定有效月卡与通用 API Key，经三次人工确认获得签名制作方案，再在本机完成横竖双版视频和两张封面。" />
 <link rel="canonical" href="https://lecturecast.agentmesh360.com/" />
 <link rel="alternate" type="text/markdown" href="/llms.txt" title="Lecturecast LLMs.txt" />
 <link rel="alternate" hreflang="zh-CN" href="https://lecturecast.agentmesh360.com/" />
@@ -46,17 +46,15 @@
       "operatingSystem": "macOS, Windows",
       "isAccessibleForFree": false,
       "provider": { "@id": "https://agentmesh360.com/#organization" },
-      "description": "Lecturecast 是 AgentMesh360 商业课程视频产品；云端 Director 提供结构化创作选择与签名 ProductionManifest，媒体制作和渲染仍在用户本机完成。",
+      "description": "Lecturecast 是 AgentMesh360 商业课程视频产品；有效月卡用户通过云端 Director 获得结构化创作选择、签名 ProductionManifest 与签名脚本，再在本机完成媒体制作。",
       "featureList": [
-        "本地 AI 课程讲稿生成",
+        "云端 Director 结构化创作选择与签名讲稿",
         "本地配音与时间轴对齐",
-        "B 站 16:9 横版视频",
-        "小红书 9:16 竖版视频",
+        "1920×1080 横版 MP4 与同尺寸 PNG 封面",
+        "1080×1920 竖版 MP4 与同尺寸 PNG 封面",
         "中文字幕烧录",
-        "封面生成",
-        "云端 Director 结构化创作选择",
         "签名声明式 ProductionManifest",
-        "Apache 2.0 开源"
+        "三次独立人工审批门禁"
       ],
       "offers": {
         "@type": "Offer",
@@ -71,17 +69,17 @@
         {
           "@type": "Question",
           "name": "Lecturecast 需要账户或 API key 吗？",
-          "acceptedAnswer": { "@type": "Answer", "text": "需要。Lecturecast 要求有效的 AgentMesh360 付费账户和通用 API Key；用户确认生成 ProductionManifest 时固定扣除 10 credits。" }
+          "acceptedAnswer": { "@type": "Answer", "text": "需要。Lecturecast 要求有效的 AgentMesh360 月卡和通用 API Key；只有用户明确批准生成 ProductionManifest 时才固定扣除 10 credits。" }
         },
         {
           "@type": "Question",
           "name": "Lecturecast 处理过程会上云吗？",
-          "acceptedAnswer": { "@type": "Answer", "text": "只有受限素材摘要、稳定选项、Brief 和客户端能力进入云端 Director；原始媒体、配音、编辑、渲染和成片仍留在本机。" }
+          "acceptedAnswer": { "@type": "Answer", "text": "受限素材摘要、稳定选项、Brief 和客户端能力进入云端 Director；旁白文本发送给所选 TTS 服务。原始媒体、生成音频、字幕、渲染和成片留在本机。" }
         },
         {
           "@type": "Question",
           "name": "Lecturecast 支持哪些视频平台格式？",
-          "acceptedAnswer": { "@type": "Answer", "text": "Lecturecast 同时产出 B 站横版和小红书竖版，适配 16:9 与 9:16 两种比例。" }
+          "acceptedAnswer": { "@type": "Answer", "text": "标准交付包含 1920×1080 横版 MP4、1080×1920 竖版 MP4，以及两张对应尺寸的 PNG 封面。" }
         }
       ]
     }
@@ -145,7 +143,7 @@
   .btn-ghost{background:transparent;color:var(--ink);border-color:var(--rule)} .btn-ghost:hover{border-color:var(--ink)}
   .btn .arrow{transition:transform .15s} .btn:hover .arrow{transform:translateX(3px)}
 
-  .routes{margin-top:40px;display:grid;grid-template-columns:1fr 1fr;background:var(--surface);border:1px solid var(--rule);border-radius:16px;overflow:hidden}
+  .routes{margin-top:40px;display:grid;grid-template-columns:1fr;background:var(--surface);border:1px solid var(--rule);border-radius:16px;overflow:hidden}
   .route{padding:clamp(22px,3vw,32px);position:relative}
   .route + .route{border-left:1px solid var(--rule)}
   .route-director{background:linear-gradient(135deg,color-mix(in oklab,var(--accent) 9%,var(--surface)),var(--surface) 72%)}
@@ -243,7 +241,7 @@
       Lecturecast <small>· AgentMesh360</small>
     </a>
     <nav class="nav-links" aria-label="Primary">
-      <a href="#routes" class="nav-section">两种路线</a>
+      <a href="#routes" class="nav-section">商业路线</a>
       <a href="#features" class="nav-section">能力</a>
       <a href="#platforms" class="nav-section">双平台</a>
       <a href="#how" class="nav-section">怎么用</a>
@@ -257,7 +255,7 @@
         <span class="sep"></span>
         <a class="lang" href="/ko/" hreflang="ko">한</a>
       </span>
-      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="nav-cta">看 GitHub</a>
+      <a href="#install" class="nav-cta">开始安装</a>
     </nav>
   </div>
 </header>
@@ -267,32 +265,32 @@
     <div class="eyebrow"><span class="dot"></span> COMMERCIAL ACCESS · LOCAL PRODUCTION</div>
     <h1 class="display">把一个想法，<em>变成</em>一条课程视频。</h1>
     <p class="lede">
-      Lecturecast 是 AgentMesh360 的<strong>商业课程视频产品</strong>：用户 Agent 先绑定付费账户，由云端 Director 把结构化创作选择变成签名制作方案，再在你的机器上完成配音、编辑和渲染，<strong>同时产出 B 站横版和小红书竖版</strong>。原始素材和整条媒体流水线始终留在本机。
+      Lecturecast 是 AgentMesh360 的<strong>商业课程视频产品</strong>：用户 Agent 先验证有效月卡与通用 API Key，由云端 Director 把结构化创作选择变成签名制作方案和讲稿，再在你的机器上完成配音、编辑和渲染，<strong>同时产出横版与竖版 MP4 及两张封面</strong>。原始媒体不上云；旁白文本会发送给你选择的 TTS 服务。
     </p>
     <div class="hero-ctas">
-      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="btn btn-primary">看 GitHub <span class="arrow">→</span></a>
-      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md" class="btn btn-ghost">看本地工作流</a>
+      <a href="#install" class="btn btn-primary">开始安装 <span class="arrow">→</span></a>
+      <a href="https://agentmesh360.com/app/" class="btn btn-ghost">打开 AgentMesh360 账户中心</a>
     </div>
 
     <div class="routes" id="routes" data-product-contract="commercial-only-v1" aria-label="Lecturecast 商业使用方式">
       <article class="route route-director" data-route="director" data-access="paid" data-media="local">
-        <div class="route-top"><span class="route-label">Lecturecast Director</span><span class="route-status">AgentMesh360 付费账户</span></div>
+        <div class="route-top"><span class="route-label">Lecturecast Director</span><span class="route-status">有效月卡 · 10 credits / 次</span></div>
         <h3>云端导演，本地制片</h3>
-        <p>Agent 先验证通用 API Key、有效月卡和共享 credits，再通过原生选项卡完成受众、叙事、视觉和交付选择。云端返回签名 ProductionManifest；只有确认生成才扣除 10 credits，素材、配音、编辑和渲染不上云。</p>
+        <p>Agent 先验证通用 API Key、有效月卡和共享 credits，再完成原生选择卡与 Brief 审批。你明确批准 10 credits 后，Director 返回不可由宿主 Agent 改写的签名 ProductionManifest 和完整讲稿；你还要逐段审阅并批准讲稿，之后才会在本机执行 TTS 和渲染。</p>
       </article>
     </div>
 
-    <div class="terminal-frame" aria-label="在本地装好，交给你的 agent">
+    <div class="terminal-frame" id="install" aria-label="在本地装好，交给你的 agent">
       <div class="terminal-bar">
         <div class="lights"><span></span><span></span><span></span></div>
         <span class="title">~ run-this-locally</span>
       </div>
 <pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
 <span class="c-prompt">PS&gt;</span> <span class="c-cmd">irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex</span>
-<span class="c-prompt">$</span> <span class="c-cmd">lecturecast auth login</span>   <span class="c-dim"># 验证并绑定 AgentMesh360 通用 API Key</span>
-<span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --adapter codex --host-contract 1.0.0 --json</span> <span class="c-dim"># 新任务中的 Skill、账户与渲染器</span>
-
-<span class="c-dim"># 商业 onboarding → Director → 明确批准 10 credits → 本地制作双平台成片</span></pre>
+<span class="c-dim"># 安装完成后，新建宿主 Agent 任务；由新加载的 Skill 返回准确命令</span>
+<span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --adapter codex --host-contract 1.0.0 --json</span> <span class="c-dim"># Codex 示例</span>
+<span class="c-dim"># 仅当 requires_user_action 要求 API Key 时，运行：lecturecast auth login</span>
+<span class="c-dim"># 修复后重跑 onboard；随后只执行 workflow.next_action</span></pre>
     </div>
   </div>
 </section>
@@ -305,25 +303,25 @@
     </div>
     <div class="why-body">
       <p>让 AI 写个脚本不难，难的是后面——<span class="hi">配音、对轴、渲染、烧字幕、做封面、还要横竖两版各适配一次</span>。</p>
-      <p>Lecturecast 把这条出片流水线整个交到你的 AI agent 手里，全程在你自己的机器上跑，让它真的能交付成片，而不是只给你一段文字。</p>
+      <p>Lecturecast 把可执行控制流交给你的 AI agent：Director 负责签名创作方案，本机负责 TTS、时间线和渲染。任何权限、素材、时长或 QA 检查失败都会停止交付，而不是给你一段看似完成的文字或残缺视频。</p>
     </div>
   </div>
 </section>
 
 <section class="block" id="features">
   <div class="wrap">
-    <div class="kicker">产品能力 · 全在本地跑</div>
+    <div class="kicker">产品能力 · 云端定方案，本机制作</div>
     <h2 class="section-title">从一句主题，到<em>两条成片</em>。</h2>
     <div class="features">
       <div class="feat">
         <span class="feat-num">i.</span>
-        <h3>AI 写讲稿</h3>
-        <p>把主题交给你的 agent，它生成结构化课程讲稿——分节、有逻辑、口语化。脚本是审批关卡，先给你确认和修改，再进入制作。</p>
+        <h3>Director 生成签名讲稿</h3>
+        <p>你先在 Creative Brief 中确认方向与事实；批准 10 credits 后，Director 生成不可变的签名 ProductionManifest 与完整讲稿。宿主 Agent 不能擅自改写。</p>
       </div>
       <div class="feat">
         <span class="feat-num">ii.</span>
         <h3>本地配音对轴</h3>
-        <p>讲稿在本机转成自然语音，自动切句、对齐时间轴，长段落自动校验时长重试，不会出现声画错位。默认 Edge TTS 免费，可选自带 MiniMax。</p>
+        <p>完整签名讲稿经你逐段批准后才进入 TTS。真实音频时长驱动场景、字幕和成片时长；任一分节或总时长超出 75–125% 安全范围，或音视频覆盖差超过 1 秒，构建会停止。</p>
       </div>
       <div class="feat">
         <span class="feat-num">iii.</span>
@@ -333,7 +331,7 @@
       <div class="feat">
         <span class="feat-num">iv.</span>
         <h3>字幕 + 封面</h3>
-        <p>本机 ffmpeg 自动烧录中文字幕、生成双平台封面，并跑一遍小红书合规检查。拿到就能直接发，不用再开剪辑软件。</p>
+        <p>本机 ffmpeg 烧录中文字幕并生成两张对应尺寸的 PNG 封面。完整解码、音轨覆盖、字幕字形和尺寸 QA 通过后才交付，由你最终审核并决定是否发布。</p>
       </div>
     </div>
   </div>
@@ -343,7 +341,7 @@
   <div class="wrap">
     <div class="kicker">一次生成 · 双版本</div>
     <h2 class="section-title">B 站和小红书，<em>各发各的</em>。</h2>
-    <p class="section-lede">同一个主题、同一份讲稿，在本地一次跑完同时产出两个比例的成片，分别适配横屏与竖屏的排版和字幕，直接发布即可。</p>
+    <p class="section-lede">标准 Manifest 明确列出四项交付：1920×1080 横版 MP4、1080×1920 竖版 MP4，以及两张同尺寸 PNG 封面。全部通过本地 QA 后交给你审核。</p>
     <div class="platforms">
       <div class="pf land">
         <div class="frame">1920 × 1080</div>
@@ -365,7 +363,7 @@
   <div class="wrap">
     <div class="kicker">本地三件套依赖</div>
     <h2 class="section-title">全部跑在<em>你自己的机器</em>上。</h2>
-    <p class="section-lede">正式支持 macOS 与 Windows，不支持 Linux/WSL。没有云端媒体 worker，也没有远程渲染。云端只负责商业权限、创作决策与签名 Manifest；<code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh / install.ps1</code> 会检查本机缺少什么。</p>
+    <p class="section-lede">正式支持 macOS 与 Windows，不支持 Linux/WSL。没有云端媒体 worker，也没有远程渲染。云端只负责商业权限、创作决策与签名 Manifest；旁白文本会发送给所选 TTS 服务。<code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh / install.ps1</code> 会检查本机缺少什么。</p>
     <div class="stack">
       <div class="stk">
         <div class="stk-icon">RENDER</div>
@@ -375,7 +373,7 @@
       <div class="stk">
         <div class="stk-icon">VOICE</div>
         <h3>Python + edge-tts</h3>
-        <p>本地配音、切句、对轴。默认免费 Edge TTS；想升级音色就自带 MiniMax key。</p>
+        <p>音频文件在本机生成和保存；旁白文本由本机客户端发送给 Microsoft Edge 语音服务。也可自带 MiniMax key，把签名讲稿文本发送到自己的 MiniMax 账户。</p>
       </div>
       <div class="stk">
         <div class="stk-icon">MUX</div>
@@ -390,7 +388,7 @@
   <div class="wrap">
     <div class="kicker">怎么用</div>
     <h2 class="section-title">设计为 <em>agent-friendly</em>。</h2>
-    <p class="section-lede">核心是一套本地工作流，把它交给你的 AI 助理。脚本生成后会停下来等你确认，确认满意才进入配音和渲染。</p>
+    <p class="section-lede">安装后的 Skill 驱动唯一控制流。Brief、10-credit Manifest 生成、完整签名讲稿分别是三次独立人工门禁；全部通过后才进入本地 TTS 和渲染。</p>
     <div class="steps">
       <div class="step">
         <div class="step-n">01</div>
@@ -410,7 +408,7 @@
         <div class="step-n">03</div>
         <div class="step-body">
           <h3>Director 定方案，本地完成出片</h3>
-          <p>通过 Director 选择和 Brief 审批后，明确确认消耗 10 credits 获取签名 ProductionManifest；Agent 再在本机完成配音、双平台渲染、烧字幕和封面。</p>
+          <p>通过 Director 选择和 Brief 审批后，明确确认消耗 10 credits 获取签名 ProductionManifest。Agent 展示不可变的完整签名讲稿并再次等待批准；只有批准后才在本机执行 TTS、横竖双版渲染、字幕与双封面，并在 QA 失败时停止交付。</p>
         </div>
       </div>
     </div>
@@ -424,19 +422,19 @@
     <div class="faq-list">
       <details class="faq-item">
         <summary>要钱吗？要注册账户吗？</summary>
-        <div class="faq-answer">需要有效的 <strong>AgentMesh360 付费账户</strong>和通用 API Key。Lecturecast 使用现有共享 credits，无需另购独立订阅；结构化选择和 Brief 不扣费，只有你确认生成 ProductionManifest 时才固定扣除 10 credits。</div>
+        <div class="faq-answer">需要有效的 <strong>AgentMesh360 月卡</strong>和通用 API Key。Lecturecast 使用月卡账户的共享 credits，无需另购独立 LectureCast 订阅；结构化选择和 Brief 不扣费，只有你明确批准生成 ProductionManifest 时才固定扣除 10 credits。</div>
       </details>
       <details class="faq-item">
         <summary>视频会上传到云端吗？</summary>
-        <div class="faq-answer">原始媒体不会上传。只有受限素材摘要、稳定选项 ID、Brief 和客户端能力进入云端 Director；原始媒体、配音、字幕、编辑、渲染与成片始终留在本机。</div>
+        <div class="faq-answer">原始媒体不会上传。受限素材摘要、稳定选项 ID、Brief 和客户端能力进入云端 Director；旁白文本发送给所选 TTS 服务。原始媒体、本地路径、生成音频、字幕、渲染与成片留在本机。</div>
       </details>
       <details class="faq-item">
         <summary>配音用什么？能换更好的音色吗？</summary>
-        <div class="faq-answer">默认用免费的 Edge TTS，开箱即用、足够出片。如果想要更暖的音色，可以自带（BYOK）一个 <a class="link" href="https://www.minimaxi.com">MiniMax</a> key —— 那是你自己在 minimaxi.com 注册的第三方服务，不是 Lecturecast 提供的 key，只通过环境变量 <code>MINIMAX_API_KEY</code> 传入、绝不写入磁盘。</div>
+        <div class="faq-answer">默认 Edge TTS 会把旁白文本发送到 Microsoft Edge 语音服务；MiniMax BYOK 会把签名讲稿文本发送到你自己的 <a class="link" href="https://www.minimaxi.com">MiniMax</a> 账户。LectureCast 不会主动持久化 <code>MINIMAX_API_KEY</code>，建议用安全的进程环境注入；直接在 shell 中输入 <code>export</code> 可能进入历史记录。</div>
       </details>
       <details class="faq-item">
-        <summary>视频是全自动生成的吗？我能改吗？</summary>
-        <div class="faq-answer">脚本会先给你确认和修改（审批关卡），满意后才进入配音和渲染——你掌控内容，AI 负责出片。</div>
+        <summary>视频是全自动生成的吗？有哪些人工门禁？</summary>
+        <div class="faq-answer">不是无人值守。你先批准 Creative Brief，再明确批准一次 10-credit Manifest 生成，最后逐段审阅并批准完整签名讲稿。签名内容生成后宿主 Agent 不得修改；不批准就停止，不会进入 TTS 或渲染。</div>
       </details>
       <details class="faq-item">
         <summary>需要装什么？</summary>
@@ -444,11 +442,11 @@
       </details>
       <details class="faq-item">
         <summary>支持哪些平台的成片？</summary>
-        <div class="faq-answer">一次产出 B 站横版（<code>1920×1080</code>）和小红书竖版（<code>1080×1920</code>）两个版本，已烧录中文字幕并生成封面。</div>
+        <div class="faq-answer">标准交付是四个文件：B 站横版 MP4（<code>1920×1080</code>）、小红书竖版 MP4（<code>1080×1920</code>），以及两张对应尺寸的 PNG 封面。</div>
       </details>
       <details class="faq-item">
-        <summary>真的开源吗？</summary>
-        <div class="faq-answer">是。整套工具 Apache 2.0 开源，代码全在 <a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a>，欢迎自取、改造、提 issue。</div>
+        <summary>公开客户端是开源的吗？</summary>
+        <div class="faq-answer">公开 CLI、本地执行工具与网站代码采用 Apache 2.0，位于 <a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a>。完整产品仍只有一条商业路线：必须使用有效月卡、通用 API Key、共享 credits 和云端 Director，没有免账户路径。</div>
       </details>
     </div>
   </div>
@@ -464,7 +462,7 @@
         </svg>
         Lecturecast
       </a>
-      <div style="margin-top:8px;font-size:13.5px;color:var(--muted);">AgentMesh 生态（<a class="link" href="https://agentmesh360.com" style="font-size:inherit">agentmesh360.com</a>）下的开源项目 · Apache 2.0</div>
+      <div style="margin-top:8px;font-size:13.5px;color:var(--muted);">AgentMesh360 商业产品 · 公开客户端 Apache 2.0 · 需要有效月卡与 Director</div>
     </div>
     <div class="foot-meta">
       <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a>

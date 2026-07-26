@@ -15,6 +15,41 @@ COMMERCIAL_ONLY_PAGES = (
     Path("ko/index.html"),
 )
 COMMERCIAL_ONLY_CONTRACT = "commercial-only-v1"
+COMMERCIAL_REQUIRED_PAGE_TOKENS = (
+    "10 credits",
+    "ProductionManifest",
+    "lecturecast onboard --adapter codex --host-contract 1.0.0 --json",
+    "lecturecast auth login",
+    "workflow.next_action",
+    "Microsoft Edge",
+    "MiniMax",
+    "1920×1080",
+    "1080×1920",
+    "MP4",
+    "PNG",
+)
+COMMERCIAL_LOCALIZED_TOKENS = {
+    Path("index.html"): ("有效月卡", "完整签名讲稿", "三次独立人工"),
+    Path("en/index.html"): (
+        "active monthly pass",
+        "complete signed narration",
+        "three independent human",
+    ),
+    Path("ja/index.html"): ("有効な月間パス", "署名脚本全文", "3 つの独立"),
+    Path("ko/index.html"): ("유효한 월간 패스", "전체 서명 대본", "세 번의 사람"),
+}
+RETIRED_MARKETING_FRAGMENTS = (
+    "开源本地工具",
+    "open-source local tool",
+    "オープンソースのローカル",
+    "오픈소스 로컬",
+)
+UNSAFE_CREDENTIAL_CLAIMS = (
+    "绝不写入磁盘",
+    "never written to disk",
+    "ディスクに書き込まれることはありません",
+    "디스크에 기록되지 않습니다",
+)
 
 
 @dataclass(frozen=True)
@@ -149,8 +184,38 @@ def _validate_commercial_only_contract(
                 errors.append(f"{label}: director route must keep media local")
         if unexpected:
             errors.append(f"{label}: unexpected product route(s): {', '.join(unexpected)}")
-        if retired_tier in page.read_text(encoding="utf-8").lower():
+        page_text = page.read_text(encoding="utf-8")
+        lowered_page = page_text.lower()
+        if retired_tier in lowered_page:
             errors.append(f"{label}: retired product tier must not be published")
+        for token in COMMERCIAL_REQUIRED_PAGE_TOKENS:
+            if token not in page_text:
+                errors.append(f"{label}: missing commercial-workflow token {token!r}")
+        for token in COMMERCIAL_LOCALIZED_TOKENS[relative_path]:
+            if token not in page_text:
+                errors.append(f"{label}: missing localized product-contract token {token!r}")
+        onboard_index = page_text.find("lecturecast onboard")
+        auth_index = page_text.find("lecturecast auth login")
+        if onboard_index == -1 or auth_index == -1 or onboard_index >= auth_index:
+            errors.append(
+                f"{label}: install guidance must onboard before conditional auth login"
+            )
+        head_text = page_text.partition("</head>")[0].lower()
+        for fragment in RETIRED_MARKETING_FRAGMENTS:
+            if fragment.lower() in head_text:
+                errors.append(
+                    f"{label}: retired open-source-local metadata must not be published"
+                )
+        for fragment in UNSAFE_CREDENTIAL_CLAIMS:
+            if fragment.lower() in lowered_page:
+                errors.append(
+                    f"{label}: unsafe absolute credential-storage claim {fragment!r}"
+                )
+        if (
+            ".routes{margin-top:40px;display:grid;"
+            "grid-template-columns:1fr 1fr"
+        ) in page_text:
+            errors.append(f"{label}: single commercial route must not use a two-column grid")
 
     llms_path = root / "llms.txt"
     if not llms_path.is_file():
@@ -159,7 +224,20 @@ def _validate_commercial_only_contract(
     llms_text = llms_path.read_text(encoding="utf-8")
     if retired_tier in llms_text.lower():
         errors.append("llms.txt: retired product tier must not be published")
-    for token in ("Commercial", "Director", "ProductionManifest", "paid AgentMesh360 account", "10 credits"):
+    for token in (
+        "Commercial",
+        "Director",
+        "ProductionManifest",
+        "paid AgentMesh360 account",
+        "active AgentMesh360 monthly pass",
+        "10 credits",
+        "workflow.next_action",
+        "immutable signed",
+        "four files",
+        "Edge TTS",
+        "Linux and WSL are not supported",
+        "no account-free route",
+    ):
         if token not in llms_text:
             errors.append(f"llms.txt: missing product-boundary token {token!r}")
 

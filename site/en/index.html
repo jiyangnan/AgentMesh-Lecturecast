@@ -4,9 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Lecturecast — Turn one idea into a course video · AgentMesh360 commercial product</title>
-<meta name="description" content="Lecturecast is an AgentMesh360 commercial course-video product: bind paid access, use the cloud Director for a signed ProductionManifest, and keep original media, editing, and rendering local." />
+<meta name="description" content="Lecturecast is an AgentMesh360 commercial course-video product: bind an active monthly pass and universal API key, use the cloud Director for a signed ProductionManifest, then produce media locally." />
 <meta property="og:title" content="Lecturecast — Turn one idea into a course video" />
-<meta property="og:description" content="Open-source local tool: AI scripting + voiceover + dual-platform rendering (Bilibili 16:9 / Xiaohongshu 9:16), all on your own machine. One topic in, two finished videos out." />
+<meta property="og:description" content="AgentMesh360 commercial course-video production: the cloud Director signs the plan and script; your machine creates two MP4s, subtitles, and two covers." />
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://lecturecast.agentmesh360.com/en/" />
 <meta property="og:site_name" content="Lecturecast · AgentMesh360" />
@@ -14,8 +14,8 @@
 <meta name="robots" content="index,follow,max-image-preview:large" />
 <meta name="theme-color" content="#0E8A6E" />
 <meta name="twitter:card" content="summary" />
-<meta name="twitter:title" content="Lecturecast — open-source local course-video workflow" />
-<meta name="twitter:description" content="Lecturecast is an open-source local tool: hand a topic to an AI agent and it produces a finished course video in both Bilibili landscape and Xiaohongshu portrait formats." />
+<meta name="twitter:title" content="Lecturecast — AgentMesh360 commercial course-video production" />
+<meta name="twitter:description" content="Bind an active monthly pass and universal API key, pass three human approval gates, then produce two MP4s and two covers on your machine." />
 <link rel="canonical" href="https://lecturecast.agentmesh360.com/en/" />
 <link rel="alternate" type="text/markdown" href="/llms.txt" title="Lecturecast LLMs.txt" />
 <link rel="alternate" hreflang="zh-CN" href="https://lecturecast.agentmesh360.com/" />
@@ -48,17 +48,15 @@
       "operatingSystem": "macOS, Windows",
       "isAccessibleForFree": false,
       "provider": { "@id": "https://agentmesh360.com/#organization" },
-      "description": "Lecturecast is an AgentMesh360 commercial course-video product. The cloud Director provides structured creative choices and a signed ProductionManifest while media production and rendering stay on the user's machine.",
+      "description": "Lecturecast is an AgentMesh360 commercial course-video product. Active monthly-pass customers use the cloud Director for structured choices, a signed ProductionManifest, and a signed script, then produce media locally.",
       "featureList": [
-        "Local AI course-script generation",
+        "Cloud Director structured choices and signed narration script",
         "Local voiceover and timeline alignment",
-        "Bilibili 16:9 landscape video",
-        "Xiaohongshu 9:16 portrait video",
+        "1920×1080 landscape MP4 and matching PNG cover",
+        "1080×1920 portrait MP4 and matching PNG cover",
         "Chinese subtitle burn-in",
-        "Cover image generation",
-        "Cloud Director structured creative choices",
         "Signed declarative ProductionManifest",
-        "Apache 2.0 open source"
+        "Three independent human approval gates"
       ],
       "offers": {
         "@type": "Offer",
@@ -74,17 +72,17 @@
         {
           "@type": "Question",
           "name": "Does Lecturecast require an account or API key?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Yes. Lecturecast requires a current paid AgentMesh360 account and universal API key. A confirmed ProductionManifest generation deducts 10 credits." }
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes. Lecturecast requires an active AgentMesh360 monthly pass and universal API key. Only explicit approval of ProductionManifest generation deducts 10 credits." }
         },
         {
           "@type": "Question",
           "name": "Does Lecturecast upload anything to the cloud?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Only a bounded source summary, stable choices, the Brief, and client capabilities go to the cloud Director; original media, voice, editing, rendering, and outputs stay local." }
+          "acceptedAnswer": { "@type": "Answer", "text": "A bounded source summary, stable choices, the Brief, and client capabilities go to the cloud Director; narration text goes to the selected TTS provider. Original media, generated audio, subtitles, rendering, and outputs stay local." }
         },
         {
           "@type": "Question",
           "name": "Which video platform formats does Lecturecast support?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Lecturecast produces both Bilibili landscape (16:9) and Xiaohongshu portrait (9:16) at the same time." }
+          "acceptedAnswer": { "@type": "Answer", "text": "Standard delivery contains a 1920×1080 landscape MP4, a 1080×1920 portrait MP4, and two matching PNG covers." }
         }
       ]
     }
@@ -148,7 +146,7 @@
   .btn-ghost{background:transparent;color:var(--ink);border-color:var(--rule)} .btn-ghost:hover{border-color:var(--ink)}
   .btn .arrow{transition:transform .15s} .btn:hover .arrow{transform:translateX(3px)}
 
-  .routes{margin-top:40px;display:grid;grid-template-columns:1fr 1fr;background:var(--surface);border:1px solid var(--rule);border-radius:16px;overflow:hidden}
+  .routes{margin-top:40px;display:grid;grid-template-columns:1fr;background:var(--surface);border:1px solid var(--rule);border-radius:16px;overflow:hidden}
   .route{padding:clamp(22px,3vw,32px);position:relative}
   .route + .route{border-left:1px solid var(--rule)}
   .route-director{background:linear-gradient(135deg,color-mix(in oklab,var(--accent) 9%,var(--surface)),var(--surface) 72%)}
@@ -246,7 +244,7 @@
       Lecturecast <small>· AgentMesh360</small>
     </a>
     <nav class="nav-links" aria-label="Primary">
-      <a href="#routes" class="nav-section">Routes</a>
+      <a href="#routes" class="nav-section">Commercial path</a>
       <a href="#features" class="nav-section">Features</a>
       <a href="#platforms" class="nav-section">Platforms</a>
       <a href="#how" class="nav-section">How</a>
@@ -260,7 +258,7 @@
         <span class="sep"></span>
         <a class="lang" href="/ko/" hreflang="ko">한</a>
       </span>
-      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="nav-cta">See on GitHub</a>
+      <a href="#install" class="nav-cta">Install</a>
     </nav>
   </div>
 </header>
@@ -270,33 +268,33 @@
     <div class="eyebrow"><span class="dot"></span> COMMERCIAL ACCESS · LOCAL PRODUCTION</div>
     <h1 class="display">Turn one idea into <em>a course video</em>.</h1>
     <p class="lede">
-      Lecturecast is an <strong>AgentMesh360 commercial course-video product</strong>. Your Agent binds paid access, the cloud Director turns structured choices into a signed production plan, and your machine handles voice, editing, and rendering for <strong>both Bilibili landscape and Xiaohongshu portrait</strong>. Original media and the entire media pipeline stay local.
+      Lecturecast is an <strong>AgentMesh360 commercial course-video product</strong>. Your Agent verifies an active monthly pass and universal API key, the cloud Director turns structured choices into a signed production plan and narration script, and your machine produces <strong>two MP4s plus two matching covers</strong>. Original media is never uploaded; narration text goes to your selected TTS provider.
       <span style="display:block;margin-top:8px;font-size:0.9em;color:var(--muted);">(Bilibili and Xiaohongshu are the major Chinese video platforms — landscape and portrait respectively. The pipeline produces both formats whether or not you publish to them.)</span>
     </p>
     <div class="hero-ctas">
-      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="btn btn-primary">See on GitHub <span class="arrow">→</span></a>
-      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md" class="btn btn-ghost">See the local workflow</a>
+      <a href="#install" class="btn btn-primary">Install Lecturecast <span class="arrow">→</span></a>
+      <a href="https://agentmesh360.com/app/" class="btn btn-ghost">Open AgentMesh360 account center</a>
     </div>
 
     <div class="routes" id="routes" data-product-contract="commercial-only-v1" aria-label="Lecturecast commercial access">
       <article class="route route-director" data-route="director" data-access="paid" data-media="local">
-        <div class="route-top"><span class="route-label">Lecturecast Director</span><span class="route-status">Paid AgentMesh360 accounts</span></div>
+        <div class="route-top"><span class="route-label">Lecturecast Director</span><span class="route-status">Active monthly pass · 10 credits / generation</span></div>
         <h3>Cloud direction, local production.</h3>
-        <p>Your Agent verifies the universal API key, active monthly pass, and shared credits before presenting native choice cards. The cloud returns a signed ProductionManifest; 10 credits are deducted only after confirmed generation, while media, voice, editing, and rendering stay local.</p>
+        <p>Your Agent verifies the universal API key, active monthly pass, and shared credits before native choice cards and Brief approval. After you explicitly approve 10 credits, Director returns a signed ProductionManifest and immutable signed script. You review every narration section and approve it before local TTS and rendering can start.</p>
       </article>
     </div>
 
-    <div class="terminal-frame" aria-label="Install locally, then let your agent drive it">
+    <div class="terminal-frame" id="install" aria-label="Install locally, then let your agent drive it">
       <div class="terminal-bar">
         <div class="lights"><span></span><span></span><span></span></div>
         <span class="title">~ run-this-locally</span>
       </div>
 <pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
 <span class="c-prompt">PS&gt;</span> <span class="c-cmd">irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex</span>
-<span class="c-prompt">$</span> <span class="c-cmd">lecturecast auth login</span>   <span class="c-dim"># verify and bind a universal AgentMesh360 API key</span>
-<span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --adapter codex --host-contract 1.0.0 --json</span> <span class="c-dim"># Skill, paid account, credits, renderer</span>
-
-<span class="c-dim"># commercial onboarding -> Director -> approve 10 credits -> local dual-format production</span></pre>
+<span class="c-dim"># After installation, start a NEW host-Agent task; the fresh Skill returns the exact command</span>
+<span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --adapter codex --host-contract 1.0.0 --json</span> <span class="c-dim"># Codex example</span>
+<span class="c-dim"># Only if requires_user_action asks for an API key: lecturecast auth login</span>
+<span class="c-dim"># Rerun onboard after the fix, then execute only workflow.next_action</span></pre>
     </div>
   </div>
 </section>
@@ -309,25 +307,25 @@
     </div>
     <div class="why-body">
       <p>Getting an AI to write a script is easy. What's hard is everything after — <span class="hi">voiceover, timeline alignment, rendering, subtitle burn-in, cover design, and producing landscape + portrait versions each time</span>.</p>
-      <p>Lecturecast hands the whole production pipeline to your AI agent. It runs on your own machine end-to-end, so the agent actually delivers finished videos — not just text.</p>
+      <p>Lecturecast gives your AI agent an executable control flow: Director owns the signed creative plan; your machine owns TTS, timing, and rendering. Any access, asset, timing, or QA failure stops delivery instead of producing plausible text or an incomplete video.</p>
     </div>
   </div>
 </section>
 
 <section class="block" id="features">
   <div class="wrap">
-    <div class="kicker">Capabilities · all local</div>
+    <div class="kicker">Capabilities · cloud plan, local production</div>
     <h2 class="section-title">From one topic to <em>two finished videos</em>.</h2>
     <div class="features">
       <div class="feat">
         <span class="feat-num">i.</span>
-        <h3>AI-written script</h3>
-        <p>Hand the topic to your agent and it produces a structured course script — sectioned, logical, in spoken language. The script is the approval gate: you confirm or edit before production starts.</p>
+        <h3>Director-generated signed script</h3>
+        <p>You confirm direction and facts in the Creative Brief. After the 10-credit approval, Director returns the immutable signed ProductionManifest and complete narration script; the host Agent cannot rewrite them.</p>
       </div>
       <div class="feat">
         <span class="feat-num">ii.</span>
         <h3>Local voiceover and alignment</h3>
-        <p>The script becomes natural speech on your machine, auto-segmented and time-aligned. Long segments are length-checked and retried automatically so audio and video stay in sync. Edge TTS is free by default; MiniMax is optional via your own key.</p>
+        <p>Only your approval of every signed narration section unlocks TTS. Measured audio drives scenes, subtitles, and composition duration; the build stops if any section or total leaves the 75–125% timing envelope, or final A/V coverage differs by more than one second.</p>
       </div>
       <div class="feat">
         <span class="feat-num">iii.</span>
@@ -337,7 +335,7 @@
       <div class="feat">
         <span class="feat-num">iv.</span>
         <h3>Subtitles + covers</h3>
-        <p>Local ffmpeg burns in Chinese subtitles and generates dual covers. A Xiaohongshu compliance check runs automatically so you can post immediately, no editing software needed.</p>
+        <p>Local ffmpeg burns in Chinese subtitles and creates two matching PNG covers. Delivery waits for full decode, audio coverage, subtitle-glyph, and dimension QA; you make the final publish decision.</p>
       </div>
     </div>
   </div>
@@ -347,7 +345,7 @@
   <div class="wrap">
     <div class="kicker">One generation · two versions</div>
     <h2 class="section-title">Bilibili and Xiaohongshu, <em>each their own</em>.</h2>
-    <p class="section-lede">One topic, one script — Lecturecast produces both aspect ratios at once with platform-appropriate layout and subtitles, ready to publish.</p>
+    <p class="section-lede">The standard Manifest declares four deliverables: a 1920×1080 landscape MP4, a 1080×1920 portrait MP4, and two matching PNG covers. All four are handed to you only after local QA.</p>
     <div class="platforms">
       <div class="pf land">
         <div class="frame">1920 × 1080</div>
@@ -369,7 +367,7 @@
   <div class="wrap">
     <div class="kicker">Local three-piece stack</div>
     <h2 class="section-title">All on <em>your own machine</em>.</h2>
-    <p class="section-lede">Native macOS and Windows are supported; Linux and WSL are not. There are no cloud media workers or remote renderers. The cloud handles commercial access, creative decisions, and a signed Manifest. <code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh / install.ps1</code> checks what the local machine is missing.</p>
+    <p class="section-lede">Native macOS and Windows are supported; Linux and WSL are not. There are no cloud media workers or remote renderers. The cloud handles commercial access, creative decisions, and a signed Manifest; narration text goes to the selected TTS service. <code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh / install.ps1</code> checks what the local machine is missing.</p>
     <div class="stack">
       <div class="stk">
         <div class="stk-icon">RENDER</div>
@@ -379,7 +377,7 @@
       <div class="stk">
         <div class="stk-icon">VOICE</div>
         <h3>Python + edge-tts</h3>
-        <p>Local voiceover, sentence segmentation, and timing alignment. Free Edge TTS by default; upgrade with your own MiniMax key.</p>
+        <p>Audio files are generated and stored locally. The client sends narration text to Microsoft Edge speech; with MiniMax BYOK, it sends the signed narration text to your own MiniMax account.</p>
       </div>
       <div class="stk">
         <div class="stk-icon">MUX</div>
@@ -394,7 +392,7 @@
   <div class="wrap">
     <div class="kicker">How to use</div>
     <h2 class="section-title">Designed to be <em>agent-friendly</em>.</h2>
-    <p class="section-lede">Lecturecast is a local workflow you hand to your AI assistant. The script always pauses for your confirmation before the production stage runs.</p>
+    <p class="section-lede">The installed Skill drives one control flow. Brief approval, 10-credit Manifest-generation approval, and complete signed-script approval are three independent human gates before local TTS and rendering.</p>
     <div class="steps">
       <div class="step">
         <div class="step-n">01</div>
@@ -414,7 +412,7 @@
         <div class="step-n">03</div>
         <div class="step-body">
           <h3>Director plans; your machine ships</h3>
-          <p>After Director choices and Brief approval, explicitly approve 10 credits for the signed ProductionManifest. Your Agent then handles local voice, dual-format rendering, subtitle burn-in, and covers.</p>
+          <p>After Director choices and Brief approval, explicitly approve 10 credits for the signed ProductionManifest. Your Agent shows the complete signed narration script—still immutable—and pauses again; only your approval unlocks local TTS, two renders, subtitles, and two covers. QA failures stop delivery.</p>
         </div>
       </div>
     </div>
@@ -432,15 +430,15 @@
       </details>
       <details class="faq-item">
         <summary>Does the video get uploaded to the cloud?</summary>
-        <div class="faq-answer">Original media is not uploaded. Only a bounded source summary, stable option IDs, the Brief, and client capabilities go to the cloud Director. Original media, voice, subtitles, editing, rendering, and finished outputs always stay local.</div>
+        <div class="faq-answer">Original media is not uploaded. A bounded source summary, stable option IDs, the Brief, and client capabilities go to the cloud Director; narration text goes to the selected TTS provider. Original media, local paths, generated audio, subtitles, rendering, and outputs stay local.</div>
       </details>
       <details class="faq-item">
         <summary>What does the voiceover use? Can I get a richer voice?</summary>
-        <div class="faq-answer">By default it uses the free Edge TTS — works out of the box and is good enough to ship. For a warmer voice you can bring your own <a class="link" href="https://www.minimaxi.com">MiniMax</a> key — that's a third-party service you register for yourself, not provided by Lecturecast. The key is passed via the <code>MINIMAX_API_KEY</code> environment variable and is never written to disk.</div>
+        <div class="faq-answer">Edge TTS sends narration text to Microsoft's Edge speech service. MiniMax BYOK sends the signed narration text to your own <a class="link" href="https://www.minimaxi.com">MiniMax</a> account. LectureCast does not intentionally persist <code>MINIMAX_API_KEY</code>; use secure process-environment injection because typing a literal shell <code>export</code> may put it in shell history.</div>
       </details>
       <details class="faq-item">
-        <summary>Are the videos generated fully automatically? Can I edit?</summary>
-        <div class="faq-answer">The script always pauses for your confirmation and edits before production starts. You own the content; the AI handles the production.</div>
+        <summary>Is production fully automatic? What are the human gates?</summary>
+        <div class="faq-answer">It is not unattended. You approve the Creative Brief, explicitly approve one 10-credit Manifest generation, then review and approve every section of the complete signed script. After signing, the host Agent may not edit it. Rejection stops before TTS or rendering.</div>
       </details>
       <details class="faq-item">
         <summary>What do I need to install?</summary>
@@ -448,11 +446,11 @@
       </details>
       <details class="faq-item">
         <summary>Which platforms are the outputs for?</summary>
-        <div class="faq-answer">Both Bilibili landscape (<code>1920×1080</code>) and Xiaohongshu portrait (<code>1080×1920</code>) at once, both with burned-in subtitles and a generated cover.</div>
+        <div class="faq-answer">Four standard files: a Bilibili landscape MP4 (<code>1920×1080</code>), a Xiaohongshu portrait MP4 (<code>1080×1920</code>), and two matching PNG covers.</div>
       </details>
       <details class="faq-item">
-        <summary>Is it actually open source?</summary>
-        <div class="faq-answer">Yes. Apache 2.0. All the code is on <a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a> — fork, modify, file issues.</div>
+        <summary>Is the public client open source?</summary>
+        <div class="faq-answer">The public CLI, local execution tools, and website are Apache 2.0 on <a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a>. The complete product has one commercial path: an active monthly pass, universal API key, shared credits, and the cloud Director are required. There is no account-free route.</div>
       </details>
     </div>
   </div>
@@ -468,7 +466,7 @@
         </svg>
         Lecturecast
       </a>
-      <div style="margin-top:8px;font-size:13.5px;color:var(--muted);">An open-source project in the AgentMesh ecosystem (<a class="link" href="https://agentmesh360.com" style="font-size:inherit">agentmesh360.com</a>) · Apache 2.0</div>
+      <div style="margin-top:8px;font-size:13.5px;color:var(--muted);">AgentMesh360 commercial product · Apache 2.0 public client · active monthly pass and Director required</div>
       <div class="foot-note">Machine-assisted translation. Feedback welcome via <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/issues">GitHub issues</a>.</div>
     </div>
     <div class="foot-meta">
