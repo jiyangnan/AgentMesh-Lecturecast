@@ -65,6 +65,32 @@
       }
     },
     {
+      "@type": "VideoObject",
+      "@id": "https://lecturecast.agentmesh360.com/#case-bilibili",
+      "name": "困難なタスクの始め方 — Bilibili 横版の実納品",
+      "description": "Lecturecast の実際の初回顧客検証で納品した 1920×1080 のコース動画。",
+      "thumbnailUrl": "https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili-poster.jpg",
+      "contentUrl": "https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili.mp4",
+      "uploadDate": "2026-07-21",
+      "duration": "PT4M48.433S",
+      "encodingFormat": "video/mp4",
+      "inLanguage": "zh-CN",
+      "isFamilyFriendly": true
+    },
+    {
+      "@type": "VideoObject",
+      "@id": "https://lecturecast.agentmesh360.com/#case-xiaohongshu",
+      "name": "困難なタスクの始め方 — Xiaohongshu 縦版の実納品",
+      "description": "Lecturecast の実際の初回顧客検証で納品した 1080×1920 のコース動画。",
+      "thumbnailUrl": "https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu-poster.jpg",
+      "contentUrl": "https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu.mp4",
+      "uploadDate": "2026-07-21",
+      "duration": "PT4M48.433S",
+      "encodingFormat": "video/mp4",
+      "inLanguage": "zh-CN",
+      "isFamilyFriendly": true
+    },
+    {
       "@type": "FAQPage",
       "@id": "https://lecturecast.agentmesh360.com/ja/#faq",
       "inLanguage": "ja",
@@ -93,6 +119,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Noto+Serif+JP:wght@400;500;600&family=Inter:wght@400;450;500;600&family=Noto+Sans+JP:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link href="/showcase.css?v=real-delivery-v1" rel="stylesheet" />
 
 <style>
   :root {
@@ -185,16 +212,6 @@
   .feat p{margin:0;font-size:15px;line-height:1.75;color:var(--ink-soft);text-wrap:pretty}
   @media(max-width:820px){.features{grid-template-columns:1fr}}
 
-  .platforms{display:grid;grid-template-columns:1fr 1fr;gap:clamp(20px,3vw,32px);margin-top:clamp(48px,6vw,72px)}
-  @media(max-width:680px){.platforms{grid-template-columns:1fr}}
-  .pf{background:var(--surface);border:1px solid var(--rule);border-radius:16px;padding:clamp(24px,3vw,36px);display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center}
-  .pf .frame{background:var(--code-bg);border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--code-dim);font-family:var(--mono);font-size:12px}
-  .pf.land .frame{width:100%;aspect-ratio:16/9}
-  .pf.port .frame{width:60%;max-width:180px;aspect-ratio:9/16}
-  .pf h3{font-family:var(--serif);font-weight:500;font-size:21px;margin:0;letter-spacing:-0.005em}
-  .pf p{margin:0;font-size:14px;color:var(--ink-soft);line-height:1.75}
-  .pf .ratio{font-family:var(--mono);font-size:12px;color:var(--accent-ink)}
-
   .stack{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(20px,3vw,32px);margin-top:clamp(48px,6vw,72px)}
   @media(max-width:680px){.stack{grid-template-columns:1fr}}
   .stk{background:var(--surface);border:1px solid var(--rule);border-radius:14px;padding:clamp(22px,2.6vw,30px)}
@@ -246,7 +263,7 @@
     <nav class="nav-links" aria-label="Primary">
       <a href="#routes" class="nav-section">商用経路</a>
       <a href="#features" class="nav-section">機能</a>
-      <a href="#platforms" class="nav-section">2 プラットフォーム</a>
+      <a href="#platforms" class="nav-section">実際の納品</a>
       <a href="#how" class="nav-section">使い方</a>
       <a href="#faq" class="nav-section">FAQ</a>
       <span class="lang-switch" aria-label="Language">
@@ -341,24 +358,74 @@
   </div>
 </section>
 
-<section class="block" id="platforms">
+<section class="block" id="platforms" data-case-study="real-customer-canary-v1">
   <div class="wrap">
-    <div class="kicker">一度の生成 · 2 つのバージョン</div>
-    <h2 class="section-title">B 站と小红书、<em>それぞれに</em>。</h2>
-    <p class="section-lede">標準 Manifest は 4 つの納品物を宣言します：1920×1080 横版 MP4、1080×1920 縦版 MP4、対応する 2 枚の PNG カバー。すべてローカル QA 後に渡されます。</p>
-    <div class="platforms">
-      <div class="pf land">
-        <div class="frame">1920 × 1080</div>
-        <h3>B 站横版</h3>
-        <div class="ratio">16 : 9</div>
-        <p>知識解説や長尺動画向け；Remotion のクリーンなレイアウトに字幕焼き付け済み。</p>
-      </div>
-      <div class="pf port">
-        <div class="frame">1080 × 1920</div>
-        <h3>小红书縦版</h3>
-        <div class="ratio">9 : 16</div>
-        <p>スマホ縦向きフィード向け；Remotion の縦版レイアウト＋カバー付き。</p>
-      </div>
+    <div class="kicker">実際の納品 · 初回顧客検証</div>
+    <h2 class="section-title">一つのテーマから、<em>二本の実動画</em>。</h2>
+    <p class="section-lede">2026-07-21 の実際の初回顧客検証で制作。同じ署名済み台本と計測タイムラインから、顧客の端末上で横・縦それぞれに最適化したレイアウトを生成しました。単なる切り抜きではありません。</p>
+
+    <div class="case-proof" aria-label="事例の出所">
+      <div class="case-fact">Source<strong>初回顧客検証</strong></div>
+      <div class="case-fact">Run date<strong>2026 · 07 · 21</strong></div>
+      <div class="case-fact">Production<strong>Local render</strong></div>
+      <div class="case-fact">Delivery<strong>QA verified</strong></div>
+    </div>
+
+    <div class="case-grid">
+      <figure class="case-card case-land">
+        <div class="case-frame">
+          <div class="case-bar">
+            <span class="signal" aria-hidden="true"></span>
+            <span class="case-file">BILIBILI · 16:9 · 04:48</span>
+            <span class="case-qa">QA PASS</span>
+          </div>
+          <video class="case-video" width="1920" height="1080" controls playsinline preload="none"
+            poster="/assets/showcase/difficult-task-bilibili-poster.jpg"
+            aria-label="「困難なタスクの始め方」Bilibili 横版の最終動画を再生">
+            <source src="/assets/showcase/difficult-task-bilibili.mp4" type="video/mp4" />
+            お使いのブラウザは HTML5 動画に対応していません。<a href="/assets/showcase/difficult-task-bilibili.mp4">横版をダウンロード</a>。
+          </video>
+        </div>
+        <figcaption class="case-caption">
+          <h3>Bilibili 横版</h3>
+          <p>1920 × 1080 · H.264 + AAC<br />8,653 FRAMES</p>
+        </figcaption>
+      </figure>
+
+      <div class="case-link" aria-hidden="true"><span>ONE SCRIPT · TWO LAYOUTS</span></div>
+
+      <figure class="case-card case-port">
+        <div class="case-frame">
+          <div class="case-bar">
+            <span class="signal" aria-hidden="true"></span>
+            <span class="case-file">XIAOHONGSHU · 9:16 · 04:48</span>
+            <span class="case-qa">QA PASS</span>
+          </div>
+          <video class="case-video" width="1080" height="1920" controls playsinline preload="none"
+            poster="/assets/showcase/difficult-task-xiaohongshu-poster.jpg"
+            aria-label="「困難なタスクの始め方」Xiaohongshu 縦版の最終動画を再生">
+            <source src="/assets/showcase/difficult-task-xiaohongshu.mp4" type="video/mp4" />
+            お使いのブラウザは HTML5 動画に対応していません。<a href="/assets/showcase/difficult-task-xiaohongshu.mp4">縦版をダウンロード</a>。
+          </video>
+        </div>
+        <figcaption class="case-caption">
+          <h3>Xiaohongshu 縦版</h3>
+          <p>1080 × 1920 · H.264 + AAC<br />8,653 FRAMES</p>
+        </figcaption>
+      </figure>
+    </div>
+
+    <div class="case-stats" aria-label="事例の制作データ">
+      <div class="case-stat"><strong>08</strong><span>チャプター</span></div>
+      <div class="case-stat"><strong>1,409</strong><span>文字の署名済み台本</span></div>
+      <div class="case-stat"><strong>91</strong><span>字幕イベント</span></div>
+      <div class="case-stat"><strong>288.433s</strong><span>各最終動画</span></div>
+      <div class="case-stat"><strong>0</strong><span>欠落グリフ</span></div>
+    </div>
+
+    <div class="case-note">
+      <b>DELIVERY NOTE</b>
+      <p>検証では問題と修復の記録も保持しました。この二本は音声範囲、字幕グリフ、寸法、全編レンダー QA を通過した最終納品物です。</p>
     </div>
   </div>
 </section>

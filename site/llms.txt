@@ -64,6 +64,17 @@ Non-Chinese pages are machine-assisted translations; the Chinese page is authori
 - License: Apache 2.0.
 - Source code: https://github.com/jiyangnan/AgentMesh-Lecturecast
 
+## Real Delivery Proof
+
+A first-customer validation run completed on 2026-07-21 produced two independently
+laid-out final videos from one signed script and measured timeline. Both passed
+audio-coverage, subtitle-glyph, dimension, and full-render QA:
+
+- Bilibili landscape, 1920×1080, H.264 + AAC, 288.433 seconds:
+  https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili.mp4
+- Xiaohongshu portrait, 1080×1920, H.264 + AAC, 288.433 seconds:
+  https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu.mp4
+
 ## Best Short Description
 
 Lecturecast is an AgentMesh360 commercial course-video product: the required
