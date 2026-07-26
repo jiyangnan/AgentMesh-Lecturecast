@@ -4,9 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Lecturecast — 一つのアイデアから、講座動画を一本 · AgentMesh360 商用製品</title>
-<meta name="description" content="Lecturecast は AgentMesh360 の商用講座動画製品です。有料アカウントを紐付け、クラウド Director が署名付き ProductionManifest を生成し、元素材・編集・レンダリングはローカルに残します。" />
+<meta name="description" content="Lecturecast は AgentMesh360 の商用講座動画製品です。有効な月間パスと共通 API キーを紐付け、クラウド Director の署名付き ProductionManifest に基づいてローカル制作します。" />
 <meta property="og:title" content="Lecturecast — 一つのアイデアから、講座動画を一本" />
-<meta property="og:description" content="オープンソースのローカルツール：AI 脚本 + 配音 + 2 プラットフォーム同時出力（B 站 16:9 / 小红书 9:16）、すべてあなたのマシン上で。テーマ 1 つ、成片 2 本。" />
+<meta property="og:description" content="AgentMesh360 の商用講座動画製品：クラウド Director が制作計画と脚本に署名し、あなたのマシンが 2 本の MP4・字幕・2 枚のカバーを制作します。" />
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://lecturecast.agentmesh360.com/ja/" />
 <meta property="og:site_name" content="Lecturecast · AgentMesh360" />
@@ -14,8 +14,8 @@
 <meta name="robots" content="index,follow,max-image-preview:large" />
 <meta name="theme-color" content="#0E8A6E" />
 <meta name="twitter:card" content="summary" />
-<meta name="twitter:title" content="Lecturecast — オープンソースのローカル講座動画ワークフロー" />
-<meta name="twitter:description" content="Lecturecast はオープンソースのローカルツール：AI エージェントにテーマを渡せば、ローカルで脚本・配音・レンダリング・字幕焼き付け・カバーまで完了し、B 站横版と小红书縦版を同時に出力します。" />
+<meta name="twitter:title" content="Lecturecast — AgentMesh360 の商用講座動画製品" />
+<meta name="twitter:description" content="有効な月間パスと共通 API キーを紐付け、3 つの人間承認ゲートを経て、ローカルで 2 本の MP4 と 2 枚のカバーを制作します。" />
 <link rel="canonical" href="https://lecturecast.agentmesh360.com/ja/" />
 <link rel="alternate" type="text/markdown" href="/llms.txt" title="Lecturecast LLMs.txt" />
 <link rel="alternate" hreflang="zh-CN" href="https://lecturecast.agentmesh360.com/" />
@@ -48,17 +48,15 @@
       "operatingSystem": "macOS, Windows",
       "isAccessibleForFree": false,
       "provider": { "@id": "https://agentmesh360.com/#organization" },
-      "description": "Lecturecast は AgentMesh360 の商用講座動画製品。クラウド Director が構造化された創作選択と署名付き ProductionManifest を提供し、メディア制作とレンダリングはユーザーのマシン上に残ります。",
+      "description": "Lecturecast は AgentMesh360 の商用講座動画製品。有効な月間パスのユーザーはクラウド Director から構造化された創作選択、署名付き ProductionManifest と脚本を受け取り、ローカルでメディア制作します。",
       "featureList": [
-        "ローカル AI 講座脚本生成",
+        "クラウド Director の構造化選択と署名付きナレーション脚本",
         "ローカル配音とタイムライン整合",
-        "B 站 16:9 横版動画",
-        "小红书 9:16 縦版動画",
+        "1920×1080 横版 MP4 と同サイズ PNG カバー",
+        "1080×1920 縦版 MP4 と同サイズ PNG カバー",
         "中国語字幕焼き付け",
-        "カバー生成",
-        "クラウド Director による構造化された創作選択",
         "署名付き宣言型 ProductionManifest",
-        "Apache 2.0 オープンソース"
+        "3 つの独立した人間承認ゲート"
       ],
       "offers": {
         "@type": "Offer",
@@ -74,17 +72,17 @@
         {
           "@type": "Question",
           "name": "Lecturecast にアカウントや API キーは必要ですか？",
-          "acceptedAnswer": { "@type": "Answer", "text": "必要です。Lecturecast には有効な AgentMesh360 有料アカウントと共通 API キーが必要で、ProductionManifest の生成確認時に 10 credits を消費します。" }
+          "acceptedAnswer": { "@type": "Answer", "text": "必要です。Lecturecast には有効な AgentMesh360 月間パスと共通 API キーが必要で、ProductionManifest 生成を明示承認した場合だけ 10 credits を消費します。" }
         },
         {
           "@type": "Question",
           "name": "Lecturecast の処理過程でクラウドにアップロードされますか？",
-          "acceptedAnswer": { "@type": "Answer", "text": "限定された素材要約、安定した選択肢、Brief、クライアント能力だけがクラウド Director へ送られ、元のメディア・配音・編集・レンダリング・出力はローカルに残ります。" }
+          "acceptedAnswer": { "@type": "Answer", "text": "限定された素材要約、安定した選択肢、Brief、クライアント能力はクラウド Director へ、ナレーション本文は選択した TTS サービスへ送信されます。元素材、生成音声、字幕、レンダリング、出力はローカルに残ります。" }
         },
         {
           "@type": "Question",
           "name": "Lecturecast はどの動画プラットフォーム形式に対応していますか？",
-          "acceptedAnswer": { "@type": "Answer", "text": "Lecturecast は B 站横版と小红书縦版を同時に出力し、16:9 と 9:16 の 2 つのアスペクト比に対応します。" }
+          "acceptedAnswer": { "@type": "Answer", "text": "標準納品は 1920×1080 横版 MP4、1080×1920 縦版 MP4、および対応する 2 枚の PNG カバーです。" }
         }
       ]
     }
@@ -148,7 +146,7 @@
   .btn-ghost{background:transparent;color:var(--ink);border-color:var(--rule)} .btn-ghost:hover{border-color:var(--ink)}
   .btn .arrow{transition:transform .15s} .btn:hover .arrow{transform:translateX(3px)}
 
-  .routes{margin-top:40px;display:grid;grid-template-columns:1fr 1fr;background:var(--surface);border:1px solid var(--rule);border-radius:16px;overflow:hidden}
+  .routes{margin-top:40px;display:grid;grid-template-columns:1fr;background:var(--surface);border:1px solid var(--rule);border-radius:16px;overflow:hidden}
   .route{padding:clamp(22px,3vw,32px);position:relative}
   .route + .route{border-left:1px solid var(--rule)}
   .route-director{background:linear-gradient(135deg,color-mix(in oklab,var(--accent) 9%,var(--surface)),var(--surface) 72%)}
@@ -246,7 +244,7 @@
       Lecturecast <small>· AgentMesh360</small>
     </a>
     <nav class="nav-links" aria-label="Primary">
-      <a href="#routes" class="nav-section">2 つの経路</a>
+      <a href="#routes" class="nav-section">商用経路</a>
       <a href="#features" class="nav-section">機能</a>
       <a href="#platforms" class="nav-section">2 プラットフォーム</a>
       <a href="#how" class="nav-section">使い方</a>
@@ -260,7 +258,7 @@
         <span class="sep"></span>
         <a class="lang" href="/ko/" hreflang="ko">한</a>
       </span>
-      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="nav-cta">GitHub を見る</a>
+      <a href="#install" class="nav-cta">インストール</a>
     </nav>
   </div>
 </header>
@@ -270,33 +268,33 @@
     <div class="eyebrow"><span class="dot"></span> COMMERCIAL ACCESS · LOCAL PRODUCTION</div>
     <h1 class="display">一つのアイデアから、<em>講座動画を一本</em>。</h1>
     <p class="lede">
-      Lecturecast は<strong>AgentMesh360 の商用講座動画製品</strong>です。AI エージェントが有料アクセスを紐付け、クラウド Director が構造化された選択を署名付き制作計画へ変換し、あなたのマシンで配音・編集・レンダリングを行って<strong>B 站横版と小红书縦版を同時出力</strong>します。元素材とメディア工程はローカルに残ります。
+      Lecturecast は<strong>AgentMesh360 の商用講座動画製品</strong>です。AI エージェントが有効な月間パスと共通 API キーを検証し、クラウド Director が構造化された選択を署名付き制作計画と脚本へ変換します。あなたのマシンは<strong>2 本の MP4 と対応する 2 枚のカバー</strong>を制作します。元素材はアップロードされず、ナレーション本文だけが選択した TTS サービスへ送られます。
       <span style="display:block;margin-top:8px;font-size:0.9em;color:var(--muted);">（B 站と小红书は中国の主要動画プラットフォーム——それぞれ横向き／縦向き）。利用しない場合でも、両フォーマットが揃って出力されます。）</span>
     </p>
     <div class="hero-ctas">
-      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast" class="btn btn-primary">GitHub を見る <span class="arrow">→</span></a>
-      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md" class="btn btn-ghost">ローカルワークフローを見る</a>
+      <a href="#install" class="btn btn-primary">Lecturecast をインストール <span class="arrow">→</span></a>
+      <a href="https://agentmesh360.com/app/" class="btn btn-ghost">AgentMesh360 アカウントセンター</a>
     </div>
 
     <div class="routes" id="routes" data-product-contract="commercial-only-v1" aria-label="Lecturecast の商用アクセス">
       <article class="route route-director" data-route="director" data-access="paid" data-media="local">
-        <div class="route-top"><span class="route-label">Lecturecast Director</span><span class="route-status">AgentMesh360 有料アカウント</span></div>
+        <div class="route-top"><span class="route-label">Lecturecast Director</span><span class="route-status">有効な月間パス · 1 回 10 credits</span></div>
         <h3>クラウドで演出、ローカルで制作。</h3>
-        <p>エージェントが共通 API キー、有料サブスクリプション、共有 credits を検証してから選択 UI を表示します。クラウドは署名付き ProductionManifest を返し、生成確認後のみ 10 credits を消費。素材、配音、編集、レンダリングはローカルです。</p>
+        <p>エージェントが共通 API キー、有効な月間パス、共有 credits を検証してから選択 UI と Brief 承認へ進みます。10 credits を明示承認すると、Director は署名付き ProductionManifest と変更不可の署名脚本を返します。全文を確認・承認するまでローカル TTS とレンダリングは始まりません。</p>
       </article>
     </div>
 
-    <div class="terminal-frame" aria-label="ローカルにインストールしてエージェントに渡す">
+    <div class="terminal-frame" id="install" aria-label="ローカルにインストールしてエージェントに渡す">
       <div class="terminal-bar">
         <div class="lights"><span></span><span></span><span></span></div>
         <span class="title">~ run-this-locally</span>
       </div>
 <pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
 <span class="c-prompt">PS&gt;</span> <span class="c-cmd">irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex</span>
-<span class="c-prompt">$</span> <span class="c-cmd">lecturecast auth login</span>   <span class="c-dim"># AgentMesh360 共通 API キーを検証・紐付け</span>
-<span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --adapter codex --host-contract 1.0.0 --json</span> <span class="c-dim"># 新しいタスクの Skill、アカウント、レンダラー</span>
-
-<span class="c-dim"># 商用 onboarding → Director → 10 credits 承認 → ローカルで 2 形式を制作</span></pre>
+<span class="c-dim"># インストール後、新しい宿主 Agent タスクを開始。新しい Skill が正確なコマンドを返します</span>
+<span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --adapter codex --host-contract 1.0.0 --json</span> <span class="c-dim"># Codex の例</span>
+<span class="c-dim"># requires_user_action が API キーを要求した場合のみ：lecturecast auth login</span>
+<span class="c-dim"># 修復後 onboard を再実行し、その後は workflow.next_action だけを実行</span></pre>
     </div>
   </div>
 </section>
@@ -309,25 +307,25 @@
     </div>
     <div class="why-body">
       <p>AI に脚本を書かせるのは難しくありません。難しいのはその後——<span class="hi">配音、タイムライン整合、レンダリング、字幕焼き付け、カバー作成、横版と縦版それぞれの調整</span>です。</p>
-      <p>Lecturecast は成片パイプライン全体をあなたの AI エージェントに丸ごと任せます。すべてあなたのマシン上で実行され、エージェントが「テキスト」ではなく「完成した動画」を実際に届けます。</p>
+      <p>Lecturecast は AI エージェントに実行可能な唯一の制御フローを渡します。Director が署名済み制作計画を、本機が TTS・時間軸・レンダリングを担当します。権限、素材、時間、QA のどれかが失敗すれば、不完全な動画を届けず停止します。</p>
     </div>
   </div>
 </section>
 
 <section class="block" id="features">
   <div class="wrap">
-    <div class="kicker">機能 · すべてローカル動作</div>
+    <div class="kicker">機能 · クラウドで計画、ローカルで制作</div>
     <h2 class="section-title">一つのテーマから、<em>2 本の成片</em>へ。</h2>
     <div class="features">
       <div class="feat">
         <span class="feat-num">i.</span>
-        <h3>AI による脚本作成</h3>
-        <p>テーマをエージェントに渡すと、構造化された講座脚本——セクション分け、論理的、口語調——を生成します。脚本は承認ゲート：あなたが確認・修正してから制作に進みます。</p>
+        <h3>Director の署名付き脚本</h3>
+        <p>Creative Brief で方向と事実を確認します。10-credit 承認後、Director が変更不可の署名付き ProductionManifest と全文脚本を生成し、宿主 Agent はそれを書き換えられません。</p>
       </div>
       <div class="feat">
         <span class="feat-num">ii.</span>
         <h3>ローカル配音と整合</h3>
-        <p>脚本はローカルで自然な音声に変換され、自動的に文ごとに分割、タイムラインに整合されます。長段落は長さ検証＋自動リトライで、音声と映像のズレを防止。デフォルトは無料の Edge TTS、自前 MiniMax への切り替えも可能です。</p>
+        <p>署名脚本の全文承認後だけ TTS を実行します。実測音声がシーン・字幕・動画尺を駆動し、各節または合計が 75–125% の安全範囲を外れるか、最終 A/V 差が 1 秒を超えるとビルドは停止します。</p>
       </div>
       <div class="feat">
         <span class="feat-num">iii.</span>
@@ -337,7 +335,7 @@
       <div class="feat">
         <span class="feat-num">iv.</span>
         <h3>字幕 + カバー</h3>
-        <p>ローカルの ffmpeg が中国語字幕を焼き付け、2 プラットフォーム用のカバーを生成。小红书のコンプライアンスチェックも自動実行——受け取ってすぐ投稿でき、編集ソフトを開く必要はありません。</p>
+        <p>ローカル ffmpeg が中国語字幕を焼き付け、対応する 2 枚の PNG カバーを生成します。完全デコード、音声範囲、字幕字形、寸法 QA を通過してから人間の最終確認へ渡します。</p>
       </div>
     </div>
   </div>
@@ -347,7 +345,7 @@
   <div class="wrap">
     <div class="kicker">一度の生成 · 2 つのバージョン</div>
     <h2 class="section-title">B 站と小红书、<em>それぞれに</em>。</h2>
-    <p class="section-lede">同じテーマ、同じ脚本——Lecturecast は 2 つのアスペクト比を同時に出力し、それぞれに適したレイアウトと字幕で公開可能な形に仕上げます。</p>
+    <p class="section-lede">標準 Manifest は 4 つの納品物を宣言します：1920×1080 横版 MP4、1080×1920 縦版 MP4、対応する 2 枚の PNG カバー。すべてローカル QA 後に渡されます。</p>
     <div class="platforms">
       <div class="pf land">
         <div class="frame">1920 × 1080</div>
@@ -369,7 +367,7 @@
   <div class="wrap">
     <div class="kicker">ローカル 3 点セット依存</div>
     <h2 class="section-title">すべて<em>あなたのマシン</em>上で。</h2>
-    <p class="section-lede">macOS と Windows をネイティブ対応し、Linux / WSL は非対応です。クラウドのメディア worker もリモートレンダラもありません。<code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh / install.ps1</code> がローカル環境の不足を確認します。</p>
+    <p class="section-lede">macOS と Windows をネイティブ対応し、Linux / WSL は非対応です。クラウドのメディア worker もリモートレンダラもありません。クラウドは商用アクセス、制作判断、署名 Manifest を担当し、ナレーション本文は選択した TTS サービスへ送られます。<code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh / install.ps1</code> がローカル環境の不足を確認します。</p>
     <div class="stack">
       <div class="stk">
         <div class="stk-icon">RENDER</div>
@@ -379,7 +377,7 @@
       <div class="stk">
         <div class="stk-icon">VOICE</div>
         <h3>Python + edge-tts</h3>
-        <p>ローカル配音、文ごとの分割、タイムライン整合。デフォルトは無料 Edge TTS、自前 MiniMax key でグレードアップ可能。</p>
+        <p>音声ファイルはローカルで生成・保存。クライアントはナレーション本文を Microsoft Edge 音声サービスへ送り、MiniMax BYOK では署名脚本本文を自分の MiniMax アカウントへ送ります。</p>
       </div>
       <div class="stk">
         <div class="stk-icon">MUX</div>
@@ -394,27 +392,27 @@
   <div class="wrap">
     <div class="kicker">使い方</div>
     <h2 class="section-title"><em>エージェント向け</em>に設計。</h2>
-    <p class="section-lede">これはあなたの AI アシスタントに渡すローカルワークフローです。脚本生成後は必ず一旦停止し、あなたの承認・修正を待ってから配音・レンダリングに進みます。</p>
+    <p class="section-lede">インストール済み Skill が唯一の制御フローを駆動します。Brief、10-credit Manifest 生成、署名脚本全文は 3 つの独立した人間承認ゲートです。</p>
     <div class="steps">
       <div class="step">
         <div class="step-n">01</div>
         <div class="step-body">
           <h3>CLI をインストール</h3>
-          <p>macOS は <code>install.sh</code>、Windows PowerShell は <code>install.ps1</code> を使用します。どちらも CLI とローカルワークフローを導入し、<code>lecturecast workflow</code> が場所を出力します。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub を見る →</a></p>
+          <p>macOS は <code>install.sh</code>、Windows PowerShell は <code>install.ps1</code> を使用します。どちらも商用 CLI、署名検証、宿主 Agent Skill を導入します。完了後は新しい Agent タスクを開始し、Skill の正確な <code>--adapter</code> と <code>--host-contract</code> で onboard します。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub を見る →</a></p>
         </div>
       </div>
       <div class="step">
         <div class="step-n">02</div>
         <div class="step-body">
-          <h3>AGENTS.md をエージェントに渡す</h3>
-          <p>リポジトリの <code>AGENTS.md</code> をそのまま Claude Code / OpenClaw / Cursor / Codex に貼り付ければ、エージェントはパイプライン全体を指揮する方法を学びます。Claude Code と Codex は組み込み skill も自動ロードします。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/AGENTS.md">AGENTS.md を見る →</a></p>
+          <h3>エージェントが商用 onboarding を完了</h3>
+          <p>新しいタスクがインストーラー所有の最新 Skill を証明し、アカウント、月間パス、credits、レンダラを確認します。その後は CLI が返す唯一の <code>workflow.next_action</code> だけを実行します。Skill 不足や宿主 drift は書き込み前に停止します。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/AGENTS.md">AGENTS.md を見る →</a></p>
         </div>
       </div>
       <div class="step">
         <div class="step-n">03</div>
         <div class="step-body">
-          <h3>エージェントがローカルでエンドツーエンド出片</h3>
-          <p>テーマを与え、AI が書いた脚本を確認・修正。承認後、ローカルで配音、2 プラットフォーム同時レンダリング、字幕焼き付け、カバー作成を行います。初回準備では数百 MB の Remotion 依存関係とブラウザをダウンロードし、その後の所要時間は動画の長さとマシン性能に依存します。</p>
+          <h3>Director が計画し、本機が制作</h3>
+          <p>選択と Brief 承認後、10 credits を明示承認して署名 ProductionManifest を取得します。Agent は変更不可の署名脚本全文を表示して再度停止し、承認後だけローカル TTS、横縦レンダリング、字幕、2 枚のカバーを実行します。</p>
         </div>
       </div>
     </div>
@@ -428,19 +426,19 @@
     <div class="faq-list">
       <details class="faq-item">
         <summary>有料ですか？アカウント登録は必要？</summary>
-        <div class="faq-answer">Lecturecast には有効な <strong>AgentMesh360 有料アカウント</strong>と共通 API キーが必要です。既存の共有 credits を使い、LectureCast 専用契約は不要です。選択と Brief 作成では credits を消費せず、ProductionManifest の生成確認時のみ 10 credits を消費します。</div>
+        <div class="faq-answer">Lecturecast には有効な <strong>AgentMesh360 月間パス</strong>と共通 API キーが必要です。月間パスの共有 credits を使い、LectureCast 専用契約は不要です。選択と Brief は無料で、ProductionManifest 生成を明示承認した時だけ 10 credits を消費します。</div>
       </details>
       <details class="faq-item">
         <summary>動画はクラウドにアップロードされますか？</summary>
-        <div class="faq-answer">元のメディアはアップロードされません。限定された素材要約、安定した選択肢 ID、Brief、クライアント能力だけがクラウド Director へ送られます。元のメディア、配音、字幕、編集、レンダリング、完成品は常にローカルです。</div>
+        <div class="faq-answer">元素材はアップロードされません。限定された素材要約、安定した選択肢 ID、Brief、クライアント能力はクラウド Director へ、ナレーション本文は選択した TTS サービスへ送られます。元素材、ローカルパス、生成音声、字幕、レンダリング、完成品はローカルに残ります。</div>
       </details>
       <details class="faq-item">
         <summary>配音は何を使いますか？もっと良い声に変えられますか？</summary>
-        <div class="faq-answer">デフォルトは無料の Edge TTS——すぐ使えて、出片には十分。より暖かい声が欲しい場合は、自前で <a class="link" href="https://www.minimaxi.com">MiniMax</a> key を持ち込めます——これは Lecturecast 提供ではなく、ご自身で minimaxi.com に登録するサードパーティサービスです。key は環境変数 <code>MINIMAX_API_KEY</code> 経由でのみ渡され、ディスクに書き込まれることはありません。</div>
+        <div class="faq-answer">Edge TTS はナレーション本文を Microsoft Edge 音声サービスへ送ります。MiniMax BYOK は署名脚本本文を自分の <a class="link" href="https://www.minimaxi.com">MiniMax</a> アカウントへ送ります。LectureCast は <code>MINIMAX_API_KEY</code> を意図的に永続化しません。安全なプロセス環境注入を推奨し、shell に直接 <code>export</code> すると履歴に残る場合があります。</div>
       </details>
       <details class="faq-item">
-        <summary>動画は完全自動生成ですか？修正できますか？</summary>
-        <div class="faq-answer">脚本生成後に必ず一旦停止し、あなたの確認と修正を待ってから配音・レンダリングに進みます——内容はあなたが掌握し、AI は制作を担当します。</div>
+        <summary>完全自動ですか？人間の承認ゲートは？</summary>
+        <div class="faq-answer">無人実行ではありません。Creative Brief、1 回の 10-credit Manifest 生成、署名脚本全文をそれぞれ承認します。署名後、宿主 Agent は内容を変更できません。拒否すれば TTS・レンダリング前に停止します。</div>
       </details>
       <details class="faq-item">
         <summary>何をインストールする必要がありますか？</summary>
@@ -448,11 +446,11 @@
       </details>
       <details class="faq-item">
         <summary>どのプラットフォーム向けの成片に対応していますか？</summary>
-        <div class="faq-answer">B 站横版（<code>1920×1080</code>）と小红书縦版（<code>1080×1920</code>）を同時出力。中国語字幕焼き付け済み・カバー生成済みです。</div>
+        <div class="faq-answer">標準 4 ファイル：B 站横版 MP4（<code>1920×1080</code>）、小红书縦版 MP4（<code>1080×1920</code>）、対応する 2 枚の PNG カバー。</div>
       </details>
       <details class="faq-item">
-        <summary>本当にオープンソースですか？</summary>
-        <div class="faq-answer">はい。Apache 2.0。コードはすべて <a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a> にあります。自由にフォーク、改造、issue 登録してください。</div>
+        <summary>公開クライアントはオープンソースですか？</summary>
+        <div class="faq-answer">公開 CLI、ローカル実行ツール、サイトは <a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a> で Apache 2.0 です。完全な製品経路は一つだけで、有効な月間パス、共通 API キー、共有 credits、クラウド Director が必須です。アカウント不要の経路はありません。</div>
       </details>
     </div>
   </div>
@@ -468,7 +466,7 @@
         </svg>
         Lecturecast
       </a>
-      <div style="margin-top:8px;font-size:13.5px;color:var(--muted);">AgentMesh エコシステム（<a class="link" href="https://agentmesh360.com" style="font-size:inherit">agentmesh360.com</a>）のオープンソースプロジェクト · Apache 2.0</div>
+      <div style="margin-top:8px;font-size:13.5px;color:var(--muted);">AgentMesh360 商用製品 · 公開クライアント Apache 2.0 · 有効な月間パスと Director が必須</div>
       <div class="foot-note">機械翻訳支援によるページです。フィードバックは <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/issues">GitHub issues</a> までどうぞ。</div>
     </div>
     <div class="foot-meta">

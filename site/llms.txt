@@ -18,23 +18,49 @@ Non-Chinese pages are machine-assisted translations; the Chinese page is authori
 
 ## Product Summary
 
-- Commercial access: a current paid AgentMesh360 account, universal API key, and
-  sufficient shared credits are required before production begins.
+- Commercial access: an active AgentMesh360 monthly pass, universal API key,
+  and sufficient shared credits are required before production begins. There is
+  no account-free route.
 - Director: required cloud access for native agent choice cards, a Creative
-  Brief, and a signed declarative ProductionManifest.
+  Brief, and a signed declarative ProductionManifest with an immutable signed
+  narration script.
 - Input: a topic or idea for a course video.
-- Output: Bilibili landscape video and Xiaohongshu portrait video.
+- Standard output: four files declared by Manifest outputs[] — a 1920×1080
+  landscape MP4, a 1080×1920 portrait MP4, and two matching PNG covers.
 - Workflow: script writing, voice generation, timeline alignment, Remotion rendering, ffmpeg subtitle burn-in, and cover generation.
-- Cloud/local boundary: original media, voice, subtitles, editing, Remotion,
-  ffmpeg, covers, and rendered outputs stay on the user's machine.
+- Installation and onboarding: run the public install.sh on macOS or
+  install.ps1 in Windows PowerShell, then start a new host-Agent task. The
+  freshly installed Skill returns the exact host-specific command, such as
+  `lecturecast onboard --adapter codex --host-contract 1.0.0 --json`. Run
+  `lecturecast auth login` only when `requires_user_action` requests an API key,
+  rerun onboard after resolving the request, and execute only
+  `workflow.next_action`.
+- Human gates: (1) approve the Creative Brief with no credit charge; (2)
+  explicitly approve one 10-credit ProductionManifest generation; (3) review
+  every section of the complete signed narration script and approve it before
+  local TTS or rendering. The host Agent must not edit signed content.
+- Cloud/local boundary: original media, local paths, generated audio, subtitles,
+  editing, Remotion, ffmpeg, covers, and rendered outputs stay on the user's
+  machine.
 - Director data boundary: only a bounded source summary, stable choice IDs, the
   Brief, and client capabilities are sent to the cloud.
-- Director access: available to a paid AgentMesh360 account using a universal
-  AgentMesh360 API key. It reuses the active monthly pass and shared credits;
-  there is no separate LectureCast pass. Choices and Brief creation are
-  free; 10 credits are deducted only after the user confirms ProductionManifest
-  generation.
-- Availability: paid AgentMesh360 accounts with sufficient shared credits.
+- TTS network boundary: Edge TTS sends narration text to Microsoft's Edge
+  speech service. MiniMax BYOK sends the signed narration text to the user's own
+  MiniMax account. LectureCast does not intentionally persist the MiniMax key;
+  secure process-environment injection is recommended because literal shell
+  exports may enter shell history.
+- Timing and QA: measured TTS durations drive scenes, subtitles, and composition
+  duration. Each section and total must stay within 75–125% of the signed plan,
+  final video and measured narration must differ by at most one second, and
+  failed decode, audio coverage, subtitle-glyph, or dimension checks stop
+  delivery.
+- Director access: available only to an active AgentMesh360 monthly pass using
+  a universal AgentMesh360 API key. It reuses shared credits; there is no
+  separate LectureCast pass. Choices and Brief creation are free; 10 credits
+  are deducted only after explicit ProductionManifest-generation approval.
+- Availability: native macOS and Windows only; Linux and WSL are not supported.
+- Product path: Commercial Director ProductionManifest for paid AgentMesh360 accounts
+  with an active monthly pass and sufficient shared credits.
 - License: Apache 2.0.
 - Source code: https://github.com/jiyangnan/AgentMesh-Lecturecast
 
