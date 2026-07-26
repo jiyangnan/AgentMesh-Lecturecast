@@ -65,6 +65,32 @@
       }
     },
     {
+      "@type": "VideoObject",
+      "@id": "https://lecturecast.agentmesh360.com/#case-bilibili",
+      "name": "어려운 작업 시작법 — Bilibili 가로형 실제 납품",
+      "description": "Lecturecast 실제 첫 고객 검증에서 납품한 1920×1080 강의 영상입니다.",
+      "thumbnailUrl": "https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili-poster.jpg",
+      "contentUrl": "https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili.mp4",
+      "uploadDate": "2026-07-21",
+      "duration": "PT4M48.433S",
+      "encodingFormat": "video/mp4",
+      "inLanguage": "zh-CN",
+      "isFamilyFriendly": true
+    },
+    {
+      "@type": "VideoObject",
+      "@id": "https://lecturecast.agentmesh360.com/#case-xiaohongshu",
+      "name": "어려운 작업 시작법 — Xiaohongshu 세로형 실제 납품",
+      "description": "Lecturecast 실제 첫 고객 검증에서 납품한 1080×1920 강의 영상입니다.",
+      "thumbnailUrl": "https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu-poster.jpg",
+      "contentUrl": "https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu.mp4",
+      "uploadDate": "2026-07-21",
+      "duration": "PT4M48.433S",
+      "encodingFormat": "video/mp4",
+      "inLanguage": "zh-CN",
+      "isFamilyFriendly": true
+    },
+    {
       "@type": "FAQPage",
       "@id": "https://lecturecast.agentmesh360.com/ko/#faq",
       "inLanguage": "ko",
@@ -93,6 +119,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Noto+Serif+KR:wght@400;500;600&family=Inter:wght@400;450;500;600&family=Noto+Sans+KR:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link href="/showcase.css?v=real-delivery-v1" rel="stylesheet" />
 
 <style>
   :root {
@@ -185,16 +212,6 @@
   .feat p{margin:0;font-size:15px;line-height:1.75;color:var(--ink-soft);text-wrap:pretty}
   @media(max-width:820px){.features{grid-template-columns:1fr}}
 
-  .platforms{display:grid;grid-template-columns:1fr 1fr;gap:clamp(20px,3vw,32px);margin-top:clamp(48px,6vw,72px)}
-  @media(max-width:680px){.platforms{grid-template-columns:1fr}}
-  .pf{background:var(--surface);border:1px solid var(--rule);border-radius:16px;padding:clamp(24px,3vw,36px);display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center}
-  .pf .frame{background:var(--code-bg);border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--code-dim);font-family:var(--mono);font-size:12px}
-  .pf.land .frame{width:100%;aspect-ratio:16/9}
-  .pf.port .frame{width:60%;max-width:180px;aspect-ratio:9/16}
-  .pf h3{font-family:var(--serif);font-weight:500;font-size:21px;margin:0;letter-spacing:-0.005em}
-  .pf p{margin:0;font-size:14px;color:var(--ink-soft);line-height:1.75}
-  .pf .ratio{font-family:var(--mono);font-size:12px;color:var(--accent-ink)}
-
   .stack{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(20px,3vw,32px);margin-top:clamp(48px,6vw,72px)}
   @media(max-width:680px){.stack{grid-template-columns:1fr}}
   .stk{background:var(--surface);border:1px solid var(--rule);border-radius:14px;padding:clamp(22px,2.6vw,30px)}
@@ -246,7 +263,7 @@
     <nav class="nav-links" aria-label="Primary">
       <a href="#routes" class="nav-section">상용 경로</a>
       <a href="#features" class="nav-section">기능</a>
-      <a href="#platforms" class="nav-section">이중 플랫폼</a>
+      <a href="#platforms" class="nav-section">실제 납품</a>
       <a href="#how" class="nav-section">사용법</a>
       <a href="#faq" class="nav-section">FAQ</a>
       <span class="lang-switch" aria-label="Language">
@@ -341,24 +358,74 @@
   </div>
 </section>
 
-<section class="block" id="platforms">
+<section class="block" id="platforms" data-case-study="real-customer-canary-v1">
   <div class="wrap">
-    <div class="kicker">한 번 생성 · 두 가지 버전</div>
-    <h2 class="section-title">Bilibili 와 Xiaohongshu, <em>각자에게</em>.</h2>
-    <p class="section-lede">표준 Manifest 는 네 가지 제공물을 선언합니다: 1920×1080 가로 MP4, 1080×1920 세로 MP4, 그리고 각각에 맞는 PNG 커버 두 장. 모두 로컬 QA 후 전달됩니다.</p>
-    <div class="platforms">
-      <div class="pf land">
-        <div class="frame">1920 × 1080</div>
-        <h3>Bilibili 가로판</h3>
-        <div class="ratio">16 : 9</div>
-        <p>지식 해설·롱폼 영상에 적합; Remotion 의 깔끔한 레이아웃에 자막 굽기 완료.</p>
-      </div>
-      <div class="pf port">
-        <div class="frame">1080 × 1920</div>
-        <h3>Xiaohongshu 세로판</h3>
-        <div class="ratio">9 : 16</div>
-        <p>스마트폰 세로 피드에 적합; Remotion 세로판 레이아웃 + 매칭 커버.</p>
-      </div>
+    <div class="kicker">실제 납품 · 첫 고객 검증</div>
+    <h2 class="section-title">하나의 주제에서, <em>두 편의 실제 영상</em>.</h2>
+    <p class="section-lede">2026-07-21 실제 첫 고객 검증에서 제작했습니다. 동일한 서명 대본과 측정 타임라인을 바탕으로 고객 기기에서 가로형과 세로형을 각각 독립 레이아웃으로 제작했습니다. 단순 크롭이 아닙니다.</p>
+
+    <div class="case-proof" aria-label="사례 출처">
+      <div class="case-fact">Source<strong>첫 고객 검증</strong></div>
+      <div class="case-fact">Run date<strong>2026 · 07 · 21</strong></div>
+      <div class="case-fact">Production<strong>Local render</strong></div>
+      <div class="case-fact">Delivery<strong>QA verified</strong></div>
+    </div>
+
+    <div class="case-grid">
+      <figure class="case-card case-land">
+        <div class="case-frame">
+          <div class="case-bar">
+            <span class="signal" aria-hidden="true"></span>
+            <span class="case-file">BILIBILI · 16:9 · 04:48</span>
+            <span class="case-qa">QA PASS</span>
+          </div>
+          <video class="case-video" width="1920" height="1080" controls playsinline preload="none"
+            poster="/assets/showcase/difficult-task-bilibili-poster.jpg"
+            aria-label="어려운 작업 시작법 Bilibili 가로형 최종 영상 재생">
+            <source src="/assets/showcase/difficult-task-bilibili.mp4" type="video/mp4" />
+            브라우저가 HTML5 영상을 지원하지 않습니다. <a href="/assets/showcase/difficult-task-bilibili.mp4">가로형 영상 다운로드</a>.
+          </video>
+        </div>
+        <figcaption class="case-caption">
+          <h3>Bilibili 가로형</h3>
+          <p>1920 × 1080 · H.264 + AAC<br />8,653 FRAMES</p>
+        </figcaption>
+      </figure>
+
+      <div class="case-link" aria-hidden="true"><span>ONE SCRIPT · TWO LAYOUTS</span></div>
+
+      <figure class="case-card case-port">
+        <div class="case-frame">
+          <div class="case-bar">
+            <span class="signal" aria-hidden="true"></span>
+            <span class="case-file">XIAOHONGSHU · 9:16 · 04:48</span>
+            <span class="case-qa">QA PASS</span>
+          </div>
+          <video class="case-video" width="1080" height="1920" controls playsinline preload="none"
+            poster="/assets/showcase/difficult-task-xiaohongshu-poster.jpg"
+            aria-label="어려운 작업 시작법 Xiaohongshu 세로형 최종 영상 재생">
+            <source src="/assets/showcase/difficult-task-xiaohongshu.mp4" type="video/mp4" />
+            브라우저가 HTML5 영상을 지원하지 않습니다. <a href="/assets/showcase/difficult-task-xiaohongshu.mp4">세로형 영상 다운로드</a>.
+          </video>
+        </div>
+        <figcaption class="case-caption">
+          <h3>Xiaohongshu 세로형</h3>
+          <p>1080 × 1920 · H.264 + AAC<br />8,653 FRAMES</p>
+        </figcaption>
+      </figure>
+    </div>
+
+    <div class="case-stats" aria-label="사례 제작 데이터">
+      <div class="case-stat"><strong>08</strong><span>챕터</span></div>
+      <div class="case-stat"><strong>1,409</strong><span>자 서명 대본</span></div>
+      <div class="case-stat"><strong>91</strong><span>자막 이벤트</span></div>
+      <div class="case-stat"><strong>288.433s</strong><span>최종 영상별 길이</span></div>
+      <div class="case-stat"><strong>0</strong><span>누락 글리프</span></div>
+    </div>
+
+    <div class="case-note">
+      <b>DELIVERY NOTE</b>
+      <p>검증 과정의 문제와 수정 기록도 보존했습니다. 아래 두 영상은 오디오 범위, 자막 글리프, 규격, 전체 렌더 QA를 통과한 최종 납품물입니다.</p>
     </div>
   </div>
 </section>

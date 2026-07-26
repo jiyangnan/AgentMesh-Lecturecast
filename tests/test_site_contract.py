@@ -190,6 +190,42 @@ def test_current_site_publishes_ten_credit_manifest_price() -> None:
         assert "10 credits" in page
 
 
+def test_current_site_publishes_real_dual_format_customer_case() -> None:
+    media = (
+        "assets/showcase/difficult-task-bilibili.mp4",
+        "assets/showcase/difficult-task-xiaohongshu.mp4",
+    )
+    posters = (
+        "assets/showcase/difficult-task-bilibili-poster.jpg",
+        "assets/showcase/difficult-task-xiaohongshu-poster.jpg",
+    )
+
+    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+        page = (ROOT / "site" / relative).read_text(encoding="utf-8")
+        case = page.split('data-case-study="real-customer-canary-v1"', 1)[1].split(
+            "</section>", 1
+        )[0]
+
+        assert case.count("<video ") == 2
+        assert case.count(" controls") == 2
+        assert case.count(" playsinline") == 2
+        assert case.count('preload="none"') == 2
+        assert "autoplay" not in case
+        assert "1920 × 1080" in case
+        assert "1080 × 1920" in case
+        for target in (*media, *posters):
+            assert f"/{target}" in case
+
+    for target in (*media, *posters):
+        path = ROOT / "site" / target
+        assert path.is_file()
+        assert path.stat().st_size > 1024
+
+    for target in media:
+        header = (ROOT / "site" / target).read_bytes()[:12]
+        assert header[4:8] == b"ftyp"
+
+
 def test_current_site_installs_then_onboards_before_conditional_login() -> None:
     for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
