@@ -65,6 +65,32 @@
       }
     },
     {
+      "@type": "VideoObject",
+      "@id": "https://lecturecast.agentmesh360.com/#case-bilibili",
+      "name": "Difficult Task Start — real Bilibili landscape delivery",
+      "description": "A 1920×1080 course video delivered by a real first-customer Lecturecast run.",
+      "thumbnailUrl": "https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili-poster.jpg",
+      "contentUrl": "https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili.mp4",
+      "uploadDate": "2026-07-21",
+      "duration": "PT4M48.433S",
+      "encodingFormat": "video/mp4",
+      "inLanguage": "zh-CN",
+      "isFamilyFriendly": true
+    },
+    {
+      "@type": "VideoObject",
+      "@id": "https://lecturecast.agentmesh360.com/#case-xiaohongshu",
+      "name": "Difficult Task Start — real Xiaohongshu portrait delivery",
+      "description": "A 1080×1920 course video delivered by a real first-customer Lecturecast run.",
+      "thumbnailUrl": "https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu-poster.jpg",
+      "contentUrl": "https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu.mp4",
+      "uploadDate": "2026-07-21",
+      "duration": "PT4M48.433S",
+      "encodingFormat": "video/mp4",
+      "inLanguage": "zh-CN",
+      "isFamilyFriendly": true
+    },
+    {
       "@type": "FAQPage",
       "@id": "https://lecturecast.agentmesh360.com/en/#faq",
       "inLanguage": "en",
@@ -93,6 +119,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link href="/showcase.css?v=real-delivery-v1" rel="stylesheet" />
 
 <style>
   :root {
@@ -185,16 +212,6 @@
   .feat p{margin:0;font-size:15.5px;line-height:1.6;color:var(--ink-soft);text-wrap:pretty}
   @media(max-width:820px){.features{grid-template-columns:1fr}}
 
-  .platforms{display:grid;grid-template-columns:1fr 1fr;gap:clamp(20px,3vw,32px);margin-top:clamp(48px,6vw,72px)}
-  @media(max-width:680px){.platforms{grid-template-columns:1fr}}
-  .pf{background:var(--surface);border:1px solid var(--rule);border-radius:16px;padding:clamp(24px,3vw,36px);display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center}
-  .pf .frame{background:var(--code-bg);border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--code-dim);font-family:var(--mono);font-size:12px}
-  .pf.land .frame{width:100%;aspect-ratio:16/9}
-  .pf.port .frame{width:60%;max-width:180px;aspect-ratio:9/16}
-  .pf h3{font-family:var(--serif);font-weight:500;font-size:21px;margin:0;letter-spacing:-0.008em}
-  .pf p{margin:0;font-size:14.5px;color:var(--ink-soft);line-height:1.55}
-  .pf .ratio{font-family:var(--mono);font-size:12px;color:var(--accent-ink)}
-
   .stack{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(20px,3vw,32px);margin-top:clamp(48px,6vw,72px)}
   @media(max-width:680px){.stack{grid-template-columns:1fr}}
   .stk{background:var(--surface);border:1px solid var(--rule);border-radius:14px;padding:clamp(22px,2.6vw,30px)}
@@ -246,7 +263,7 @@
     <nav class="nav-links" aria-label="Primary">
       <a href="#routes" class="nav-section">Commercial path</a>
       <a href="#features" class="nav-section">Features</a>
-      <a href="#platforms" class="nav-section">Platforms</a>
+      <a href="#platforms" class="nav-section">Real delivery</a>
       <a href="#how" class="nav-section">How</a>
       <a href="#faq" class="nav-section">FAQ</a>
       <span class="lang-switch" aria-label="Language">
@@ -341,24 +358,74 @@
   </div>
 </section>
 
-<section class="block" id="platforms">
+<section class="block" id="platforms" data-case-study="real-customer-canary-v1">
   <div class="wrap">
-    <div class="kicker">One generation · two versions</div>
-    <h2 class="section-title">Bilibili and Xiaohongshu, <em>each their own</em>.</h2>
-    <p class="section-lede">The standard Manifest declares four deliverables: a 1920×1080 landscape MP4, a 1080×1920 portrait MP4, and two matching PNG covers. All four are handed to you only after local QA.</p>
-    <div class="platforms">
-      <div class="pf land">
-        <div class="frame">1920 × 1080</div>
-        <h3>Bilibili landscape</h3>
-        <div class="ratio">16 : 9</div>
-        <p>For knowledge explainers and long videos; clean Remotion layout with burned-in subtitles.</p>
-      </div>
-      <div class="pf port">
-        <div class="frame">1080 × 1920</div>
-        <h3>Xiaohongshu portrait</h3>
-        <div class="ratio">9 : 16</div>
-        <p>For phone vertical feeds; Remotion portrait layout plus a matching cover.</p>
-      </div>
+    <div class="kicker">Real delivery · first-customer run</div>
+    <h2 class="section-title">One topic. <em>Two real videos.</em></h2>
+    <p class="section-lede">Produced in a real first-customer run on 2026-07-21. The same signed script and measured timeline became two native layouts on the customer's machine—not one crop in two containers.</p>
+
+    <div class="case-proof" aria-label="Case provenance">
+      <div class="case-fact">Source<strong>First-customer run</strong></div>
+      <div class="case-fact">Run date<strong>2026 · 07 · 21</strong></div>
+      <div class="case-fact">Production<strong>Local render</strong></div>
+      <div class="case-fact">Delivery<strong>QA verified</strong></div>
+    </div>
+
+    <div class="case-grid">
+      <figure class="case-card case-land">
+        <div class="case-frame">
+          <div class="case-bar">
+            <span class="signal" aria-hidden="true"></span>
+            <span class="case-file">BILIBILI · 16:9 · 04:48</span>
+            <span class="case-qa">QA PASS</span>
+          </div>
+          <video class="case-video" width="1920" height="1080" controls playsinline preload="none"
+            poster="/assets/showcase/difficult-task-bilibili-poster.jpg"
+            aria-label="Play the landscape Bilibili delivery of Difficult Task Start">
+            <source src="/assets/showcase/difficult-task-bilibili.mp4" type="video/mp4" />
+            Your browser does not support HTML5 video. <a href="/assets/showcase/difficult-task-bilibili.mp4">Download the landscape video</a>.
+          </video>
+        </div>
+        <figcaption class="case-caption">
+          <h3>Bilibili landscape</h3>
+          <p>1920 × 1080 · H.264 + AAC<br />8,653 FRAMES</p>
+        </figcaption>
+      </figure>
+
+      <div class="case-link" aria-hidden="true"><span>ONE SCRIPT · TWO LAYOUTS</span></div>
+
+      <figure class="case-card case-port">
+        <div class="case-frame">
+          <div class="case-bar">
+            <span class="signal" aria-hidden="true"></span>
+            <span class="case-file">XIAOHONGSHU · 9:16 · 04:48</span>
+            <span class="case-qa">QA PASS</span>
+          </div>
+          <video class="case-video" width="1080" height="1920" controls playsinline preload="none"
+            poster="/assets/showcase/difficult-task-xiaohongshu-poster.jpg"
+            aria-label="Play the portrait Xiaohongshu delivery of Difficult Task Start">
+            <source src="/assets/showcase/difficult-task-xiaohongshu.mp4" type="video/mp4" />
+            Your browser does not support HTML5 video. <a href="/assets/showcase/difficult-task-xiaohongshu.mp4">Download the portrait video</a>.
+          </video>
+        </div>
+        <figcaption class="case-caption">
+          <h3>Xiaohongshu portrait</h3>
+          <p>1080 × 1920 · H.264 + AAC<br />8,653 FRAMES</p>
+        </figcaption>
+      </figure>
+    </div>
+
+    <div class="case-stats" aria-label="Case production data">
+      <div class="case-stat"><strong>08</strong><span>chapters</span></div>
+      <div class="case-stat"><strong>1,409</strong><span>script characters</span></div>
+      <div class="case-stat"><strong>91</strong><span>subtitle events</span></div>
+      <div class="case-stat"><strong>288.433s</strong><span>per final video</span></div>
+      <div class="case-stat"><strong>0</strong><span>missing glyphs</span></div>
+    </div>
+
+    <div class="case-note">
+      <b>DELIVERY NOTE</b>
+      <p>The validation run preserved its full issue and repair record. These are the final files that passed audio-coverage, subtitle-glyph, dimension, and full-render QA.</p>
     </div>
   </div>
 </section>
