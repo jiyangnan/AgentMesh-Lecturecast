@@ -28,13 +28,31 @@ F5_MODEL_PATH_ENV = "LECTURECAST_F5_MODEL_PATH"
 HEYGEN_API_KEY_ENV = "HEYGEN_API_KEY"
 
 
+def _not_available() -> bool:
+    """Default fail-closed probe: no F5 runtime / HeyGen adapter+journal is
+    shipped yet (landed in §5.5e). Production never claims an unexecutable
+    capability; tests inject a probe that returns True."""
+    return False
+
+
+def _default_readable(path: str) -> bool:
+    """Default readable probe: checks os.access(path, R_OK)."""
+    import os
+    return os.access(path, os.R_OK)
+
+
 def f5_available(
     *,
     env: dict[str, str] | None = None,
     path_probe: Callable[[str], Path] = Path,
+    runtime_probe: Callable[[], bool] = _not_available,
+    readable_probe: Callable[[str], bool] = _default_readable,
 ) -> bool:
-    """F5 local voice-cloning is available iff a model file path is configured
-    and exists + is readable. No path content is uploaded."""
+    """F5 local voice-cloning is available iff (a) a model file path is
+    configured and exists as a file, (b) the file is readable (R_OK),
+    AND (c) the F5 runtime + client adapter are executable (runtime_probe).
+    The default runtime_probe fails closed — no F5 adapter is shipped yet.
+    No path content / model bytes are uploaded."""
     import os
 
     sources = env if env is not None else os.environ
@@ -42,29 +60,39 @@ def f5_available(
     if not model_path:
         return False
     try:
-        return path_probe(model_path).is_file()
+        if not path_probe(model_path).is_file():
+            return False
     except OSError:
         return False
+    return readable_probe(model_path) and runtime_probe()
 
 
 def heygen_processor(
     *,
     env: dict[str, str] | None = None,
+    adapter_probe: Callable[[], bool] = _not_available,
+    journal_probe: Callable[[], bool] = _not_available,
 ) -> dict[str, Any] | None:
-    """HeyGen BYO processor capability iff a non-empty API key is configured
-    locally. Returns the processor declaration (no key, no verified field);
-    None when unconfigured."""
+    """HeyGen BYO processor capability iff (a) a non-empty API key is
+    configured locally, AND (b) the HeyGen client adapter is installed
+    (adapter_probe), AND (c) the SQLite operation journal / idempotency support
+    is ready (journal_probe). Both probes default fail-closed — no adapter or
+    journal is shipped yet (§5.5e). Returns the processor declaration (no key,
+    no verified field); None when not fully configured."""
     import os
 
     sources = env if env is not None else os.environ
     if not (sources.get(HEYGEN_API_KEY_ENV) or "").strip():
+        return None
+    if not (adapter_probe() and journal_probe()):
         return None
     return {
         "provider": "heygen",
         "api_version": "v3",
         "configured": True,
         "credential_mode": "byo_local",
-        "operations": ["direct_asset_upload", "photo_avatar"],
+        # Only operations the shipped adapter actually implements.
+        "operations": ["direct_asset_upload", "photo_avatar", "prerecorded_audio_lipsync"],
         "features": ["idempotency_24h"],
     }
 
@@ -209,20 +237,24 @@ def capture_capabilities_v1_1(
     runner: RunCommand = _default_run,
     env: dict[str, str] | None = None,
     path_probe: Callable[[str], Path] = Path,
+    runtime_probe: Callable[[], bool] = _not_available,
+    adapter_probe: Callable[[], bool] = _not_available,
+    journal_probe: Callable[[], bool] = _not_available,
 ) -> ClientCapabilitiesV1_1:
     """Capture v1.1 capabilities: the v1.0 base plus per-artifact version
     negotiation, the local F5 TTS engine (when a model is present), and the
     HeyGen BYO processor (when a key is configured). Detection is presence-only
-    and uploads no credentials, paths, or verification results."""
+    and uploads no credentials, paths, or verification results. F5/HeyGen probes
+    default fail-closed until the adapters + journal ship in §5.5e."""
     base = capture_capabilities(
         adapter_kind=adapter_kind, adapter_version=adapter_version,
         components=components, component_catalog_digest=component_catalog_digest,
         project_root=project_root, repo_root=repo_root, runner=runner,
     ).model_dump()
     tts_engines = list(base["tts_engines"])
-    if f5_available(env=env, path_probe=path_probe) and "f5" not in tts_engines:
+    if f5_available(env=env, path_probe=path_probe, runtime_probe=runtime_probe) and "f5" not in tts_engines:
         tts_engines.append("f5")
-    processor = heygen_processor(env=env)
+    processor = heygen_processor(env=env, adapter_probe=adapter_probe, journal_probe=journal_probe)
     payload = dict(base)
     payload["schema_version"] = "1.1"
     payload["tts_engines"] = tts_engines

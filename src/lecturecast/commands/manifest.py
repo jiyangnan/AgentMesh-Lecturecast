@@ -12,7 +12,7 @@ from ..host_agent import require_project_host_workflow
 from ..manifest import inspect_manifest, load_manifest, verify_manifest
 from ..preflight import run_preflight
 from ..project import ProjectStore
-from ..protocol import ClientCapabilities
+from ..protocol import ClientCapabilities, parse_client_capabilities
 from ..timing import narration_review
 from .output import emit, fail
 
@@ -21,7 +21,7 @@ app = typer.Typer(no_args_is_help=True, add_completion=False)
 
 
 def _load_capabilities(path: Path) -> ClientCapabilities:
-    return ClientCapabilities.model_validate(json.loads(path.read_text(encoding="utf-8")))
+    return parse_client_capabilities(json.loads(path.read_text(encoding="utf-8")))
 
 
 @app.command("inspect")

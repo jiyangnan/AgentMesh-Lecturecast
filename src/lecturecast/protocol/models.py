@@ -325,3 +325,19 @@ def documents_for_protocol_version(protocol_version: str) -> dict[str, type[Prot
             "production_manifest": ProductionManifest,
         }
     raise ValueError(f"unsupported protocol version: {protocol_version!r}")
+
+
+def parse_client_capabilities(payload: dict[str, Any]) -> ProtocolDocument:
+    """Durable-load dispatcher: pick the ClientCapabilities model by
+    schema_version. Used by ProjectStore / preflight so a saved v1.1 capability
+    is not rejected by the v1.0 strict schema on resume."""
+    if payload.get("schema_version") == "1.1":
+        return ClientCapabilitiesV1_1.model_validate(payload)
+    return ClientCapabilities.model_validate(payload)
+
+
+def parse_creative_brief(payload: dict[str, Any]) -> ProtocolDocument:
+    """Durable-load dispatcher: pick the CreativeBrief model by schema_version."""
+    if payload.get("schema_version") == "1.1":
+        return CreativeBriefV1_1.model_validate(payload)
+    return CreativeBrief.model_validate(payload)
