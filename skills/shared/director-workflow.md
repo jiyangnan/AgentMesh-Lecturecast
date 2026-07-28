@@ -112,7 +112,7 @@ Show the full Brief and ask for explicit approval. Confirmation itself does not 
 lecturecast director brief confirm <project-path> --json
 ```
 
-Before `generate`, clearly tell the user that the next command requests one paid ProductionManifest and deducts 10 credits. Run it only after that explicit approval. Never work around a declined or insufficient-credit response.
+Before `generate`, clearly tell the user that the next command requests approval for the next milestone's credit cost (shown in `workflow.pricing_estimate.next_milestone_cost`). The server bills per-milestone (charge-on-success-before-release); the full estimate (`minimum_total`..`maximum_total`) is advisory disclosure only — it does NOT block starting. Run `generate` only after explicit approval. Never work around a declined (402 insufficient_credits) response; instead advise the user to top up and re-run.
 
 ```bash
 lecturecast director generate <project-path> --json
