@@ -127,6 +127,7 @@ class CommercialAccess:
     account_url: str
     pricing_url: str
     next_suggested: str
+    enough_credit: bool | None = None  # advisory display only (§5.5c)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -207,14 +208,15 @@ class CommercialClient:
             if source == "signup_trial"
             else "inactive"
         )
+        # §5.5c: balance is advisory-only, NOT a start gate. The monthly pass is
+        # the commercial entry gate; per-milestone 402 from the server is the
+        # real billing gate. MANIFEST_CREDIT_COST stays for display only.
         enough_credit = credit >= MANIFEST_CREDIT_COST
-        usable = paid and enough_credit
+        usable = paid  # balance no longer blocks starting
         reason = (
             "ready"
             if usable
             else "monthly_pass_required"
-            if not paid
-            else "insufficient_credits"
         )
         return CommercialAccess(
             valid=True,
@@ -226,6 +228,7 @@ class CommercialClient:
             source=source,
             expires_at=expires_at,
             required_credits=MANIFEST_CREDIT_COST,
+            enough_credit=enough_credit,
             paid_pass_required=not paid,
             account_url=ACCOUNT_URL,
             pricing_url=PRICING_URL,

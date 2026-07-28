@@ -17,7 +17,7 @@ from ..director import (
     normalize_adapter_identity,
     resolve_server_url,
 )
-from ..config import resolve_protocol_version
+from ..config import MANIFEST_CREDIT_COST, resolve_protocol_version
 from ..errors import LectureCastError
 from ..host_agent import (
     HOST_ADAPTER_VERSION,
@@ -117,6 +117,17 @@ def _command_action(
     return action
 
 
+def _pricing_credit_cost(session: dict[str, Any] | None) -> int:
+    """Get the next milestone's credit cost from the server-authoritative
+    pricing_estimate. Falls back to MANIFEST_CREDIT_COST for v1.0 sessions
+    (no estimate) or malformed/missing next_milestone_cost."""
+    if session and isinstance(session.get("pricing_estimate"), dict):
+        cost = session["pricing_estimate"].get("next_milestone_cost")
+        if isinstance(cost, int) and cost > 0:
+            return cost
+    return MANIFEST_CREDIT_COST
+
+
 def _session_workflow(
     directory: Path,
     state: DirectorState,
@@ -156,7 +167,7 @@ def _session_workflow(
             "director.generate",
             ["lecturecast", "director", "generate", root, "--json"],
             approval=True,
-            credit_cost=10,
+            credit_cost=_pricing_credit_cost(session),
         )
         phase = "credit_approval_required"
     else:
