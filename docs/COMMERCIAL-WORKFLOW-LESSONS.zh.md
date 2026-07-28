@@ -40,7 +40,7 @@ flowchart TD
     G --> H["本地分析素材，生成受限 source summary"]
     H --> I["按 Decision Card 逐项询问用户"]
     I --> J{"用户确认完整 Brief"}
-    J --> K{"用户明确批准 10 credits"}
+    J --> K{"用户批准下一里程碑金额\n(server pricing_estimate)"}
     K --> L["CLI 在请求前持久化 generation ID，再等待签名 Manifest"]
     L --> M{"展示并批准完整签名脚本"}
     M --> N["解析本地 asset://，运行 preflight"]
