@@ -31,12 +31,12 @@ class ProtocolValidationError(ValueError):
     """Raised when a Director protocol document cannot be executed safely."""
 
 
-def _load_schema(filename: str) -> dict[str, Any]:
-    return json.loads((SCHEMA_DIR / filename).read_text(encoding="utf-8"))
+def _load_schema(directory: Path, filename: str) -> dict[str, Any]:
+    return json.loads((directory / filename).read_text(encoding="utf-8"))
 
 
-def _validate_schema(filename: str, payload: dict[str, Any]) -> None:
-    validator = Draft202012Validator(_load_schema(filename), format_checker=FormatChecker())
+def _validate_schema(schema_path: Path, payload: dict[str, Any]) -> None:
+    validator = Draft202012Validator(_load_schema(schema_path.parent, schema_path.name), format_checker=FormatChecker())
     errors = sorted(
         validator.iter_errors(payload),
         key=lambda error: tuple(str(part) for part in error.absolute_path),
@@ -171,11 +171,14 @@ def _validate_production_manifest(payload: dict[str, Any]) -> None:
 class ProtocolDocument:
     _payload: dict[str, Any] = field(repr=False)
     schema_filename: ClassVar[str]
+    # Directory holding this version's schema bundle. v1.0 documents use the
+    # flat SCHEMA_DIR; v1.1 documents override this to SCHEMA_DIR / "v1.1".
+    schema_dir: ClassVar[Path] = SCHEMA_DIR
 
     @classmethod
     def model_validate(cls, payload: dict[str, Any]) -> Self:
         document = copy.deepcopy(payload)
-        _validate_schema(cls.schema_filename, document)
+        _validate_schema(cls.schema_dir / cls.schema_filename, document)
         cls._validate_semantics(document)
         return cls(document)
 
@@ -232,3 +235,84 @@ class ProductionManifest(ProtocolDocument):
     @classmethod
     def _validate_semantics(cls, payload: dict[str, Any]) -> None:
         _validate_production_manifest(payload)
+
+
+# --- Digital-human edition (v1.1) ------------------------------------------
+# These load the server-published v1.1 schema bundle from schemas/v1.1/. The
+# semantic validators are shared with v1.0 (they check version-agnostic
+# uniqueness/constraint invariants and do not reject v1.1's additive fields).
+
+_V1_1_SCHEMA_DIR = SCHEMA_DIR / "v1.1"
+
+
+@dataclass(frozen=True)
+class DecisionCardSetV1_1(DecisionCardSet):
+    schema_dir: ClassVar[Path] = _V1_1_SCHEMA_DIR
+
+
+@dataclass(frozen=True)
+class CreativeBriefV1_1(CreativeBrief):
+    schema_dir: ClassVar[Path] = _V1_1_SCHEMA_DIR
+
+
+@dataclass(frozen=True)
+class ClientCapabilitiesV1_1(ClientCapabilities):
+    schema_dir: ClassVar[Path] = _V1_1_SCHEMA_DIR
+
+    @classmethod
+    def _validate_semantics(cls, payload: dict[str, Any]) -> None:
+        super()._validate_semantics(payload)
+        # v1.1 adds supported_artifact_versions + third_party_processors.
+        _ensure_unique(payload.get("supported_artifact_versions", []), label="artifact version")
+        processor_ids = [
+            p.get("processor_id")
+            for p in payload.get("third_party_processors", [])
+            if isinstance(p, dict)
+        ]
+        _ensure_unique(processor_ids, label="processor_id")
+
+
+@dataclass(frozen=True)
+class PresenterPlanV1_1(ProtocolDocument):
+    schema_dir: ClassVar[Path] = _V1_1_SCHEMA_DIR
+    schema_filename: ClassVar[str] = "presenter-plan.schema.json"
+
+    @classmethod
+    def _validate_semantics(cls, payload: dict[str, Any]) -> None:
+        _ensure_unique(
+            [seg.get("segment_id") for seg in payload.get("segments", []) if isinstance(seg, dict)],
+            label="segment_id",
+        )
+
+
+@dataclass(frozen=True)
+class OrchestrationPlanV1_1(ProtocolDocument):
+    schema_dir: ClassVar[Path] = _V1_1_SCHEMA_DIR
+    schema_filename: ClassVar[str] = "orchestration-plan.schema.json"
+
+    @classmethod
+    def _validate_semantics(cls, payload: dict[str, Any]) -> None:
+        del payload
+
+
+def documents_for_protocol_version(protocol_version: str) -> dict[str, type[ProtocolDocument]]:
+    """Return the model classes for the given protocol version. The Director
+    client uses these to parse server responses (cards/brief/capabilities) and
+    artifacts (presenter/orchestration plans)."""
+    if protocol_version == "1.1":
+        return {
+            "decision_card_set": DecisionCardSetV1_1,
+            "creative_brief": CreativeBriefV1_1,
+            "client_capabilities": ClientCapabilitiesV1_1,
+            "presenter_plan": PresenterPlanV1_1,
+            "orchestration_plan": OrchestrationPlanV1_1,
+            "production_manifest": ProductionManifest,
+        }
+    if protocol_version == "1.0":
+        return {
+            "decision_card_set": DecisionCardSet,
+            "creative_brief": CreativeBrief,
+            "client_capabilities": ClientCapabilities,
+            "production_manifest": ProductionManifest,
+        }
+    raise ValueError(f"unsupported protocol version: {protocol_version!r}")
