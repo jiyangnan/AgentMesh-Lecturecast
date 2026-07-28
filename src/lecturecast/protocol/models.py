@@ -262,14 +262,23 @@ class ClientCapabilitiesV1_1(ClientCapabilities):
     @classmethod
     def _validate_semantics(cls, payload: dict[str, Any]) -> None:
         super()._validate_semantics(payload)
-        # v1.1 adds supported_artifact_versions + third_party_processors.
-        _ensure_unique(payload.get("supported_artifact_versions", []), label="artifact version")
-        processor_ids = [
-            p.get("processor_id")
-            for p in payload.get("third_party_processors", [])
-            if isinstance(p, dict)
-        ]
-        _ensure_unique(processor_ids, label="processor_id")
+        # supported_artifact_versions is an object keyed by artifact type →
+        # version array; each array must be unique.
+        versions = payload.get("supported_artifact_versions")
+        if isinstance(versions, dict):
+            for artifact, version_list in versions.items():
+                if isinstance(version_list, list):
+                    _ensure_unique(version_list, label=f"{artifact} version")
+        processors = payload.get("third_party_processors") or []
+        for processor in processors:
+            if not isinstance(processor, dict):
+                continue
+            for field_name in ("operations", "features"):
+                _ensure_unique(processor.get(field_name, []), label=f"processor {field_name}")
+        _ensure_unique(
+            [p.get("provider") for p in processors if isinstance(p, dict)],
+            label="provider",
+        )
 
 
 @dataclass(frozen=True)

@@ -118,6 +118,63 @@ def test_v1_1_capabilities_payload_rejects_under_v1_0_model() -> None:
         ClientCapabilities.model_validate(v1_1_payload)
 
 
+# ---- v1.1 response contract via the version-aware Director parser ----
+
+def _v1_1_session_document(card: bool, brief: bool) -> dict[str, Any]:
+    return {
+        "session_id": "sess_v1_1",
+        "status": "collecting_decisions",
+        "brief_version": 0,
+        "catalog_version": "2026-07-16.1",
+        "updated_at": NOW,
+        "decision_card_set": json.loads(
+            (Path(__file__).parent / "fixtures" / "decision-card-set-v1_1.json").read_text()
+        ) if card else None,
+        "brief": json.loads(
+            (Path(__file__).parent / "fixtures" / "creative-brief-v1_1.json").read_text()
+        ) if brief else None,
+    }
+
+
+def test_v1_1_card_parses_under_1_1_rejects_under_1_0() -> None:
+    """The first v1.1 card (schema_version 1.1) must parse under protocol 1.1
+    and be rejected under 1.0 — proving the version-aware parser, not a
+    hardcoded v1.0 DecisionCardSet."""
+    from lecturecast.director import DirectorClient
+
+    doc = _v1_1_session_document(card=True, brief=False)
+    # v1.1 accepts.
+    DirectorClient._session(doc, protocol_version="1.1")
+    # v1.0 rejects (schema_version const mismatch).
+    with pytest.raises(Exception):
+        DirectorClient._session(doc, protocol_version="1.0")
+
+
+def test_v1_1_brief_parses_under_1_1() -> None:
+    from lecturecast.director import DirectorClient
+
+    doc = _v1_1_session_document(card=False, brief=True)
+    DirectorClient._session(doc, protocol_version="1.1")
+    # v1.0 rejects the v1.1 brief (required `presenter` field / schema_version).
+    with pytest.raises(Exception):
+        DirectorClient._session(doc, protocol_version="1.0")
+
+
+def test_v1_1_plan_models_target_v1_1_bundle() -> None:
+    """PresenterPlan / OrchestrationPlan are v1.1-only documents — they load
+    the v1.1 schema bundle (full plan fixtures are built when the client
+    consumes M2/M3 in §5.5d/e; this locks the model wiring now)."""
+    from lecturecast.protocol.models import OrchestrationPlanV1_1, PresenterPlanV1_1
+
+    assert PresenterPlanV1_1.schema_filename == "presenter-plan.schema.json"
+    assert PresenterPlanV1_1.schema_dir.name == "v1.1"
+    assert OrchestrationPlanV1_1.schema_filename == "orchestration-plan.schema.json"
+    assert OrchestrationPlanV1_1.schema_dir.name == "v1.1"
+    # The v1.1 schema files exist in the bundle.
+    assert (PresenterPlanV1_1.schema_dir / PresenterPlanV1_1.schema_filename).is_file()
+    assert (OrchestrationPlanV1_1.schema_dir / OrchestrationPlanV1_1.schema_filename).is_file()
+
+
 # ---- v1.1 vendored bundle integrity guard ----
 
 V1_1_BUNDLE_DIR = (
