@@ -11,7 +11,11 @@ from typing import Any, Mapping, Protocol
 from urllib.parse import urlparse
 
 from .auth import require_api_key
-from .config import DEFAULT_DIRECTOR_URL, DIRECTOR_URL_ENV
+from .config import (
+    DEFAULT_DIRECTOR_URL,
+    DIRECTOR_URL_ENV,
+    SUPPORTED_PROTOCOL_VERSIONS,
+)
 from .errors import LectureCastError
 from .project import ProjectStore, atomic_write_json
 from .protocol import CreativeBrief, DecisionCardSet, ProductionManifest
@@ -305,9 +309,15 @@ class DirectorClient:
             raise cls._invalid_response(type(exc).__name__) from None
         return document
 
-    def create_session(self, source: dict[str, Any]) -> dict[str, Any]:
+    def create_session(
+        self, source: dict[str, Any], *, protocol_version: str = "1.0"
+    ) -> dict[str, Any]:
         return self._session(
-            self.request("POST", "/director/sessions", {"source": source})
+            self.request(
+                "POST",
+                "/director/sessions",
+                {"source": source, "protocol_version": protocol_version},
+            )
         )
 
     def get_session(self, session_id: str) -> dict[str, Any]:
@@ -393,6 +403,11 @@ class DirectorState:
         return int(self.payload["state_revision"])
 
     @property
+    def protocol_version(self) -> str:
+        # Pinned at session create; old v1.0 state files default to "1.0".
+        return self.payload.get("protocol_version", "1.0")
+
+    @property
     def session_id(self) -> str:
         return str(self.payload["session_id"])
 
@@ -427,7 +442,9 @@ class DirectorStateStore:
             "generation_status",
             "updated_at",
         }
-        if set(payload) != required:
+        # protocol_version is the only optional key (§5.5a): old v1.0 state
+        # files omit it and are treated as "1.0".
+        if not required.issubset(payload) or not set(payload).issubset(required | {"protocol_version"}):
             raise ValueError("unexpected or incomplete Director state")
         if payload.get("schema_version") != DIRECTOR_STATE_SCHEMA_VERSION:
             raise ValueError("unsupported Director state version")
@@ -445,6 +462,9 @@ class DirectorStateStore:
             or adapter_version != adapter_version.strip()
         ):
             raise ValueError("Director adapter identity is not normalized")
+        protocol_version = payload.get("protocol_version", "1.0")
+        if protocol_version not in SUPPORTED_PROTOCOL_VERSIONS:
+            raise ValueError(f"unsupported protocol_version: {protocol_version!r}")
         return DirectorState(payload)
 
     def _load_unlocked(self) -> DirectorState:
@@ -484,6 +504,7 @@ class DirectorStateStore:
         session: dict[str, Any],
         adapter_kind: str,
         adapter_version: str,
+        protocol_version: str = "1.0",
     ) -> DirectorState:
         with self.project._locked():
             project = self.project._load_unlocked()
@@ -493,6 +514,8 @@ class DirectorStateStore:
                     message="本地项目已经绑定 Director Session。",
                     next_action="运行 director next/status 恢复，或新建另一个本地项目。",
                 )
+            if protocol_version not in SUPPORTED_PROTOCOL_VERSIONS:
+                raise ValueError(f"unsupported protocol_version: {protocol_version!r}")
             payload = {
                 "schema_version": DIRECTOR_STATE_SCHEMA_VERSION,
                 "project_id": project.payload["project_id"],
@@ -504,6 +527,7 @@ class DirectorStateStore:
                 "catalog_version": session["catalog_version"],
                 "adapter_kind": adapter_kind,
                 "adapter_version": adapter_version,
+                "protocol_version": protocol_version,
                 "generation_id": None,
                 "generation_status": None,
                 "updated_at": session["updated_at"],

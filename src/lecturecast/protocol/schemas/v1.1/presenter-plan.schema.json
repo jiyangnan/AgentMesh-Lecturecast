@@ -1,0 +1,298 @@
+{
+  "$defs": {
+    "HeyGenApiPlan": {
+      "additionalProperties": false,
+      "description": "Signed HeyGen v3 call template. The API key value NEVER appears here —\n`key_source=user_provided_local` means the client reads it from the local\nenvironment at call time.",
+      "properties": {
+        "asset_id_field": {
+          "const": "data.asset_id",
+          "title": "Asset Id Field",
+          "type": "string"
+        },
+        "assets_endpoint": {
+          "const": "/v3/assets",
+          "title": "Assets Endpoint",
+          "type": "string"
+        },
+        "auth_header": {
+          "const": "X-Api-Key",
+          "title": "Auth Header",
+          "type": "string"
+        },
+        "base_url": {
+          "const": "https://api.heygen.com",
+          "title": "Base Url",
+          "type": "string"
+        },
+        "key_env_var": {
+          "const": "HEYGEN_API_KEY",
+          "title": "Key Env Var",
+          "type": "string"
+        },
+        "key_source": {
+          "const": "user_provided_local",
+          "title": "Key Source",
+          "type": "string"
+        },
+        "poll_interval_s": {
+          "maximum": 60,
+          "minimum": 5,
+          "title": "Poll Interval S",
+          "type": "integer"
+        },
+        "poll_max_attempts": {
+          "maximum": 60,
+          "minimum": 6,
+          "title": "Poll Max Attempts",
+          "type": "integer"
+        },
+        "status_field": {
+          "const": "data.status",
+          "title": "Status Field",
+          "type": "string"
+        },
+        "url_field": {
+          "const": "data.video_url",
+          "title": "Url Field",
+          "type": "string"
+        },
+        "videos_endpoint": {
+          "const": "/v3/videos",
+          "title": "Videos Endpoint",
+          "type": "string"
+        }
+      },
+      "required": [
+        "base_url",
+        "auth_header",
+        "key_source",
+        "key_env_var",
+        "assets_endpoint",
+        "videos_endpoint",
+        "asset_id_field",
+        "status_field",
+        "url_field",
+        "poll_interval_s",
+        "poll_max_attempts"
+      ],
+      "title": "HeyGenApiPlan",
+      "type": "object"
+    },
+    "PipStyle": {
+      "additionalProperties": false,
+      "properties": {
+        "corner_radius_px": {
+          "maximum": 128,
+          "minimum": 0,
+          "title": "Corner Radius Px",
+          "type": "integer"
+        },
+        "margin_bottom_px": {
+          "maximum": 1920,
+          "minimum": 0,
+          "title": "Margin Bottom Px",
+          "type": "integer"
+        },
+        "margin_right_px": {
+          "maximum": 1920,
+          "minimum": 0,
+          "title": "Margin Right Px",
+          "type": "integer"
+        },
+        "position": {
+          "enum": [
+            "bottom-right",
+            "bottom-left",
+            "top-right",
+            "top-left"
+          ],
+          "title": "Position",
+          "type": "string"
+        },
+        "size_px": {
+          "maximum": 1024,
+          "minimum": 64,
+          "title": "Size Px",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "size_px",
+        "corner_radius_px",
+        "position",
+        "margin_right_px",
+        "margin_bottom_px"
+      ],
+      "title": "PipStyle",
+      "type": "object"
+    },
+    "PresenterSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "script_chunk_ids": {
+          "items": {
+            "type": "integer"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Script Chunk Ids",
+          "type": "array"
+        },
+        "segment_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Segment Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "segment_id",
+        "script_chunk_ids",
+        "label"
+      ],
+      "title": "PresenterSegment",
+      "type": "object"
+    },
+    "SignatureMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "const": "Ed25519",
+          "title": "Algorithm",
+          "type": "string"
+        },
+        "key_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Key Id",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 88,
+          "minLength": 88,
+          "pattern": "^[A-Za-z0-9+/]{86}==$",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "algorithm",
+        "key_id",
+        "value"
+      ],
+      "title": "SignatureMetadata",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "M2 artifact — the digital-human plan. Only produced when\neffective_avatar=photo (cartoon is deferred to a future protocol bump).\nBinds to its ProductionManifest via `production_manifest_digest`.",
+  "properties": {
+    "avatar": {
+      "const": "photo",
+      "title": "Avatar",
+      "type": "string"
+    },
+    "brief_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Brief Digest",
+      "type": "string"
+    },
+    "capability_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Capability Digest",
+      "type": "string"
+    },
+    "component_catalog_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Component Catalog Digest",
+      "type": "string"
+    },
+    "content_expires_at": {
+      "format": "date-time",
+      "title": "Content Expires At",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "generation_id": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Generation Id",
+      "type": "string"
+    },
+    "heygen": {
+      "$ref": "#/$defs/HeyGenApiPlan"
+    },
+    "pip_style": {
+      "$ref": "#/$defs/PipStyle"
+    },
+    "presenter_mode": {
+      "enum": [
+        "three_segment",
+        "full_pip"
+      ],
+      "title": "Presenter Mode",
+      "type": "string"
+    },
+    "presenter_plan_id": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Presenter Plan Id",
+      "type": "string"
+    },
+    "production_manifest_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Production Manifest Digest",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "segments": {
+      "items": {
+        "$ref": "#/$defs/PresenterSegment"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "Segments",
+      "type": "array"
+    },
+    "signature": {
+      "$ref": "#/$defs/SignatureMetadata"
+    }
+  },
+  "required": [
+    "schema_version",
+    "presenter_plan_id",
+    "generation_id",
+    "production_manifest_digest",
+    "brief_digest",
+    "capability_digest",
+    "component_catalog_digest",
+    "avatar",
+    "presenter_mode",
+    "segments",
+    "pip_style",
+    "heygen",
+    "signature",
+    "created_at",
+    "content_expires_at"
+  ],
+  "title": "PresenterPlanV1_1",
+  "type": "object"
+}

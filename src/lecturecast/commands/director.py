@@ -17,6 +17,7 @@ from ..director import (
     normalize_adapter_identity,
     resolve_server_url,
 )
+from ..config import resolve_protocol_version
 from ..errors import LectureCastError
 from ..host_agent import (
     HOST_ADAPTER_VERSION,
@@ -251,12 +252,16 @@ def start(
             )
         adapter, adapter_version = _adapter(adapter, adapter_version)
         server_url = resolve_server_url(server)
-        session = _make_client(server_url).create_session(load_source_file(source))
+        protocol_version = resolve_protocol_version()
+        session = _make_client(server_url).create_session(
+            load_source_file(source), protocol_version=protocol_version,
+        )
         state = state_store.create(
             server_url=server_url,
             session=session,
             adapter_kind=adapter,
             adapter_version=adapter_version,
+            protocol_version=protocol_version,
         )
         emit(
             _result(
