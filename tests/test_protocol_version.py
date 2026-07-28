@@ -77,10 +77,163 @@ def test_v1_1_state_pins_protocol_version() -> None:
     assert state.payload["schema_version"] == "1.1"
 
 
-def test_v1_1_state_requires_protocol_version_1_1() -> None:
+def test_v1_1_state_rejects_protocol_version_1_1() -> None:
     payload = dict(_v1_0_payload()) | {"schema_version": "1.1", "protocol_version": "1.0"}
     with pytest.raises(ValueError, match="requires protocol_version=1.1"):
         DirectorStateStore._validate(payload)
+
+
+def test_v1_2_state_with_billing_snapshot() -> None:
+    """schema_version 1.2 persists billing_state / resume_available /
+    billing_updated_at on the first v1.1 generation response."""
+    payload = dict(_v1_0_payload()) | {
+        "schema_version": "1.2",
+        "protocol_version": "1.1",
+        "billing_state": "awaiting_credits",
+        "resume_available": True,
+        "billing_updated_at": NOW,
+    }
+    state = DirectorStateStore._validate(payload)
+    assert state.billing_state == "awaiting_credits"
+    assert state.resume_available is True
+    assert state.payload["billing_updated_at"] == NOW
+
+
+def test_v1_2_state_rejects_missing_billing_keys() -> None:
+    payload = dict(_v1_0_payload()) | {
+        "schema_version": "1.2", "protocol_version": "1.1",
+        "billing_state": "charged",
+    }
+    with pytest.raises(ValueError, match="unexpected or incomplete"):
+        DirectorStateStore._validate(payload)
+
+
+def test_v1_1_state_still_loads_after_d2() -> None:
+    """Old v1.1 state files (without billing snapshot) must still load."""
+    payload = dict(_v1_0_payload()) | {"schema_version": "1.1", "protocol_version": "1.1"}
+    state = DirectorStateStore._validate(payload)
+    assert state.protocol_version == "1.1"
+    assert state.billing_state is None
+    assert state.resume_available is False
+
+
+# ---- v1.2 strict type/vocab validation (§5.5d2 Codex fix) ----
+
+@pytest.mark.parametrize("bad_state", ["unknown", "ready", 42, None])
+def test_v1_2_rejects_invalid_billing_state(bad_state):
+    payload = dict(_v1_0_payload()) | {
+        "schema_version": "1.2", "protocol_version": "1.1",
+        "billing_state": bad_state, "resume_available": True,
+        "billing_updated_at": NOW,
+    }
+    with pytest.raises(ValueError, match="billing_state"):
+        DirectorStateStore._validate(payload)
+
+
+@pytest.mark.parametrize("bad_val", ["true", "false", 1, 0, None])
+def test_v1_2_rejects_non_bool_resume_available(bad_val):
+    payload = dict(_v1_0_payload()) | {
+        "schema_version": "1.2", "protocol_version": "1.1",
+        "billing_state": "charged", "resume_available": bad_val,
+        "billing_updated_at": NOW,
+    }
+    with pytest.raises(ValueError, match="resume_available"):
+        DirectorStateStore._validate(payload)
+
+
+@pytest.mark.parametrize("bad_val", [None, "", 42])
+def test_v1_2_rejects_empty_billing_updated_at(bad_val):
+    payload = dict(_v1_0_payload()) | {
+        "schema_version": "1.2", "protocol_version": "1.1",
+        "billing_state": "charged", "resume_available": True,
+        "billing_updated_at": bad_val,
+    }
+    with pytest.raises(ValueError, match="billing_updated_at"):
+        DirectorStateStore._validate(payload)
+
+
+@pytest.mark.parametrize("bad_ts", ["banana", "2026-07-28", "not-a-timestamp"])
+def test_v1_2_rejects_invalid_billing_timestamp(bad_ts):
+    payload = dict(_v1_0_payload()) | {
+        "schema_version": "1.2", "protocol_version": "1.1",
+        "billing_state": "charged", "resume_available": True,
+        "billing_updated_at": bad_ts,
+    }
+    with pytest.raises(ValueError, match="billing_updated_at"):
+        DirectorStateStore._validate(payload)
+
+
+def test_update_rejects_non_bool_resume_available_from_generation(tmp_path: Path):
+    """update(generation=...) with resume_available='false' (string) must NOT
+    be silently coerced; _validate must reject it."""
+    store = DirectorStateStore(tmp_path)
+    store.project.init(name="T")
+    state = store.create(
+        server_url="https://api.test",
+        session={"session_id": "s1", "status": "confirmed", "brief_version": 1,
+                 "catalog_version": "cv", "updated_at": NOW},
+        adapter_kind="codex", adapter_version="1.0.0", protocol_version="1.1",
+    )
+    state = store.update(state, generation_id="gen_1", generation_status="queued")
+    generation = {
+        "generation_id": "gen_1", "status": "queued", "updated_at": NOW,
+        "billing_state": "awaiting_credits", "resume_available": "false",
+    }
+    with pytest.raises(ValueError, match="resume_available"):
+        store.update(state, generation=generation)
+
+
+# ---- v1.1→1.2 real persistence round-trip (§5.5d2 Codex fix) ----
+
+def test_update_with_billing_generation_upgrades_1_1_to_1_2(tmp_path: Path):
+    """DirectorStateStore.update(generation=...) with a v1.1 generation response
+    containing billing_state must: upgrade schema 1.1→1.2, persist the three
+    snapshot fields, increment revision, and NOT persist milestone_charges or
+    any sensitive fields."""
+    import json
+    store = DirectorStateStore(tmp_path)
+    store.project.init(name="T")
+    # Create a v1.1 session (no generation yet).
+    state = store.create(
+        server_url="https://api.test",
+        session={"session_id": "s1", "status": "confirmed", "brief_version": 1,
+                 "catalog_version": "cv", "updated_at": NOW},
+        adapter_kind="codex", adapter_version="1.0.0",
+        protocol_version="1.1",
+    )
+    assert state.payload["schema_version"] == "1.1"
+    assert state.revision == 1
+
+    # Set the generation_id first (as create_generation would).
+    state = store.update(state, generation_id="gen_1", generation_status="queued")
+
+    # Simulate a v1.1 generation response with billing_state.
+    generation = {
+        "generation_id": "gen_1", "status": "queued", "updated_at": NOW,
+        "billing_state": "awaiting_credits", "resume_available": True,
+        # Sensitive fields that must NOT be persisted:
+        "milestone_charges": [{"milestone": "manifest", "cost": 10, "status": "charged"}],
+        "ledger_id": 42, "idempotency_key": "secret",
+    }
+    updated = store.update(state, generation=generation)
+    # Schema upgraded to 1.2.
+    assert updated.payload["schema_version"] == "1.2"
+    assert updated.revision == 3  # 1=create, 2=set gen_id, 3=billing update
+    assert updated.billing_state == "awaiting_credits"
+    assert updated.resume_available is True
+    assert updated.payload["billing_updated_at"] == NOW
+
+    # Reload from disk.
+    reloaded = store.load()
+    assert reloaded.payload["schema_version"] == "1.2"
+    assert reloaded.billing_state == "awaiting_credits"
+    assert reloaded.resume_available is True
+
+    # Sensitive fields NOT persisted.
+    raw = json.loads((tmp_path / ".lecturecast" / "director-state.json").read_text())
+    assert "milestone_charges" not in raw
+    assert "ledger_id" not in raw
+    assert "idempotency_key" not in raw
 
 
 # ---- version-aware model dispatch ----

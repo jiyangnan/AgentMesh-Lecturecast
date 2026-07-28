@@ -441,6 +441,17 @@ class DirectorState:
         value = self.payload.get("generation_id")
         return str(value) if value is not None else None
 
+    @property
+    def billing_state(self) -> str | None:
+        """Last observed billing_state from the server. Advisory display only —
+        the server is always authoritative. Not a basis for auto-resume."""
+        return self.payload.get("billing_state")
+
+    @property
+    def resume_available(self) -> bool:
+        """Last observed resume_available from the server. Advisory display only."""
+        return bool(self.payload.get("resume_available"))
+
     def to_dict(self) -> dict[str, Any]:
         return dict(self.payload)
 
@@ -468,8 +479,11 @@ class DirectorStateStore:
             "updated_at",
         }
         # State schema is versioned by the Director protocol version (§5.5a):
-        # v1.0 state keeps the frozen 13-key shape (no protocol_version key);
-        # v1.1 state adds protocol_version="1.1". Old v1.0 files load as 1.0.
+        # v1.0: frozen 13-key shape (no protocol_version key).
+        # v1.1: 14 keys (adds protocol_version="1.1").
+        # v1.2: 17 keys (adds billing_state / resume_available / billing_updated_at)
+        #       — written when the first v1.1 generation response with billing
+        #       state is persisted. Old v1.0/v1.1 files load unchanged.
         schema_version = payload.get("schema_version")
         if schema_version == "1.0":
             if set(payload) != required:
@@ -479,6 +493,33 @@ class DirectorStateStore:
                 raise ValueError("unexpected or incomplete Director state")
             if payload.get("protocol_version") != "1.1":
                 raise ValueError("v1.1 state requires protocol_version=1.1")
+        elif schema_version == "1.2":
+            billing_keys = {"protocol_version", "billing_state", "resume_available", "billing_updated_at"}
+            if set(payload) != required | billing_keys:
+                raise ValueError("unexpected or incomplete Director state")
+            if payload.get("protocol_version") != "1.1":
+                raise ValueError("v1.2 state requires protocol_version=1.1")
+            # Strict type/vocab validation for billing snapshot fields.
+            billing_state = payload.get("billing_state")
+            if billing_state not in (
+                "in_progress", "awaiting_credits", "partially_charged", "charged", "blocked",
+            ):
+                raise ValueError(f"invalid billing_state: {billing_state!r}")
+            if type(payload.get("resume_available")) is not bool:
+                raise ValueError(f"resume_available must be bool, got {type(payload.get('resume_available'))}")
+            updated = payload.get("billing_updated_at")
+            if not isinstance(updated, str) or not updated:
+                raise ValueError("billing_updated_at must be a non-empty string")
+            # Must be a parseable timezone-aware ISO-8601 timestamp.
+            try:
+                from datetime import datetime
+                parsed = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    raise ValueError("billing_updated_at must be timezone-aware")
+            except ValueError as exc:
+                if "timezone-aware" in str(exc) or "must be" in str(exc):
+                    raise
+                raise ValueError(f"billing_updated_at is not a valid timestamp: {updated!r}")
         else:
             raise ValueError("unsupported Director state version")
         revision = payload.get("state_revision")
@@ -670,6 +711,17 @@ class DirectorStateStore:
                         "updated_at": generation["updated_at"],
                     }
                 )
+                # §5.5d2: persist billing snapshot from v1.1 generation responses.
+                # Only billing_state / resume_available / billing_updated_at are
+                # stored — never ledger_id, idempotency_key, lease fields.
+                billing_state = generation.get("billing_state")
+                if billing_state is not None:
+                    payload["billing_state"] = billing_state
+                    payload["resume_available"] = generation.get("resume_available")
+                    payload["billing_updated_at"] = generation["updated_at"]
+                    # One-way upgrade to schema 1.2 on first billing snapshot.
+                    if payload.get("schema_version") == "1.1":
+                        payload["schema_version"] = "1.2"
             if generation_id is not None:
                 payload["generation_id"] = generation_id
             if generation_status is not None:
