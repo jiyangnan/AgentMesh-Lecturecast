@@ -182,11 +182,25 @@ def _session_workflow(
     else:
         action = {"id": "workflow.stop", "kind": "stop", "mutates": False}
         phase = "stopped"
-    return {
+    workflow: dict[str, Any] = {
         "phase": phase,
         "policy": "execute_only_returned_next_action",
         "next_action": action,
     }
+    # Project the server-authoritative pricing estimate for user disclosure.
+    # maximum_total is NOT a start gate — it's advisory. Per-milestone 402 from
+    # the server is the real billing gate.
+    estimate = session.get("pricing_estimate") if state.protocol_version == "1.1" else None
+    if isinstance(estimate, dict):
+        workflow["pricing_estimate"] = {
+            k: estimate.get(k)
+            for k in (
+                "estimate_status", "minimum_total", "maximum_total",
+                "next_milestone_cost", "applicable_milestones",
+                "per_milestone", "charge_model", "pricing_version",
+            )
+        }
+    return workflow
 
 
 def _state_workflow(directory: Path, state: DirectorState) -> dict[str, Any]:
