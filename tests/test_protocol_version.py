@@ -208,7 +208,7 @@ V1_1_BUNDLE_DIR = (
     / "src" / "lecturecast" / "protocol" / "schemas" / "v1.1"
 )
 # Audited bundle digest (matches lecturecast-server protocol/v1.1/protocol.lock).
-V1_1_AUDITED_BUNDLE_DIGEST = "sha256:5c8e15d1514fce97445ccd0540401eef6bafd54405b0960d4003ee819707f2fc"
+V1_1_AUDITED_BUNDLE_DIGEST = "sha256:6accee261db1b83ac572dd12eb61a27e5bfbe45e965f1eaafefe274a0ab305a5"
 
 
 def test_v1_1_bundle_lock_is_intact_and_audited() -> None:
@@ -224,6 +224,7 @@ def test_v1_1_bundle_lock_is_intact_and_audited() -> None:
         "creative-brief.schema.json",
         "decision-card-set.schema.json",
         "error-envelope.schema.json",
+        "manifest-generation-out.schema.json",
         "orchestration-plan.schema.json",
         "presenter-plan.schema.json",
         "production-manifest.schema.json",

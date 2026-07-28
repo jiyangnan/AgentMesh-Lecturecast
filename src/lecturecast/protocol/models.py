@@ -304,6 +304,52 @@ class OrchestrationPlanV1_1(ProtocolDocument):
         del payload
 
 
+@dataclass(frozen=True)
+class ManifestGenerationOutV1_1(ProtocolDocument):
+    """Server generation response for v1.1 sessions — includes milestone
+    billing projection (milestone_charges / billing_state / resume_available).
+    Does NOT carry ledger_id / idempotency_key / lease fields."""
+
+    schema_dir: ClassVar[Path] = _V1_1_SCHEMA_DIR
+    schema_filename: ClassVar[str] = "manifest-generation-out.schema.json"
+
+    @classmethod
+    def _validate_semantics(cls, payload: dict[str, Any]) -> None:
+        # Defense-in-depth: the schema (additionalProperties:false) already
+        # rejects unknown fields, but if a future model change accidentally
+        # adds a sensitive field, this catches it. Use ProtocolValidationError
+        # (not assert) so -O doesn't strip it.
+        for sensitive in ("ledger_id", "idempotency_key", "external_id", "lease_owner", "lease_fence"):
+            if sensitive in payload:
+                raise ProtocolValidationError(f"sensitive field leaked into generation response: {sensitive}")
+        # milestone_charges: unique milestones, cost > 0, ordered subset of
+        # MILESTONE_ORDER.
+        charges = payload.get("milestone_charges") or []
+        seen_milestones: list[str] = []
+        _canonical_order = ("manifest", "presenter_plan", "orchestration")
+        last_idx = -1
+        for charge in charges:
+            ms = charge.get("milestone")
+            if ms in seen_milestones:
+                raise ProtocolValidationError(f"duplicate milestone in charges: {ms}")
+            seen_milestones.append(ms)
+            cost = charge.get("cost", 0)
+            if not isinstance(cost, int) or isinstance(cost, bool) or cost <= 0:
+                raise ProtocolValidationError(f"non-positive or invalid cost for milestone {ms}: {cost!r}")
+            if ms in _canonical_order:
+                idx = _canonical_order.index(ms)
+                if idx <= last_idx:
+                    raise ProtocolValidationError(f"milestone {ms} out of canonical order")
+                last_idx = idx
+        # billing_state must be one of the known values.
+        billing_state = payload.get("billing_state")
+        if billing_state is not None:
+            if billing_state not in (
+                "in_progress", "awaiting_credits", "partially_charged", "charged", "blocked",
+            ):
+                raise ProtocolValidationError(f"unknown billing_state: {billing_state}")
+
+
 def documents_for_protocol_version(protocol_version: str) -> dict[str, type[ProtocolDocument]]:
     """Return the model classes for the given protocol version. The Director
     client uses these to parse server responses (cards/brief/capabilities) and
@@ -316,6 +362,7 @@ def documents_for_protocol_version(protocol_version: str) -> dict[str, type[Prot
             "presenter_plan": PresenterPlanV1_1,
             "orchestration_plan": OrchestrationPlanV1_1,
             "production_manifest": ProductionManifest,
+            "manifest_generation_out": ManifestGenerationOutV1_1,
         }
     if protocol_version == "1.0":
         return {

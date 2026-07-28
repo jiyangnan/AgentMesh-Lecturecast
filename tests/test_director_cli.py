@@ -147,7 +147,9 @@ class FakeDirectorClient:
         generation_id: str,
         expected_brief_version: int,
         capabilities: dict[str, Any],
+        protocol_version: str = "1.0",
     ) -> dict[str, Any]:
+        del protocol_version
         assert session_id == "dir_demo_001"
         assert expected_brief_version == 1
         assert capabilities["adapter"]["kind"] in {
@@ -174,7 +176,8 @@ class FakeDirectorClient:
             "deducted_credits": 10,
         }
 
-    def get_generation(self, generation_id: str) -> dict[str, Any]:
+    def get_generation(self, generation_id: str, *, protocol_version: str = "1.0") -> dict[str, Any]:
+        del protocol_version
         assert generation_id == "generation_demo_001"
         return {
             "generation_id": generation_id,

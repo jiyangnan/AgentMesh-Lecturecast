@@ -744,6 +744,7 @@ def generate(
             generation_id=selected_id,
             expected_brief_version=int(state.payload["brief_version"]),
             capabilities=capabilities.model_dump(),
+            protocol_version=state.protocol_version,
         )
         state = state_store.update(state, generation=generation)
         emit(
@@ -793,7 +794,7 @@ def status(
                 next_action="先运行 director generate。",
             )
         generation = _make_client(state.payload["server_url"]).get_generation(
-            state.generation_id
+            state.generation_id, protocol_version=state.protocol_version,
         )
         state = state_store.update(state, generation=generation)
         project_store = ProjectStore(directory)
