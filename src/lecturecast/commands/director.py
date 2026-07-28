@@ -117,6 +117,54 @@ def _command_action(
     return action
 
 
+def _validated_estimate(
+    session: dict[str, Any] | None, *, protocol_version: str = "1.0",
+    brief: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Validate and return the session's pricing_estimate for v1.1 sessions.
+    Returns None for v1.0 (no estimate expected). Raises LectureCastError on
+    malformed/missing v1.1 estimate (no silent fallback). Also verifies
+    card-level estimate matches session-level estimate."""
+    if protocol_version != "1.1" or not session:
+        return None
+    estimate = session.get("pricing_estimate")
+    if not estimate:
+        raise LectureCastError(
+            code="manifest_incompatible",
+            message="v1.1 session 缺少 pricing_estimate。",
+            next_action="重新运行 director next 刷新 session 后重试。",
+        )
+    # Card-level estimate must match session-level estimate (if both present).
+    # If the session has a card_set, the card MUST carry the same estimate.
+    card_set = session.get("decision_card_set")
+    if isinstance(card_set, dict):
+        card_estimate = card_set.get("pricing_estimate")
+        if card_estimate is None:
+            raise LectureCastError(
+                code="manifest_incompatible",
+                message="v1.1 card 缺少 pricing_estimate（与 session 顶层不一致）。",
+                next_action="重新运行 director next 刷新 session 后重试。",
+            )
+        if card_estimate != estimate:
+            raise LectureCastError(
+                code="manifest_incompatible",
+                message="card pricing_estimate 与 session 顶层 pricing_estimate 不一致。",
+                next_action="重新运行 director next 刷新 session 后重试。",
+            )
+    from ..pricing import PricingEstimateError, validate_pricing_estimate
+
+    try:
+        return validate_pricing_estimate(
+            estimate, protocol_version="1.1", brief=brief,
+        )
+    except PricingEstimateError as exc:
+        raise LectureCastError(
+            code="manifest_incompatible",
+            message=f"server 定价预估无效：{exc}",
+            next_action="重新运行 director next 刷新 session 后重试。",
+        ) from None
+
+
 def _pricing_credit_cost(
     session: dict[str, Any] | None, *, protocol_version: str = "1.0",
 ) -> int:
@@ -187,11 +235,22 @@ def _session_workflow(
         "policy": "execute_only_returned_next_action",
         "next_action": action,
     }
-    # Project the server-authoritative pricing estimate for user disclosure.
-    # maximum_total is NOT a start gate — it's advisory. Per-milestone 402 from
-    # the server is the real billing gate.
-    estimate = session.get("pricing_estimate") if state.protocol_version == "1.1" else None
-    if isinstance(estimate, dict):
+    # Project the server-authoritative pricing estimate (validated) for user
+    # disclosure. maximum_total is NOT a start gate — it's advisory.
+    estimate = _validated_estimate(
+        session, protocol_version=state.protocol_version,
+        brief=session.get("brief"),
+    )
+    if estimate:
+        # A confirmed session must have a FINAL estimate (bound to the Brief via
+        # brief_digest + estimate_digest). Provisional is insufficient for
+        # credit approval.
+        if session.get("status") == "confirmed" and estimate.get("estimate_status") != "final":
+            raise LectureCastError(
+                code="manifest_incompatible",
+                message="confirmed session 必须有 final pricing_estimate（已绑定 Brief digest）。",
+                next_action="重新运行 director next 刷新 session 后重试。",
+            )
         workflow["pricing_estimate"] = {
             k: estimate.get(k)
             for k in (
@@ -201,6 +260,39 @@ def _session_workflow(
             )
         }
     return workflow
+
+
+def _status_workflow(
+    state: DirectorState, generation: dict[str, Any], root: str,
+) -> dict[str, Any]:
+    """Build the workflow for a generation status response. Extracted so the
+    v1.1/v1.0 credit_returned phase/action split is directly testable."""
+    gen_status = generation["status"]
+    if gen_status == "ready":
+        action = _command_action(
+            "manifest.review", ["lecturecast", "manifest", "review", root, "--json"],
+            approval=True,
+        )
+        phase = "script_review_required"
+    elif gen_status == "credit_returned":
+        if state.protocol_version == "1.1":
+            action = _command_action(
+                "director.next", ["lecturecast", "director", "next", root, "--json"],
+            )
+            phase = "estimate_refresh_required"
+        else:
+            action = _command_action(
+                "director.generate",
+                ["lecturecast", "director", "generate", root, "--json"],
+                approval=True, credit_cost=MANIFEST_CREDIT_COST,
+            )
+            phase = "credit_approval_required"
+    else:
+        action = _command_action(
+            "director.status", ["lecturecast", "director", "status", root, "--json"],
+        )
+        phase = f"generation_{gen_status}"
+    return {"phase": phase, "policy": "execute_only_returned_next_action", "next_action": action}
 
 
 def _state_workflow(directory: Path, state: DirectorState) -> dict[str, Any]:
@@ -224,13 +316,22 @@ def _state_workflow(directory: Path, state: DirectorState) -> dict[str, Any]:
         )
         phase = "brief_review_required"
     elif state.payload["session_status"] == "confirmed":
-        action = _command_action(
-            "director.generate",
-            ["lecturecast", "director", "generate", root, "--json"],
-            approval=True,
-            credit_cost=10,
-        )
-        phase = "credit_approval_required"
+        if state.protocol_version == "1.1":
+            # v1.1 confirmed: no session context here → refresh first to get
+            # the server-authoritative estimate before approving generation.
+            action = _command_action(
+                "director.next",
+                ["lecturecast", "director", "next", root, "--json"],
+            )
+            phase = "estimate_refresh_required"
+        else:
+            action = _command_action(
+                "director.generate",
+                ["lecturecast", "director", "generate", root, "--json"],
+                approval=True,
+                credit_cost=MANIFEST_CREDIT_COST,
+            )
+            phase = "credit_approval_required"
     else:
         action = {"id": "workflow.stop", "kind": "stop", "mutates": False}
         phase = "stopped"
@@ -529,25 +630,10 @@ def confirm_brief(
                 state=state,
                 session=session,
                 project=project.to_dict(),
-                workflow={
-                    "phase": "credit_approval_required",
-                    "policy": "execute_only_returned_next_action",
-                    "next_action": _command_action(
-                        "director.generate",
-                        [
-                            "lecturecast",
-                            "director",
-                            "generate",
-                            str(directory.expanduser().resolve()),
-                            "--json",
-                        ],
-                        approval=True,
-                        credit_cost=10,
-                    ),
-                },
+                workflow=_session_workflow(directory, state, session),
             ),
             json_output=json_output,
-            message="Creative Brief 已确认并保存；本步骤没有扣 credit。",
+            message="Creative Brief 已确认并保存；本步骤没有扣 credit。"
         )
     except LectureCastError as error:
         fail(error, json_output=json_output)
@@ -725,59 +811,13 @@ def status(
             )
         if generation["status"] == "credit_returned":
             state = state_store.release_refunded_generation(state)
-        next_action = (
-            _command_action(
-                "manifest.review",
-                [
-                    "lecturecast",
-                    "manifest",
-                    "review",
-                    str(directory.expanduser().resolve()),
-                    "--json",
-                ],
-                approval=True,
-            )
-            if generation["status"] == "ready"
-            else _command_action(
-                "director.generate",
-                [
-                    "lecturecast",
-                    "director",
-                    "generate",
-                    str(directory.expanduser().resolve()),
-                    "--json",
-                ],
-                approval=True,
-                credit_cost=10,
-            )
-            if generation["status"] == "credit_returned"
-            else _command_action(
-                "director.status",
-                [
-                    "lecturecast",
-                    "director",
-                    "status",
-                    str(directory.expanduser().resolve()),
-                    "--json",
-                ],
-            )
-        )
+        root = str(directory.expanduser().resolve())
         emit(
             _result(
                 state=state,
                 generation=generation,
                 project=project.to_dict(),
-                workflow={
-                    "phase": (
-                        "script_review_required"
-                        if generation["status"] == "ready"
-                        else "credit_approval_required"
-                        if generation["status"] == "credit_returned"
-                        else f"generation_{generation['status']}"
-                    ),
-                    "policy": "execute_only_returned_next_action",
-                    "next_action": next_action,
-                },
+                workflow=_status_workflow(state, generation, root),
             ),
             json_output=json_output,
             message=f"Generation 状态：{generation['status']}。",
