@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -158,3 +159,95 @@ def test_final_without_brief_fails_closed():
     # Now validate WITHOUT passing the brief → must fail (can't verify binding).
     with pytest.raises(PricingEstimateError, match="requires a Brief"):
         validate_pricing_estimate(est, protocol_version="1.1", brief=None)
+
+
+# ---- v1.1 workflow regression (§5.5c r9) ----
+
+def test_v1_1_credit_returned_workflow_is_estimate_refresh():
+    """v1.1 credit_returned → phase=estimate_refresh_required + director.next
+    (no credit_cost). v1.0 → credit_approval_required + legacy cost."""
+    from lecturecast.commands.director import _status_workflow
+    from lecturecast.director import DirectorState
+
+    def _state(pv: str) -> DirectorState:
+        return DirectorState({
+            "schema_version": pv, "project_id": "p1", "state_revision": 1,
+            "server_url": "https://api.lecturecast.agentmesh360.com",
+            "session_id": "s1", "session_status": "confirmed", "brief_version": 1,
+            "catalog_version": "cv", "adapter_kind": "codex", "adapter_version": "1.0.0",
+            **({"protocol_version": "1.1"} if pv == "1.1" else {}),
+            "generation_id": "g1", "generation_status": "credit_returned",
+            "updated_at": "2026-07-28T12:00:00Z",
+        })
+
+    gen = {"status": "credit_returned", "generation_id": "g1"}
+
+    # v1.1
+    wf11 = _status_workflow(_state("1.1"), gen, "/tmp")
+    assert wf11["phase"] == "estimate_refresh_required"
+    assert wf11["next_action"]["id"] == "director.next"
+    assert "credit_cost" not in wf11["next_action"]
+
+    # v1.0
+    wf10 = _status_workflow(_state("1.0"), gen, "/tmp")
+    assert wf10["phase"] == "credit_approval_required"
+    assert wf10["next_action"]["id"] == "director.generate"
+    assert wf10["next_action"]["credit_cost"] == 10
+
+
+def test_v1_1_confirm_workflow_projects_final_estimate():
+    """confirm_brief for v1.1 should reuse _session_workflow which projects
+    the validated FINAL pricing_estimate (confirmed sessions require final)."""
+    from lecturecast.commands.director import _session_workflow
+    from lecturecast.director import DirectorState
+
+    # A v1.1 confirmed session with a FINAL pricing_estimate bound to a Brief.
+    brief = {"schema_version": "1.1", "presenter": {}}
+    estimate = _final(brief=brief)
+    session = {
+        "session_id": "s1", "status": "confirmed", "brief_version": 1,
+        "catalog_version": "cv", "updated_at": "2026-07-28T12:00:00Z",
+        "pricing_estimate": estimate,
+        "brief": brief,
+    }
+    state_payload = {
+        "schema_version": "1.1", "project_id": "p1", "state_revision": 1,
+        "server_url": "https://api.lecturecast.agentmesh360.com",
+        "session_id": "s1", "session_status": "confirmed", "brief_version": 1,
+        "catalog_version": "cv", "adapter_kind": "codex", "adapter_version": "1.0.0",
+        "protocol_version": "1.1", "generation_id": None, "generation_status": None,
+        "updated_at": "2026-07-28T12:00:00Z",
+    }
+    state = DirectorState(state_payload)
+    workflow = _session_workflow(Path("/tmp"), state, session)
+    assert workflow["phase"] == "credit_approval_required"
+    assert "pricing_estimate" in workflow
+    assert workflow["pricing_estimate"]["estimate_status"] == "final"
+    assert workflow["pricing_estimate"]["next_milestone_cost"] == 10
+    assert workflow["next_action"].get("credit_cost") == 10
+
+
+def test_v1_1_confirmed_session_rejects_provisional_estimate():
+    """A confirmed session with a provisional estimate must fail closed —
+    credit approval requires a final estimate bound to the Brief."""
+    from lecturecast.commands.director import _session_workflow
+    from lecturecast.director import DirectorState
+    from lecturecast.errors import LectureCastError
+
+    estimate = _provisional(next_milestone_cost=10)
+    session = {
+        "session_id": "s1", "status": "confirmed", "brief_version": 1,
+        "catalog_version": "cv", "updated_at": "2026-07-28T12:00:00Z",
+        "pricing_estimate": estimate,
+    }
+    state_payload = {
+        "schema_version": "1.1", "project_id": "p1", "state_revision": 1,
+        "server_url": "https://api.lecturecast.agentmesh360.com",
+        "session_id": "s1", "session_status": "confirmed", "brief_version": 1,
+        "catalog_version": "cv", "adapter_kind": "codex", "adapter_version": "1.0.0",
+        "protocol_version": "1.1", "generation_id": None, "generation_status": None,
+        "updated_at": "2026-07-28T12:00:00Z",
+    }
+    state = DirectorState(state_payload)
+    with pytest.raises(LectureCastError, match="final pricing_estimate"):
+        _session_workflow(Path("/tmp"), state, session)
