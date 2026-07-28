@@ -6,7 +6,7 @@ from typing import Any
 
 import typer
 
-from ..capabilities import capture_capabilities
+from ..capabilities import capture_capabilities, capture_capabilities_v1_1
 from ..commercial import require_commercial_access
 from ..director import (
     DIRECTOR_ADAPTER_KINDS,
@@ -596,7 +596,11 @@ def generate(
             adapter_version=adapter_version,
         )
         if capabilities is None:
-            capabilities = capture_capabilities(
+            capture = (
+                capture_capabilities_v1_1 if state.protocol_version == "1.1"
+                else capture_capabilities
+            )
+            capabilities = capture(
                 adapter_kind=adapter_kind,
                 adapter_version=adapter_version,
                 project_root=directory,
