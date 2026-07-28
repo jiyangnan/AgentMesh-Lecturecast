@@ -117,15 +117,24 @@ def _command_action(
     return action
 
 
-def _pricing_credit_cost(session: dict[str, Any] | None) -> int:
-    """Get the next milestone's credit cost from the server-authoritative
-    pricing_estimate. Falls back to MANIFEST_CREDIT_COST for v1.0 sessions
-    (no estimate) or malformed/missing next_milestone_cost."""
-    if session and isinstance(session.get("pricing_estimate"), dict):
-        cost = session["pricing_estimate"].get("next_milestone_cost")
-        if isinstance(cost, int) and cost > 0:
-            return cost
-    return MANIFEST_CREDIT_COST
+def _pricing_credit_cost(
+    session: dict[str, Any] | None, *, protocol_version: str = "1.0",
+) -> int:
+    """Get the validated next milestone credit cost from the server-authoritative
+    pricing_estimate. V1.0 → legacy MANIFEST_CREDIT_COST. V1.1 → validated
+    estimate; missing/malformed raises (no silent fallback to 10)."""
+    from ..pricing import PricingEstimateError, next_milestone_cost_or_fail
+
+    try:
+        return next_milestone_cost_or_fail(session, protocol_version=protocol_version)
+    except PricingEstimateError as exc:
+        if protocol_version == "1.1":
+            raise LectureCastError(
+                code="manifest_incompatible",
+                message=f"server 定价预估无效：{exc}",
+                next_action="重新运行 director next 刷新 session 后重试。",
+            ) from None
+        return MANIFEST_CREDIT_COST
 
 
 def _session_workflow(
@@ -167,7 +176,7 @@ def _session_workflow(
             "director.generate",
             ["lecturecast", "director", "generate", root, "--json"],
             approval=True,
-            credit_cost=_pricing_credit_cost(session),
+            credit_cost=_pricing_credit_cost(session, protocol_version=state.protocol_version),
         )
         phase = "credit_approval_required"
     else:
