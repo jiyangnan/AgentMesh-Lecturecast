@@ -19,6 +19,7 @@ from .config import (
 from .errors import LectureCastError
 from .project import ProjectStore, atomic_write_json
 from .protocol import CreativeBrief, DecisionCardSet, ProductionManifest
+from .protocol.models import documents_for_protocol_version
 
 
 DIRECTOR_STATE_SCHEMA_VERSION = "1.0"
@@ -255,7 +256,7 @@ class DirectorClient:
         )
 
     @classmethod
-    def _session(cls, document: dict[str, Any]) -> dict[str, Any]:
+    def _session(cls, document: dict[str, Any], *, protocol_version: str = "1.0") -> dict[str, Any]:
         try:
             if not isinstance(document["session_id"], str):
                 raise TypeError("session_id")
@@ -272,12 +273,13 @@ class DirectorClient:
                 raise TypeError("catalog_version")
             if not isinstance(document["updated_at"], str):
                 raise TypeError("updated_at")
+            models = documents_for_protocol_version(protocol_version)
             card_set = document.get("decision_card_set")
             if card_set is not None:
-                DecisionCardSet.model_validate(card_set)
+                models["decision_card_set"].model_validate(card_set)
             brief = document.get("brief")
             if brief is not None:
-                CreativeBrief.model_validate(brief)
+                models["creative_brief"].model_validate(brief)
         except (KeyError, TypeError, ValueError) as exc:
             raise cls._invalid_response(type(exc).__name__) from None
         return document
@@ -317,12 +319,14 @@ class DirectorClient:
                 "POST",
                 "/director/sessions",
                 {"source": source, "protocol_version": protocol_version},
-            )
+            ),
+            protocol_version=protocol_version,
         )
 
-    def get_session(self, session_id: str) -> dict[str, Any]:
+    def get_session(self, session_id: str, *, protocol_version: str = "1.0") -> dict[str, Any]:
         return self._session(
-            self.request("GET", f"/director/sessions/{session_id}")
+            self.request("GET", f"/director/sessions/{session_id}"),
+            protocol_version=protocol_version,
         )
 
     def answer(
@@ -333,6 +337,7 @@ class DirectorClient:
         option_id: str,
         catalog_version: str,
         custom_text: str | None = None,
+        protocol_version: str = "1.0",
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "question_id": question_id,
@@ -344,18 +349,21 @@ class DirectorClient:
         return self._session(
             self.request(
                 "POST", f"/director/sessions/{session_id}/answers", payload
-            )
+            ),
+            protocol_version=protocol_version,
         )
 
     def confirm_brief(
-        self, session_id: str, *, expected_brief_version: int
+        self, session_id: str, *, expected_brief_version: int,
+        protocol_version: str = "1.0",
     ) -> dict[str, Any]:
         return self._session(
             self.request(
                 "POST",
                 f"/director/sessions/{session_id}/brief/confirm",
                 {"expected_brief_version": expected_brief_version},
-            )
+            ),
+            protocol_version=protocol_version,
         )
 
     def create_generation(
@@ -442,11 +450,19 @@ class DirectorStateStore:
             "generation_status",
             "updated_at",
         }
-        # protocol_version is the only optional key (§5.5a): old v1.0 state
-        # files omit it and are treated as "1.0".
-        if not required.issubset(payload) or not set(payload).issubset(required | {"protocol_version"}):
-            raise ValueError("unexpected or incomplete Director state")
-        if payload.get("schema_version") != DIRECTOR_STATE_SCHEMA_VERSION:
+        # State schema is versioned by the Director protocol version (§5.5a):
+        # v1.0 state keeps the frozen 13-key shape (no protocol_version key);
+        # v1.1 state adds protocol_version="1.1". Old v1.0 files load as 1.0.
+        schema_version = payload.get("schema_version")
+        if schema_version == "1.0":
+            if set(payload) != required:
+                raise ValueError("unexpected or incomplete Director state")
+        elif schema_version == "1.1":
+            if set(payload) != required | {"protocol_version"}:
+                raise ValueError("unexpected or incomplete Director state")
+            if payload.get("protocol_version") != "1.1":
+                raise ValueError("v1.1 state requires protocol_version=1.1")
+        else:
             raise ValueError("unsupported Director state version")
         revision = payload.get("state_revision")
         if not isinstance(revision, int) or revision < 1:
@@ -516,8 +532,11 @@ class DirectorStateStore:
                 )
             if protocol_version not in SUPPORTED_PROTOCOL_VERSIONS:
                 raise ValueError(f"unsupported protocol_version: {protocol_version!r}")
+            # v1.0 → frozen 13-key shape (no protocol_version key); v1.1 →
+            # schema_version 1.1 + protocol_version 1.1.
+            state_schema = "1.1" if protocol_version == "1.1" else "1.0"
             payload = {
-                "schema_version": DIRECTOR_STATE_SCHEMA_VERSION,
+                "schema_version": state_schema,
                 "project_id": project.payload["project_id"],
                 "state_revision": 1,
                 "server_url": normalize_server_url(server_url),
@@ -527,11 +546,12 @@ class DirectorStateStore:
                 "catalog_version": session["catalog_version"],
                 "adapter_kind": adapter_kind,
                 "adapter_version": adapter_version,
-                "protocol_version": protocol_version,
                 "generation_id": None,
                 "generation_status": None,
                 "updated_at": session["updated_at"],
             }
+            if protocol_version == "1.1":
+                payload["protocol_version"] = "1.1"
             state = self._validate(payload)
             atomic_write_json(self.path, state.payload)
             return state

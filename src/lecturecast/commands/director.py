@@ -290,7 +290,9 @@ def next_step(
         require_project_host_workflow(
             directory, expected_adapter=str(state.payload["adapter_kind"])
         )
-        session = _make_client(state.payload["server_url"]).get_session(state.session_id)
+        session = _make_client(state.payload["server_url"]).get_session(
+            state.session_id, protocol_version=state.protocol_version,
+        )
         state = store.update(state, session=session)
         emit(
             _result(
@@ -380,6 +382,7 @@ def answer(
             option_id=option_id,
             catalog_version=catalog_version or str(state.payload["catalog_version"]),
             custom_text=_read_custom_text(custom_text_file),
+            protocol_version=state.protocol_version,
         )
         state = store.update(state, session=session)
         emit(
@@ -409,7 +412,9 @@ def show_brief(
         require_project_host_workflow(
             directory, expected_adapter=str(state.payload["adapter_kind"])
         )
-        session = _make_client(state.payload["server_url"]).get_session(state.session_id)
+        session = _make_client(state.payload["server_url"]).get_session(
+            state.session_id, protocol_version=state.protocol_version,
+        )
         state = store.update(state, session=session)
         if session.get("brief") is None:
             raise LectureCastError(
@@ -464,11 +469,14 @@ def confirm_brief(
         )
         client = _make_client(state.payload["server_url"])
         if expected_brief_version is None:
-            current = client.get_session(state.session_id)
+            current = client.get_session(
+                state.session_id, protocol_version=state.protocol_version,
+            )
             expected_brief_version = int(current["brief_version"])
         session = client.confirm_brief(
             state.session_id,
             expected_brief_version=expected_brief_version,
+            protocol_version=state.protocol_version,
         )
         brief = session.get("brief")
         if not isinstance(brief, dict):
