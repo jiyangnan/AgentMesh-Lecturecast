@@ -19,7 +19,7 @@ behavior, also read
 You are an AI agent (Claude Code / OpenClaw / Cursor / Codex …) running Lecturecast
 on behalf of your human. LectureCast is a commercial AgentMesh360 product: every
 new or resumed task must bind a universal AgentMesh360 API Key, verify an active
-paid account with enough shared credits, and use the cloud Director to produce a
+paid account with an active monthly pass, and use the cloud Director to produce a
 signed declarative Manifest. Raw media, voice, editing and rendering remain on
 this machine. This file tells you how to enter that workflow safely.
 
@@ -64,7 +64,7 @@ are not supported; read [docs/SUPPORTED-PLATFORMS.md](docs/SUPPORTED-PLATFORMS.m
    `workflow.next_action` chain only when `workflow.ready` is true.
 3. **Follow the Director workflow** in
    **[skills/shared/director-workflow.md](skills/shared/director-workflow.md)**:
-   source summary → choice cards → Brief approval → explicit 10-credit approval →
+   source summary → choice cards → Brief approval → per-milestone credit approval →
    signed ProductionManifest.
 4. **Review and approve the complete signed script:** when the returned
    `workflow.next_action` is `manifest.review`, execute its exact argv, show every
