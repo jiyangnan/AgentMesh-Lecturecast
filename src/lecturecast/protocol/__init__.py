@@ -18,6 +18,8 @@ from .models import (
     ProductionManifest,
     ProtocolValidationError,
     documents_for_protocol_version,
+    parse_client_capabilities,
+    parse_creative_brief,
 )
 
 __all__ = [
@@ -36,4 +38,6 @@ __all__ = [
     "documents_for_protocol_version",
     "manifest_signing_bytes",
     "manifest_signing_digest",
+    "parse_client_capabilities",
+    "parse_creative_brief",
 ]

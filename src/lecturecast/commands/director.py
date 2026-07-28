@@ -27,7 +27,7 @@ from ..host_agent import (
     require_project_host_workflow,
 )
 from ..project import ProjectStore
-from ..protocol import ClientCapabilities, canonical_digest
+from ..protocol import ClientCapabilities, canonical_digest, parse_client_capabilities
 from .output import emit, fail
 
 
@@ -526,13 +526,16 @@ def _stored_capabilities(
     *,
     adapter_kind: str,
     adapter_version: str,
+    protocol_version: str = "1.0",
 ) -> ClientCapabilities | None:
     project = store.load()
     if project.payload["capability_digest"] is None:
         return None
     try:
-        document = ClientCapabilities.model_validate_json(
-            store.capabilities_path.read_text(encoding="utf-8")
+        import json as _json
+
+        document = parse_client_capabilities(
+            _json.loads(store.capabilities_path.read_text(encoding="utf-8"))
         )
     except Exception as exc:
         raise LectureCastError(
@@ -549,6 +552,10 @@ def _stored_capabilities(
         )
     saved_adapter = document.model_dump()["adapter"]
     if saved_adapter != {"kind": adapter_kind, "version": adapter_version}:
+        return None
+    # The stored capability must match the session's pinned protocol version;
+    # otherwise re-capture under the pinned version.
+    if document.model_dump().get("schema_version") != protocol_version:
         return None
     return document
 
@@ -594,6 +601,7 @@ def generate(
             project_store,
             adapter_kind=adapter_kind,
             adapter_version=adapter_version,
+            protocol_version=state.protocol_version,
         )
         if capabilities is None:
             capture = (
