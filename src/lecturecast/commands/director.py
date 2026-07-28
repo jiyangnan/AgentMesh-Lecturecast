@@ -262,13 +262,48 @@ def _session_workflow(
     return workflow
 
 
+def _can_release_manifest(generation: dict[str, Any], *, protocol_version: str) -> bool:
+    """Whether it is safe to save the Manifest locally.
+    - v1.0: status=ready (legacy compatibility).
+    - v1.1: status=ready AND manifest milestone exists AND status==charged
+      AND its artifact_digest matches generation.manifest_digest.
+    """
+    if generation.get("status") != "ready":
+        return False
+    if protocol_version != "1.1":
+        return True  # v1.0 legacy
+    charges = generation.get("milestone_charges") or []
+    manifest_charge = next(
+        (c for c in charges if c.get("milestone") == "manifest"), None,
+    )
+    if manifest_charge is None or manifest_charge.get("status") != "charged":
+        return False
+    artifact_digest = manifest_charge.get("artifact_digest")
+    expected_digest = generation.get("manifest_digest")
+    return (
+        isinstance(expected_digest, str)
+        and isinstance(artifact_digest, str)
+        and artifact_digest == expected_digest
+    )
+
+
 def _status_workflow(
     state: DirectorState, generation: dict[str, Any], root: str,
 ) -> dict[str, Any]:
     """Build the workflow for a generation status response. Extracted so the
     v1.1/v1.0 credit_returned phase/action split is directly testable."""
     gen_status = generation["status"]
-    if gen_status == "ready":
+    billing_state = generation.get("billing_state")
+    resume_available = generation.get("resume_available") is True
+    # Priority: billing_state (v1.1) > legacy gen_status.
+    if billing_state == "awaiting_credits" and resume_available:
+        action = _command_action(
+            "director.generation.resume",
+            ["lecturecast", "director", "generation-resume", root, "--json"],
+            approval=True,
+        )
+        phase = "credit_resume_required"
+    elif gen_status == "ready" and _can_release_manifest(generation, protocol_version=state.protocol_version):
         action = _command_action(
             "manifest.review", ["lecturecast", "manifest", "review", root, "--json"],
             approval=True,
@@ -297,7 +332,16 @@ def _status_workflow(
 
 def _state_workflow(directory: Path, state: DirectorState) -> dict[str, Any]:
     root = str(directory.expanduser().resolve())
-    if state.generation_id is not None:
+    # Priority: cached billing snapshot > generation recovery > session workflow.
+    # Billing snapshot is advisory-only → always directs to director.status for
+    # a fresh server response before the status workflow can offer resume.
+    if state.billing_state == "awaiting_credits" and state.resume_available:
+        action = _command_action(
+            "director.status",
+            ["lecturecast", "director", "status", root, "--json"],
+        )
+        phase = "billing_refresh_required"
+    elif state.generation_id is not None:
         action = _command_action(
             "director.status",
             ["lecturecast", "director", "status", root, "--json"],
@@ -799,7 +843,7 @@ def status(
         state = state_store.update(state, generation=generation)
         project_store = ProjectStore(directory)
         project = project_store.load()
-        if generation["status"] == "ready":
+        if _can_release_manifest(generation, protocol_version=state.protocol_version):
             manifest = generation.get("manifest")
             if not isinstance(manifest, dict):
                 raise LectureCastError(
@@ -822,6 +866,64 @@ def status(
             ),
             json_output=json_output,
             message=f"Generation 状态：{generation['status']}。",
+        )
+    except LectureCastError as error:
+        fail(error, json_output=json_output)
+    except Exception as exc:
+        _unexpected(exc, json_output=json_output)
+
+
+@app.command("generation-resume")
+def generation_resume(
+    directory: Path = typer.Argument(Path(".")),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Re-attempt billing for an awaiting_credits generation after the user tops up."""
+    try:
+        state_store = DirectorStateStore(directory)
+        state = state_store.load()
+        require_project_host_workflow(
+            directory, expected_adapter=str(state.payload["adapter_kind"])
+        )
+        if state.protocol_version != "1.1":
+            raise LectureCastError(
+                code="manifest_incompatible",
+                message="generation-resume 是 v1.1 里程碑计费功能，v1.0 项目不支持。",
+                next_action="v1.0 项目请用 director status 查看状态。",
+            )
+        if state.generation_id is None:
+            raise LectureCastError(
+                code="session_not_found",
+                message="本地项目还没有 Manifest generation。",
+                next_action="先运行 director generate。",
+            )
+        generation = _make_client(state.payload["server_url"]).resume_generation(
+            state.generation_id, protocol_version=state.protocol_version,
+        )
+        state = state_store.update(state, generation=generation)
+        project_store = ProjectStore(directory)
+        project = project_store.load()
+        if _can_release_manifest(generation, protocol_version=state.protocol_version):
+            manifest = generation.get("manifest")
+            if not isinstance(manifest, dict):
+                raise LectureCastError(
+                    code="manifest_incompatible",
+                    message="ready generation 没有有效 Manifest。",
+                    next_action="保留 generation_id 并联系支持；不要重复扣 credit。",
+                )
+            project = project_store.save_manifest(
+                manifest, expected_revision=project.revision
+            )
+        root = str(directory.expanduser().resolve())
+        emit(
+            _result(
+                state=state,
+                generation=generation,
+                project=project.to_dict(),
+                workflow=_status_workflow(state, generation, root),
+            ),
+            json_output=json_output,
+            message=f"Generation resume 完成：billing_state={generation.get('billing_state', 'N/A')}。",
         )
     except LectureCastError as error:
         fail(error, json_output=json_output)
