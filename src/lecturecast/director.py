@@ -18,7 +18,8 @@ from .config import (
 )
 from .errors import LectureCastError
 from .project import ProjectStore, atomic_write_json
-from .protocol import CreativeBrief, DecisionCardSet, ProductionManifest
+from .protocol import CreativeBrief, DecisionCardSet, ManifestGenerationOutV1_1, ProductionManifest
+from .protocol.models import ProtocolValidationError
 from .protocol.models import documents_for_protocol_version
 
 
@@ -285,7 +286,7 @@ class DirectorClient:
         return document
 
     @classmethod
-    def _generation(cls, document: dict[str, Any]) -> dict[str, Any]:
+    def _generation(cls, document: dict[str, Any], *, protocol_version: str = "1.0") -> dict[str, Any]:
         try:
             if not isinstance(document["generation_id"], str):
                 raise TypeError("generation_id")
@@ -307,7 +308,12 @@ class DirectorClient:
             manifest = document.get("manifest")
             if manifest is not None:
                 ProductionManifest.model_validate(manifest)
-        except (KeyError, TypeError, ValueError) as exc:
+            # v1.1: validate the full generation document against the schema,
+            # which includes milestone_charges + billing_state + resume_available
+            # and rejects sensitive fields (additionalProperties: false).
+            if protocol_version == "1.1":
+                ManifestGenerationOutV1_1.model_validate(document)
+        except (KeyError, TypeError, ValueError, ProtocolValidationError) as exc:
             raise cls._invalid_response(type(exc).__name__) from None
         return document
 
@@ -373,6 +379,7 @@ class DirectorClient:
         generation_id: str,
         expected_brief_version: int,
         capabilities: dict[str, Any],
+        protocol_version: str = "1.0",
     ) -> dict[str, Any]:
         return self._generation(
             self.request(
@@ -383,12 +390,22 @@ class DirectorClient:
                     "expected_brief_version": expected_brief_version,
                     "capabilities": capabilities,
                 },
-            )
+            ),
+            protocol_version=protocol_version,
         )
 
-    def get_generation(self, generation_id: str) -> dict[str, Any]:
+    def get_generation(self, generation_id: str, *, protocol_version: str = "1.0") -> dict[str, Any]:
         return self._generation(
-            self.request("GET", f"/director/generations/{generation_id}")
+            self.request("GET", f"/director/generations/{generation_id}"),
+            protocol_version=protocol_version,
+        )
+
+    def resume_generation(self, generation_id: str, *, protocol_version: str = "1.0") -> dict[str, Any]:
+        """POST /director/generations/{id}/resume — re-attempt deduct for
+        awaiting_credits milestones after the user tops up."""
+        return self._generation(
+            self.request("POST", f"/director/generations/{generation_id}/resume"),
+            protocol_version=protocol_version,
         )
 
     def delete_session(self, session_id: str) -> dict[str, Any]:
