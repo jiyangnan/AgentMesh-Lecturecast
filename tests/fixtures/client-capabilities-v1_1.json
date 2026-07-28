@@ -1,0 +1,82 @@
+{
+  "schema_version": "1.1",
+  "capabilities_id": "caps_demo_v1",
+  "client": {
+    "name": "agentmesh-lecturecast",
+    "version": "0.3.0"
+  },
+  "adapter": {
+    "kind": "codex",
+    "version": "1.0.0"
+  },
+  "supported_manifest_versions": [
+    "1.0"
+  ],
+  "component_catalog_digest": "sha256:b492db83fd70a307520ef0bb123bb455682620b1a556e05d303850f8ffd11a76",
+  "components": [
+    "code.walkthrough.v1",
+    "comparison.before_after.v1",
+    "concept.cards.v1",
+    "data.metric_change.v1",
+    "diagram.process_flow.v1",
+    "ending.summary_cta.v1",
+    "hook.outcome.v1",
+    "hook.question.v1",
+    "product.ui_focus.v1",
+    "section.title.v1",
+    "tutorial.step_focus.v1"
+  ],
+  "aspect_ratios": [
+    "16:9",
+    "9:16",
+    "3:4"
+  ],
+  "output_formats": [
+    "mp4",
+    "png"
+  ],
+  "tts_engines": [
+    "edge",
+    "minimax"
+  ],
+  "runtime": {
+    "python_version": "3.12.0",
+    "node_version": "22.0.0",
+    "remotion_version": "4.0.0",
+    "ffmpeg_version": "8.0.1",
+    "has_libass": true,
+    "can_render_locally": true
+  },
+  "captured_at": "2026-07-15T10:02:00Z",
+  "supported_artifact_versions": {
+    "creative_brief": [
+      "1.0",
+      "1.1"
+    ],
+    "production_manifest": [
+      "1.0"
+    ],
+    "presenter_plan": [
+      "1.1"
+    ],
+    "orchestration_plan": [
+      "1.1"
+    ]
+  },
+  "third_party_processors": [
+    {
+      "provider": "heygen",
+      "api_version": "v3",
+      "configured": true,
+      "credential_mode": "byo_local",
+      "operations": [
+        "direct_asset_upload",
+        "photo_avatar"
+      ],
+      "features": [
+        "idempotency_24h",
+        "title_query"
+      ]
+    }
+  ]
+}

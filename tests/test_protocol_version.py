@@ -137,17 +137,19 @@ def _v1_1_session_document(card: bool, brief: bool) -> dict[str, Any]:
 
 
 def test_v1_1_card_parses_under_1_1_rejects_under_1_0() -> None:
-    """The first v1.1 card (schema_version 1.1) must parse under protocol 1.1
-    and be rejected under 1.0 — proving the version-aware parser, not a
-    hardcoded v1.0 DecisionCardSet."""
+    """A real v1.1 presenter card (stage=presenter, condition.all_of, consent
+    disclosure, pricing_estimate) must parse under protocol 1.1 and be rejected
+    under 1.0 — proving the version-aware parser, not a hardcoded v1.0 model."""
     from lecturecast.director import DirectorClient
 
-    doc = _v1_1_session_document(card=True, brief=False)
-    # v1.1 accepts.
-    DirectorClient._session(doc, protocol_version="1.1")
-    # v1.0 rejects (schema_version const mismatch).
+    card = json.loads(
+        (Path(__file__).parent / "fixtures" / "decision-card-set-v1_1-presenter.json").read_text()
+    )
+    doc = _v1_1_session_document(card=False, brief=False)
+    doc["decision_card_set"] = card
+    DirectorClient._session(doc, protocol_version="1.1")  # accepts
     with pytest.raises(Exception):
-        DirectorClient._session(doc, protocol_version="1.0")
+        DirectorClient._session(doc, protocol_version="1.0")  # rejects
 
 
 def test_v1_1_brief_parses_under_1_1() -> None:
@@ -155,7 +157,6 @@ def test_v1_1_brief_parses_under_1_1() -> None:
 
     doc = _v1_1_session_document(card=False, brief=True)
     DirectorClient._session(doc, protocol_version="1.1")
-    # v1.0 rejects the v1.1 brief (required `presenter` field / schema_version).
     with pytest.raises(Exception):
         DirectorClient._session(doc, protocol_version="1.0")
 
@@ -170,9 +171,34 @@ def test_v1_1_plan_models_target_v1_1_bundle() -> None:
     assert PresenterPlanV1_1.schema_dir.name == "v1.1"
     assert OrchestrationPlanV1_1.schema_filename == "orchestration-plan.schema.json"
     assert OrchestrationPlanV1_1.schema_dir.name == "v1.1"
-    # The v1.1 schema files exist in the bundle.
     assert (PresenterPlanV1_1.schema_dir / PresenterPlanV1_1.schema_filename).is_file()
     assert (OrchestrationPlanV1_1.schema_dir / OrchestrationPlanV1_1.schema_filename).is_file()
+
+
+# ---- ClientCapabilitiesV1_1 semantic regression (the r3 fix) ----
+
+def _v1_1_caps() -> dict[str, Any]:
+    return json.loads(
+        (Path(__file__).parent / "fixtures" / "client-capabilities-v1_1.json").read_text()
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation, label",
+    [
+        (lambda c: c["supported_artifact_versions"].update({"creative_brief": ["1.1", "1.1"]}), "version"),
+        (lambda c: c["third_party_processors"].append(dict(c["third_party_processors"][0])), "provider"),
+        (lambda c: c["third_party_processors"][0].__setitem__("operations", ["photo_avatar", "photo_avatar"]), "operations"),
+        (lambda c: c["third_party_processors"][0].__setitem__("features", ["idempotency_24h", "idempotency_24h"]), "features"),
+    ],
+)
+def test_v1_1_capabilities_reject_duplicates(mutation, label) -> None:
+    from lecturecast.protocol.models import ClientCapabilitiesV1_1
+
+    caps = _v1_1_caps()
+    mutation(caps)
+    with pytest.raises(Exception, match=label):
+        ClientCapabilitiesV1_1.model_validate(caps)
 
 
 # ---- v1.1 vendored bundle integrity guard ----
