@@ -11,13 +11,62 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .config import CLIENT_VERSION
-from .protocol import ClientCapabilities, canonical_digest
+from .protocol import ClientCapabilities, ClientCapabilitiesV1_1, canonical_digest
 
 
 RunCommand = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 _SEMVER = re.compile(r"(?P<version>[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?)")
 COMPONENT_CATALOG_PATH = Path(__file__).with_name("component-catalog.json")
 COMPONENT_CATALOG_LOCK_PATH = Path(__file__).with_name("component-catalog.lock")
+
+# v1.1 local-capability probes (§5.5b). Detection is presence-only and NEVER
+# uploads credentials, model paths, or network-verification results — the server
+# cannot independently verify third-party state without crossing the media
+# boundary. `configured` is a capability gate (M2 compatibility), not a
+# preflight-passed claim.
+F5_MODEL_PATH_ENV = "LECTURECAST_F5_MODEL_PATH"
+HEYGEN_API_KEY_ENV = "HEYGEN_API_KEY"
+
+
+def f5_available(
+    *,
+    env: dict[str, str] | None = None,
+    path_probe: Callable[[str], Path] = Path,
+) -> bool:
+    """F5 local voice-cloning is available iff a model file path is configured
+    and exists + is readable. No path content is uploaded."""
+    import os
+
+    sources = env if env is not None else os.environ
+    model_path = (sources.get(F5_MODEL_PATH_ENV) or "").strip()
+    if not model_path:
+        return False
+    try:
+        return path_probe(model_path).is_file()
+    except OSError:
+        return False
+
+
+def heygen_processor(
+    *,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any] | None:
+    """HeyGen BYO processor capability iff a non-empty API key is configured
+    locally. Returns the processor declaration (no key, no verified field);
+    None when unconfigured."""
+    import os
+
+    sources = env if env is not None else os.environ
+    if not (sources.get(HEYGEN_API_KEY_ENV) or "").strip():
+        return None
+    return {
+        "provider": "heygen",
+        "api_version": "v3",
+        "configured": True,
+        "credential_mode": "byo_local",
+        "operations": ["direct_asset_upload", "photo_avatar"],
+        "features": ["idempotency_24h"],
+    }
 
 
 def load_component_catalog() -> tuple[dict[str, Any], str]:
@@ -147,6 +196,47 @@ def capture_capabilities(
             "captured_at": now,
         }
     )
+
+
+def capture_capabilities_v1_1(
+    *,
+    adapter_kind: str = "text",
+    adapter_version: str = "1.0.0",
+    components: list[str] | None = None,
+    component_catalog_digest: str | None = None,
+    project_root: Path | None = None,
+    repo_root: Path | None = None,
+    runner: RunCommand = _default_run,
+    env: dict[str, str] | None = None,
+    path_probe: Callable[[str], Path] = Path,
+) -> ClientCapabilitiesV1_1:
+    """Capture v1.1 capabilities: the v1.0 base plus per-artifact version
+    negotiation, the local F5 TTS engine (when a model is present), and the
+    HeyGen BYO processor (when a key is configured). Detection is presence-only
+    and uploads no credentials, paths, or verification results."""
+    base = capture_capabilities(
+        adapter_kind=adapter_kind, adapter_version=adapter_version,
+        components=components, component_catalog_digest=component_catalog_digest,
+        project_root=project_root, repo_root=repo_root, runner=runner,
+    ).model_dump()
+    tts_engines = list(base["tts_engines"])
+    if f5_available(env=env, path_probe=path_probe) and "f5" not in tts_engines:
+        tts_engines.append("f5")
+    processor = heygen_processor(env=env)
+    payload = dict(base)
+    payload["schema_version"] = "1.1"
+    payload["tts_engines"] = tts_engines
+    # supported_manifest_versions stays ["1.0"] (the manifest schema is frozen);
+    # per-artifact v1.1 negotiation goes through supported_artifact_versions.
+    payload["supported_artifact_versions"] = {
+        "creative_brief": ["1.0", "1.1"],
+        "production_manifest": ["1.0"],
+        "presenter_plan": ["1.1"],
+        "orchestration_plan": ["1.1"],
+    }
+    if processor is not None:
+        payload["third_party_processors"] = [processor]
+    return ClientCapabilitiesV1_1.model_validate(payload)
 
 
 def doctor_report(capabilities: ClientCapabilities) -> dict[str, Any]:
