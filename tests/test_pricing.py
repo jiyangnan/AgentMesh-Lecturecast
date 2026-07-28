@@ -251,3 +251,23 @@ def test_v1_1_confirmed_session_rejects_provisional_estimate():
     state = DirectorState(state_payload)
     with pytest.raises(LectureCastError, match="final pricing_estimate"):
         _session_workflow(Path("/tmp"), state, session)
+
+
+# ---- doc/skill contract guard (§5.5c) ----
+
+def test_host_agent_contracts_describe_per_milestone_billing() -> None:
+    """The host-agent behavioral contracts must describe per-milestone billing,
+    not the retired single-Manifest/10-credit model."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    for rel in (
+        "AGENTS.md", "README.md", "README.zh.md",
+        "docs/LOCAL-WORKFLOW.md", "skills/codex/SKILL.md",
+        "skills/shared/director-workflow.md",
+    ):
+        text = (root / rel).read_text(encoding="utf-8")
+        # Must NOT contain the retired single-Manifest hard-coded cost.
+        assert "explicit 10-credit approval" not in text, f"{rel}: old 10-credit approval"
+        assert "固定扣 10" not in text, f"{rel}: old 固定扣 10"
+        assert "≥10 credits" not in text, f"{rel}: old ≥10 credits"
+        assert "至少 10 credits" not in text, f"{rel}: old 至少 10 credits"

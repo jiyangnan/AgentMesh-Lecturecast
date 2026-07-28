@@ -18,7 +18,7 @@
 <sub>↑ 同一份脚本，两套视觉系统。左：B 站 1920×1080。右：小红书 1080×1920。12 倍速播放，原片各 ~5:21。</sub>
 
 Lecturecast 要求有效的 AgentMesh360 monthly pass、通用 API Key，以及每次明确批准
-Manifest generation 前至少 10 个共享 credits。公开客户端会先验证商业权限，用户
+Manifest generation 前需要有有效的付费权益（monthly pass）。公开客户端会先验证商业权限，用户
 Agent 通过后才可以开始制作。`monthly_pass_required` 指 AgentMesh360 账户权益，
 不是另购一份 LectureCast pass。
 
@@ -29,7 +29,7 @@ Agent 通过后才可以开始制作。`monthly_pass_required` 指 AgentMesh360 
 - **ffmpeg** 烧字幕、拼接音视频。
 
 **核心流程**：商业账户绑定 → Director 选择 → Brief 审批 → 明确批准扣除
-10 credits → 签名 ProductionManifest → 完整签名脚本审批 → 本机配音、场景与渲染
+per-milestone 扣费 → 签名 ProductionManifest → 完整签名脚本审批 → 本机配音、场景与渲染
 → 成片与封面。
 
 Director 只接收受限素材摘要、稳定选项 ID、Brief 与客户端能力。它使用
@@ -121,7 +121,7 @@ ProductionManifest schema `1.0` 是两份不同合同。
 
 API Key 不会写入项目。生产 Director URL 已内置，`LECTURECAST_DIRECTOR_URL`
 只用于受控的测试环境。`director resume` 仅本地重新绑定，不扣 credit。每次确认
-生成一份 ProductionManifest 固定扣 10 credits；只有在确认 Brief 并明确同意
+按里程碑计费（charge-on-success-before-release，每里程碑成功后扣费）；只有在确认 Brief 并明确同意
 该扣除后才运行 `director generate`。
 
 真正干活的是你的 AI agent 跑本地工作流。跟 agent 说：
@@ -132,7 +132,7 @@ Agent 会读 [AGENTS.md](AGENTS.md) / [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFL
 
 ```
 主题
-  ▼ 商业 onboarding（有效 monthly pass + 至少 10 credits）
+  ▼ 商业 onboarding（有效 monthly pass）
   ▼ Director 选择 + 签名 ProductionManifest
   ▼ 展示完整签名脚本         （你审批）
   ▼ 分节本地配音 + 实测执行时间线

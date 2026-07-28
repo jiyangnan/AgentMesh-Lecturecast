@@ -265,7 +265,7 @@ def require_commercial_access() -> CommercialAccess:
     if access.reason == "monthly_pass_required":
         message = "当前 AgentMesh360 账户没有有效的月度通行证。"
     else:
-        message = "当前 AgentMesh360 账户不足 10 credits，无法继续 LectureCast。"
+        message = "当前 AgentMesh360 账户没有有效的付费 LectureCast 权益。"
     raise LectureCastError(
         code=access.reason,
         message=message,
