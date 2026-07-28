@@ -86,9 +86,13 @@ class FakeDirectorClient:
         self.fail_first_generation = fail_first_generation
         self.final_generation_status = final_generation_status
         self.generation_failures = 0
+        self.create_calls: list[dict[str, Any]] = []
 
-    def create_session(self, source: dict[str, Any]) -> dict[str, Any]:
+    def create_session(
+        self, source: dict[str, Any], *, protocol_version: str = "1.0"
+    ) -> dict[str, Any]:
         assert set(source) == {"source_type", "title", "summary", "language"}
+        self.create_calls.append({"protocol_version": protocol_version})
         return dict(self.current)
 
     def get_session(self, session_id: str) -> dict[str, Any]:

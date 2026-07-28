@@ -1,0 +1,232 @@
+{
+  "$defs": {
+    "F5VoiceOrchestration": {
+      "additionalProperties": false,
+      "description": "M3 F5 voice execution contract (signed). The reference audio stays local\n(`asset://voice/...`); no key, no remote upload of the reference.",
+      "properties": {
+        "chunk_split_regex": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Chunk Split Regex",
+          "type": "string"
+        },
+        "device": {
+          "enum": [
+            "mps",
+            "cpu"
+          ],
+          "title": "Device",
+          "type": "string"
+        },
+        "gap_between_chunks_s": {
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "title": "Gap Between Chunks S",
+          "type": "number"
+        },
+        "nfe_step": {
+          "maximum": 64,
+          "minimum": 8,
+          "title": "Nfe Step",
+          "type": "integer"
+        },
+        "ref_audio_uri": {
+          "maxLength": 512,
+          "pattern": "^asset://voice/",
+          "title": "Ref Audio Uri",
+          "type": "string"
+        },
+        "ref_text": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Ref Text",
+          "type": "string"
+        },
+        "sample_rate": {
+          "const": 24000,
+          "title": "Sample Rate",
+          "type": "integer"
+        },
+        "seed": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "title": "Seed",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ref_audio_uri",
+        "ref_text",
+        "device",
+        "seed",
+        "nfe_step",
+        "chunk_split_regex",
+        "gap_between_chunks_s",
+        "sample_rate"
+      ],
+      "title": "F5VoiceOrchestration",
+      "type": "object"
+    },
+    "SignatureMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "const": "Ed25519",
+          "title": "Algorithm",
+          "type": "string"
+        },
+        "key_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Key Id",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 88,
+          "minLength": 88,
+          "pattern": "^[A-Za-z0-9+/]{86}==$",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "algorithm",
+        "key_id",
+        "value"
+      ],
+      "title": "SignatureMetadata",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "M3 artifact — the local-execution orchestration. Binds to its\nProductionManifest and (when M2 exists) its PresenterPlan. `presenter_plan_digest`\nis NULL exactly when this generation has no M2 (none + own_voice path).",
+  "properties": {
+    "bgm_enabled": {
+      "title": "Bgm Enabled",
+      "type": "boolean"
+    },
+    "bgm_genre": {
+      "default": "none",
+      "enum": [
+        "none",
+        "light_tech",
+        "bright_launch"
+      ],
+      "title": "Bgm Genre",
+      "type": "string"
+    },
+    "brief_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Brief Digest",
+      "type": "string"
+    },
+    "capability_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Capability Digest",
+      "type": "string"
+    },
+    "component_catalog_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Component Catalog Digest",
+      "type": "string"
+    },
+    "content_expires_at": {
+      "format": "date-time",
+      "title": "Content Expires At",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "ffmpeg_overlay_template_id": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Ffmpeg Overlay Template Id",
+      "type": "string"
+    },
+    "generation_id": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Generation Id",
+      "type": "string"
+    },
+    "orchestration_plan_id": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Orchestration Plan Id",
+      "type": "string"
+    },
+    "presenter_plan_digest": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Presenter Plan Digest"
+    },
+    "production_manifest_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Production Manifest Digest",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "signature": {
+      "$ref": "#/$defs/SignatureMetadata"
+    },
+    "speed": {
+      "const": 1.25,
+      "default": 1.25,
+      "title": "Speed",
+      "type": "number"
+    },
+    "timing_placeholder_contract": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Timing Placeholder Contract",
+      "type": "string"
+    },
+    "voice_orchestration": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/F5VoiceOrchestration"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "schema_version",
+    "orchestration_plan_id",
+    "generation_id",
+    "production_manifest_digest",
+    "brief_digest",
+    "capability_digest",
+    "component_catalog_digest",
+    "bgm_enabled",
+    "ffmpeg_overlay_template_id",
+    "timing_placeholder_contract",
+    "signature",
+    "created_at",
+    "content_expires_at"
+  ],
+  "title": "OrchestrationPlanV1_1",
+  "type": "object"
+}

@@ -1,0 +1,417 @@
+{
+  "$defs": {
+    "DecisionCondition": {
+      "additionalProperties": false,
+      "description": "Composite applicability condition evaluated against the FULL answer map\n(question_id -> option_id). A question is applicable when `any_of` has a\nsatisfied sub-condition, or `all_of` has all sub-conditions satisfied. A\nleaf matches when the named question's answer is in `option_ids`. Used to\ngate the v1.1 presenter cards on avatar/consent (tech spec §2.4).",
+      "properties": {
+        "all_of": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/DecisionCondition"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "All Of"
+        },
+        "any_of": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/DecisionCondition"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Any Of"
+        },
+        "option_ids": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 96,
+                "minLength": 3,
+                "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Option Ids"
+        },
+        "question_id": {
+          "anyOf": [
+            {
+              "maxLength": 96,
+              "minLength": 3,
+              "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Question Id"
+        }
+      },
+      "title": "DecisionCondition",
+      "type": "object"
+    },
+    "DecisionOption": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "option_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Option Id",
+          "type": "string"
+        },
+        "preview_ref": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_-]*/[a-z0-9._-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Preview Ref"
+        }
+      },
+      "required": [
+        "option_id",
+        "label",
+        "description"
+      ],
+      "title": "DecisionOption",
+      "type": "object"
+    },
+    "DecisionQuestionV1_1": {
+      "additionalProperties": false,
+      "description": "v1.1 question: adds conditional gating and full privacy disclosure.",
+      "properties": {
+        "condition": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DecisionCondition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "disclosure": {
+          "anyOf": [
+            {
+              "maxLength": 4000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Disclosure"
+        },
+        "max_selections": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Max Selections",
+          "type": "integer"
+        },
+        "min_selections": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Min Selections",
+          "type": "integer"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/DecisionOption"
+          },
+          "maxItems": 3,
+          "minItems": 2,
+          "title": "Options",
+          "type": "array"
+        },
+        "other_allowed": {
+          "title": "Other Allowed",
+          "type": "boolean"
+        },
+        "question_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Question Id",
+          "type": "string"
+        },
+        "selection_mode": {
+          "enum": [
+            "single",
+            "multiple"
+          ],
+          "title": "Selection Mode",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "question_id",
+        "selection_mode",
+        "title",
+        "options",
+        "other_allowed",
+        "min_selections",
+        "max_selections"
+      ],
+      "title": "DecisionQuestionV1_1",
+      "type": "object"
+    },
+    "PricingEstimate": {
+      "additionalProperties": false,
+      "description": "Server-authoritative pricing delivered to the client (tech spec §1.2.1).\nThe client only DISPLAYS this — it must not hardcode costs or gate on\ntotal_max (the real charge gate is the server's per-milestone 402).\n\n`estimate_digest` semantics (helper + tests land in §5.3):\n`estimate_digest = sha256(canonical_json(estimate with estimate_digest\nexcluded))` — i.e. the digest excludes itself to avoid a circular\ndefinition. Only required on `final` estimates.",
+      "properties": {
+        "applicable_milestones": {
+          "items": {
+            "enum": [
+              "manifest",
+              "presenter_plan",
+              "orchestration"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "title": "Applicable Milestones",
+          "type": "array"
+        },
+        "brief_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Brief Digest"
+        },
+        "charge_model": {
+          "const": "per_milestone_success",
+          "title": "Charge Model",
+          "type": "string"
+        },
+        "estimate_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Estimate Digest"
+        },
+        "estimate_status": {
+          "enum": [
+            "provisional",
+            "final"
+          ],
+          "title": "Estimate Status",
+          "type": "string"
+        },
+        "maximum_total": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Maximum Total",
+          "type": "integer"
+        },
+        "minimum_total": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Minimum Total",
+          "type": "integer"
+        },
+        "next_milestone_cost": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Milestone Cost"
+        },
+        "per_milestone": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "maxProperties": 3,
+          "propertyNames": {
+            "enum": [
+              "manifest",
+              "presenter_plan",
+              "orchestration"
+            ]
+          },
+          "title": "Per Milestone",
+          "type": "object"
+        },
+        "pricing_version": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Pricing Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "estimate_status",
+        "minimum_total",
+        "maximum_total",
+        "charge_model",
+        "pricing_version"
+      ],
+      "title": "PricingEstimate",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "v1.1 card set: adds the `presenter` stage, conditional questions, and the\nserver-delivered pricing estimate. The public client must not hardcode\ncosts; it only displays `pricing_estimate`.",
+  "properties": {
+    "card_set_id": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Card Set Id",
+      "type": "string"
+    },
+    "catalog_version": {
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(?:\\.[0-9]+)?$",
+      "title": "Catalog Version",
+      "type": "string"
+    },
+    "pricing_estimate": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PricingEstimate"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "questions": {
+      "items": {
+        "$ref": "#/$defs/DecisionQuestionV1_1"
+      },
+      "maxItems": 3,
+      "minItems": 1,
+      "title": "Questions",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "session_id": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Session Id",
+      "type": "string"
+    },
+    "stage": {
+      "enum": [
+        "audience",
+        "narrative",
+        "visual",
+        "delivery",
+        "presenter",
+        "confirmation"
+      ],
+      "title": "Stage",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "card_set_id",
+    "session_id",
+    "catalog_version",
+    "stage",
+    "title",
+    "questions"
+  ],
+  "title": "DecisionCardSetV1_1",
+  "type": "object"
+}
