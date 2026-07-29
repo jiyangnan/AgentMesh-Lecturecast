@@ -540,7 +540,7 @@ class ConsentService:
             return self._apply_existing(
                 conn, prepared, decision, desired_digest, content_no_time,
                 consented_at, assets_json, categories_json, payload,
-                existing_rc, now,
+                existing_rc, existing_op, now,
             )
 
         # No receipt yet. If an operation row already exists it must be fully
@@ -587,7 +587,7 @@ class ConsentService:
 
     def _apply_existing(self, conn, prepared, decision, desired_digest,
                         content_no_time, consented_at, assets_json,
-                        categories_json, payload, existing_rc, now):
+                        categories_json, payload, existing_rc, existing_op, now):
         existing_status = existing_rc["status"]
         if existing_status == decision:
             stored = self._stored_content_no_time(existing_rc)
@@ -607,7 +607,9 @@ class ConsentService:
                 "cannot record a decision on a withdrawn receipt; start a new operation"
             )
         if existing_status == "declined" and decision == "granted":
-            self._require_pristine(conn, prepared.operation_id)
+            # Full pristine check (not just attempts/lease) — the operation must
+            # not have produced any remote side effect before flipping to granted.
+            self._require_pristine_for_attach(conn, existing_op)
             self._update_receipt(
                 conn, desired_digest, prepared, payload, "granted", consented_at,
                 assets_json, categories_json, now,
@@ -680,8 +682,11 @@ class ConsentService:
         if status == "granted":
             if ptr != existing_rc["receipt_digest"]:
                 raise ConsentIntegrityError("granted receipt consent pointer mismatch")
-            if existing_op["status"] != "submit_pending":
-                raise ConsentIntegrityError("granted receipt paired with non-submit_pending operation")
+            # A granted receipt persists across the post-submit lifecycle
+            # (submitted/processing/completed/failed/reconciliation_required);
+            # only 'cancelled' is inconsistent with an active grant.
+            if existing_op["status"] == "cancelled":
+                raise ConsentIntegrityError("granted receipt paired with a cancelled operation")
         elif status == "declined":
             if ptr is not None:
                 raise ConsentIntegrityError("declined receipt must have a NULL consent pointer")
@@ -718,14 +723,15 @@ class ConsentService:
                 raise ConsentStateError(
                     f"existing operation {operation_id} has {col} set"
                 )
-        linked = conn.execute(
+        # No remote side effect via either association path.
+        for query in (
             "SELECT 1 FROM heygen_remote_resources WHERE created_by_operation_id = ? LIMIT 1",
-            (operation_id,),
-        ).fetchone()
-        if linked is not None:
-            raise ConsentStateError(
-                f"existing operation {operation_id} already produced a remote resource"
-            )
+            "SELECT 1 FROM heygen_resource_operation_refs WHERE operation_id = ? LIMIT 1",
+        ):
+            if conn.execute(query, (operation_id,)).fetchone() is not None:
+                raise ConsentStateError(
+                    f"existing operation {operation_id} already references a remote resource"
+                )
 
     @staticmethod
     def _require_pristine(conn, operation_id: str) -> None:
@@ -743,6 +749,11 @@ class ConsentService:
 
     @staticmethod
     def _stored_content_no_time(row: sqlite3.Row) -> dict:
+        # Withdrawal is a lifecycle state on the original GRANT receipt — its
+        # digest still commits decision="granted", not "withdrawn". Recomputing
+        # with "withdrawn" would falsely flag a tamper.
+        status = row["status"]
+        digest_decision = "granted" if status == "withdrawn" else status
         return {
             "namespace": _RECEIPT_NAMESPACE,
             "operation_id": row["operation_id"],
@@ -756,7 +767,7 @@ class ConsentService:
             "data_categories": json.loads(row["data_categories_json"]),
             "provider_cost_disclosure": row["provider_cost_disclosure"],
             "agentmesh_non_processor_disclosure": row["agentmesh_non_processor_disclosure"],
-            "decision": row["status"],
+            "decision": digest_decision,
         }
 
     @staticmethod
