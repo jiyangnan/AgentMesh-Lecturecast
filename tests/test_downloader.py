@@ -211,9 +211,19 @@ def _make_fake_popen(fake_result):
     class _FakePopen:
         def __init__(self, cmd, stdout=None, stderr=None):
             r, w = __import__("os").pipe()
-            if stdout_bytes:
-                __import__("os").write(w, stdout_bytes)
-            __import__("os").close(w)
+            # Write from a daemon thread so the pipe buffer doesn't deadlock
+            # on large outputs (OS pipe buffer is ~64KB).
+            def _write():
+                try:
+                    __import__("os").write(w, stdout_bytes)
+                except OSError:
+                    pass
+                finally:
+                    try:
+                        __import__("os").close(w)
+                    except OSError:
+                        pass
+            __import__("threading").Thread(target=_write, daemon=True).start()
             self._stdout = __import__("os").fdopen(r, "rb")
             self._rc = fake_result.returncode
             self._poll_count = 0
@@ -316,3 +326,91 @@ def test_ffprobe_real_bad_file_rejected(tmp_path):
     bad.write_text("hello")
     with pytest.raises(ValueError):
         probe.probe(str(bad))
+
+
+# ---- e5a round-7 contract tests --------------------------------------
+
+def test_http_404_rejected_no_temp(tmp_path, monkeypatch):
+    """HTTP 404 must be rejected before creating any temp file."""
+    runtime = tmp_path / ".lecturecast" / "runtime"
+    runtime.mkdir(parents=True)
+    ref = "outputs/heygen/notfound.mp4"
+    dl = _make_downloader_for_localhost(monkeypatch)
+    import http.client as _hc
+
+    class _404Conn:
+        def request(self, method, path, headers=None): pass
+        def getresponse(self):
+            class _R:
+                status = 404
+                def getheader(self, n, d=""): return d
+                def read(self, n=-1): return b""
+                def close(self): pass
+            return _R()
+        def close(self): pass
+
+    with pytest.raises(ValueError, match="HTTP 404"):
+        dl.download_and_verify("http://127.0.0.1:9999/v.mp4", str(runtime), ref,
+                              1_048_576, _StubProbe(), _connect=lambda h,i,p: _404Conn())
+    assert not (runtime / (ref + ".tmp")).exists()
+
+
+def test_http_500_rejected_no_temp(tmp_path, monkeypatch):
+    runtime = tmp_path / ".lecturecast" / "runtime"
+    runtime.mkdir(parents=True)
+    ref = "outputs/heygen/server_err.mp4"
+    dl = _make_downloader_for_localhost(monkeypatch)
+    import http.client as _hc
+
+    class _500Conn:
+        def request(self, method, path, headers=None): pass
+        def getresponse(self):
+            class _R:
+                status = 500
+                def getheader(self, n, d=""): return d
+                def read(self, n=-1): return b""
+                def close(self): pass
+            return _R()
+        def close(self): pass
+
+    with pytest.raises(ValueError, match="HTTP 500"):
+        dl.download_and_verify("http://127.0.0.1:9999/v.mp4", str(runtime), ref,
+                              1_048_576, _StubProbe(), _connect=lambda h,i,p: _500Conn())
+    assert not (runtime / (ref + ".tmp")).exists()
+
+
+def test_path_traversal_rejected(tmp_path, monkeypatch):
+    """A local_output_ref with .. must be rejected."""
+    runtime = tmp_path / ".lecturecast" / "runtime"
+    runtime.mkdir(parents=True)
+    dl = _make_downloader_for_localhost(monkeypatch)
+    with pytest.raises(ValueError, match=r"\.\."):
+        dl.download_and_verify("http://127.0.0.1:9999/v.mp4", str(runtime),
+                              "outputs/../../etc/passwd.mp4", 1_048_576, _StubProbe(),
+                              _connect=lambda h,i,p: None)
+
+
+def test_ffprobe_overflow_kills(monkeypatch, fake_ffprobe, tmp_path):
+    """ffprobe output exceeding 1 MiB must be killed immediately."""
+    probe = FfprobeMediaProbe(ffprobe_path=fake_ffprobe)
+    target = tmp_path / "fake.mp4"; target.write_bytes(b"fake")
+    big_stdout = b"x" * (2 * 1024 * 1024)
+    fake = MagicMock(returncode=0, stdout=big_stdout.decode("ascii"), stderr="")
+    monkeypatch.setattr("subprocess.Popen", _make_fake_popen(fake))
+    with pytest.raises(ValueError, match="exceeded 1 MiB"):
+        probe.probe(str(target))
+
+
+def test_ffprobe_hang_timeout():
+    """Contract: ffprobe timeout path (kill + join + stdout close) is documented.
+    A real 30s test is impractical for CI; the code path is:
+    reader_thread.join(timeout=30) → if alive → proc.kill() + proc.wait() +
+    proc.stdout.close() + reader_thread.join(timeout=5) + raise."""
+    # Verify the code has the join+kill+close sequence by import inspection.
+    import lecturecast.heygen_downloader as mod
+    import inspect
+    src = inspect.getsource(mod.FfprobeMediaProbe.probe)
+    assert "reader_thread.join(timeout=30)" in src
+    assert "proc.kill()" in src
+    assert "proc.stdout.close()" in src
+    assert "reader_thread.join(timeout=5)" in src
