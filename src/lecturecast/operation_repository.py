@@ -66,6 +66,9 @@ RECONCILE_CLOCK_SKEW_SECONDS = 300            # 5m clock-skew margin
 RECONCILE_BACKOFF_SECONDS = 300               # indeterminate reconcile retry backoff
 _RECONCILE_NO_MATCH = "reconciliation_no_match"
 _RECONCILE_WITHDRAWN = "consent_withdrawn_cleanup_required"
+# A permanent title-search failure parks the operation for manual recovery; the
+# candidate scan and claim exclude this code so maintenance does not hot-loop it.
+_MANUAL_RECONCILE_CODE = "manual_reconciliation_required"
 
 
 class OperationError(RuntimeError):
@@ -781,12 +784,13 @@ class OperationRepository:
                 "AND (lease_owner IS NULL OR lease_expires_at IS NULL "
                 "     OR lease_expires_at < ?) "
                 "AND (next_retry_at IS NULL OR next_retry_at <= ?) "
+                "AND (last_error_code IS NULL OR last_error_code <> ?) "
                 "AND NOT EXISTS ("
                 "  SELECT 1 FROM heygen_resource_operation_refs ref "
                 "  JOIN heygen_remote_resources r ON r.resource_id = ref.resource_id "
                 "  WHERE ref.operation_id = heygen_operations.operation_id "
                 "  AND r.resource_kind = 'video')",
-                (_canonical(now), _canonical(now)),
+                (_canonical(now), _canonical(now), _MANUAL_RECONCILE_CODE),
             ).fetchall()
             return [
                 ReconcileClaim(
@@ -821,8 +825,8 @@ class OperationRepository:
 
         row = conn.execute(
             "SELECT status, attempt_started_at, lease_owner, lease_expires_at, "
-            "lease_fence, next_retry_at, heygen_title FROM heygen_operations "
-            "WHERE operation_id = ?",
+            "lease_fence, next_retry_at, heygen_title, consent_receipt_digest, "
+            "last_error_code FROM heygen_operations WHERE operation_id = ?",
             (operation_id,),
         ).fetchone()
         if row is None:
@@ -830,6 +834,34 @@ class OperationRepository:
         if row["status"] not in RECONCILE_STATUSES or row["attempt_started_at"] is None:
             return ReconcileClaim(operation_id, "not_ready", row["lease_fence"],
                                   row["heygen_title"], row["attempt_started_at"])
+        # A parked permanent-failure op waits for manual recovery — do not
+        # hot-loop it.
+        if row["last_error_code"] == _MANUAL_RECONCILE_CODE:
+            return ReconcileClaim(operation_id, "not_ready", row["lease_fence"],
+                                  row["heygen_title"], row["attempt_started_at"])
+        # Consent topology: a reconciliation candidate must have a coherent
+        # receipt — granted (pointer == receipt digest) or withdrawn (pointer
+        # NULL). missing/declined/broken-link is fail-closed: no query, no delivery.
+        receipt = conn.execute(
+            "SELECT status, receipt_digest FROM heygen_consent_receipts WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()
+        if receipt is None:
+            return ReconcileClaim(operation_id, "not_ready", row["lease_fence"],
+                                  row["heygen_title"], row["attempt_started_at"])
+        if receipt["status"] not in ("granted", "withdrawn"):
+            return ReconcileClaim(operation_id, "not_ready", row["lease_fence"],
+                                  row["heygen_title"], row["attempt_started_at"])
+        if receipt["status"] == "granted":
+            if row["consent_receipt_digest"] != receipt["receipt_digest"]:
+                raise OperationIntegrityError(
+                    f"operation {operation_id} granted receipt pointer mismatch"
+                )
+        else:  # withdrawn
+            if row["consent_receipt_digest"] is not None:
+                raise OperationIntegrityError(
+                    f"operation {operation_id} withdrawn receipt must have NULL pointer"
+                )
         # Must have NO known video resource (unknown-id path; known-id uses poll).
         has_video = conn.execute(
             "SELECT 1 FROM heygen_remote_resources r "
@@ -970,11 +1002,9 @@ class OperationRepository:
                                     "reconciliation_required", None, None, ())
 
         written: list[str] = []
-        if verdict["verdict"] in ("exact_found", "cleanup_required"):
-            deletion = "deletion_pending" if verdict["verdict"] == "cleanup_required" else "not_started"
-            for remote_id in verdict["remote_ids"]:
-                self._write_video_resource(conn, operation_id, remote_id, now_c, deletion)
-                written.append(remote_id)
+        for remote_id, del_status in verdict["register"]:
+            self._write_video_resource(conn, operation_id, remote_id, now_c, del_status)
+            written.append(remote_id)
         return ReconcileOutcome(
             operation_id, verdict["verdict"], fence, verdict["target"],
             verdict["last_error"], verdict["next_retry"], tuple(written),
@@ -983,58 +1013,75 @@ class OperationRepository:
     @staticmethod
     def _plan_reconcile(outcome_input, heygen_title, attempt_started_at,
                         receipt_status, now) -> dict:
-        """Three-way title verdict. See apply_reconcile_outcome_in_tx."""
+        """Three-way title verdict. Returns a dict with verdict/target/register
+        (list of (remote_id, deletion_status) to write)/last_error/next_retry.
+        See apply_reconcile_outcome_in_tx for the contract."""
         a = _parse_utc(attempt_started_at)
         created_after = a - timedelta(seconds=RECONCILE_CLOCK_SKEW_SECONDS)
         window_end = a + timedelta(seconds=RECONCILE_SEARCH_WINDOW_SECONDS + RECONCILE_CLOCK_SKEW_SECONDS)
         backoff = _canonical(now + timedelta(seconds=RECONCILE_BACKOFF_SECONDS))
         withdrawn = receipt_status == "withdrawn"
+        window_closed = now >= window_end
+
+        def in_window(c):
+            # A precise match: exact title, a real status (a candidate carrying a
+            # remote id cannot be 'not_found'), and within the search window.
+            return (
+                c.title == heygen_title
+                and c.provider_status != "not_found"
+                and created_after <= _parse_utc(c.created_at) <= window_end
+            )
 
         if isinstance(outcome_input, TitleQueryAdapterError):
-            return {
-                "verdict": "indeterminate", "target": "reconciliation_required",
-                "last_error": outcome_input.code,
-                "next_retry": backoff if outcome_input.retryable else None,
-                "remote_ids": [],
-            }
+            if outcome_input.retryable:
+                return {"verdict": "indeterminate", "target": "reconciliation_required",
+                        "register": [], "last_error": outcome_input.code, "next_retry": backoff}
+            # Permanent failure: park for manual recovery (find/claim exclude this
+            # code so maintenance does not hot-loop it).
+            return {"verdict": "indeterminate", "target": "reconciliation_required",
+                    "register": [], "last_error": _MANUAL_RECONCILE_CODE, "next_retry": None}
         if not isinstance(outcome_input, TitleQueryResult):
             raise TypeError(f"unsupported reconcile outcome type: {type(outcome_input)!r}")
 
-        precise = [
-            c for c in outcome_input.candidates
-            if c.title == heygen_title
-            and created_after <= _parse_utc(c.created_at) <= window_end
-        ]
-        if not outcome_input.query_complete:
-            return {"verdict": "indeterminate", "target": "reconciliation_required",
-                    "last_error": "title_query_incomplete", "next_retry": backoff, "remote_ids": []}
+        precise = [c for c in outcome_input.candidates if in_window(c)]
 
-        if len(precise) == 0:
-            if now >= window_end:
-                return {"verdict": "definitive_no_match", "target": "cancelled",
-                        "last_error": _RECONCILE_NO_MATCH, "next_retry": None, "remote_ids": []}
-            return {"verdict": "indeterminate", "target": "reconciliation_required",
-                    "last_error": "search_window_open", "next_retry": backoff, "remote_ids": []}
-
-        if len(precise) == 1:
-            if withdrawn:
+        if withdrawn:
+            # Register EVERY precise candidate as deletion_pending — even if the
+            # query is incomplete, never lose a discovered remote copy. If the
+            # query is incomplete, keep reconciling for more; if complete, cancel.
+            register = [(c.remote_id, "deletion_pending") for c in precise]
+            if precise and not outcome_input.query_complete:
+                return {"verdict": "indeterminate", "target": "reconciliation_required",
+                        "register": register, "last_error": _RECONCILE_WITHDRAWN, "next_retry": backoff}
+            if precise:  # query complete → all registered, cancel, no delivery
                 return {"verdict": "cleanup_required", "target": "cancelled",
-                        "last_error": _RECONCILE_WITHDRAWN, "next_retry": None,
-                        "remote_ids": [precise[0].remote_id]}
+                        "register": register, "last_error": _RECONCILE_WITHDRAWN, "next_retry": None}
+            if outcome_input.query_complete and window_closed:
+                return {"verdict": "definitive_no_match", "target": "cancelled", "register": [],
+                        "last_error": _RECONCILE_NO_MATCH, "next_retry": None}
+            return {"verdict": "indeterminate", "target": "reconciliation_required", "register": [],
+                    "last_error": "title_query_incomplete" if not outcome_input.query_complete
+                    else "search_window_open", "next_retry": backoff}
+
+        # granted path
+        if not outcome_input.query_complete:
+            return {"verdict": "indeterminate", "target": "reconciliation_required", "register": [],
+                    "last_error": "title_query_incomplete", "next_retry": backoff}
+        if len(precise) == 0:
+            if window_closed:
+                return {"verdict": "definitive_no_match", "target": "cancelled", "register": [],
+                        "last_error": _RECONCILE_NO_MATCH, "next_retry": None}
+            return {"verdict": "indeterminate", "target": "reconciliation_required", "register": [],
+                    "last_error": "search_window_open", "next_retry": backoff}
+        if len(precise) == 1:
             ps = precise[0].provider_status
             target = "failed" if ps == "failed" else ("processing" if ps == "processing" else "submitted")
             return {"verdict": "exact_found", "target": target,
-                    "last_error": None, "next_retry": None,
-                    "remote_ids": [precise[0].remote_id]}
-
-        # Multiple precise matches.
-        if withdrawn:
-            return {"verdict": "cleanup_required", "target": "cancelled",
-                    "last_error": _RECONCILE_WITHDRAWN, "next_retry": None,
-                    "remote_ids": [c.remote_id for c in precise]}
-        return {"verdict": "indeterminate", "target": "reconciliation_required",
-                "last_error": "multiple_matches", "next_retry": backoff,
-                "remote_ids": []}
+                    "register": [(precise[0].remote_id, "not_started")],
+                    "last_error": None, "next_retry": None}
+        # Multiple precise matches — never pick arbitrarily.
+        return {"verdict": "indeterminate", "target": "reconciliation_required", "register": [],
+                "last_error": "multiple_matches", "next_retry": backoff}
 
 
 # --- coordinator -------------------------------------------------------

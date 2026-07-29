@@ -605,7 +605,7 @@ class ConsentService:
                 f"no consent receipt for {operation_id!r}; nothing to withdraw"
             )
         # Fail-closed integrity check before mutating.
-        self._validate_existing_integrity(rc, op)
+        self._validate_existing_integrity(rc, op, conn)
         # A reconciliation-cancelled operation is terminal — there is no active
         # grant to withdraw.
         if op["status"] == "cancelled" and op["last_error_code"] in _TERMINAL_CANCEL_CODES:
@@ -867,7 +867,7 @@ class ConsentService:
         ).fetchone()
         if rc is None:
             raise ConsentIntegrityError("consent pointer is set but no receipt row exists")
-        self._validate_existing_integrity(rc, op)
+        self._validate_existing_integrity(rc, op, conn)
         if rc["status"] != "granted":
             raise ConsentStateError(f"receipt status {rc['status']!r} does not authorize submit")
         if rc["request_digest"] != digests["request_digest"]:
@@ -937,7 +937,7 @@ class ConsentService:
 
         if existing_rc is not None:
             # Fail-closed integrity check BEFORE trusting an idempotent replay.
-            self._validate_existing_integrity(existing_rc, existing_op)
+            self._validate_existing_integrity(existing_rc, existing_op, conn)
             # A reconciliation-cancelled operation is terminal history — never
             # re-attach the consent pointer or re-submit.
             if (
@@ -1067,10 +1067,12 @@ class ConsentService:
 
     @staticmethod
     def _validate_existing_integrity(existing_rc: sqlite3.Row,
-                                     existing_op: sqlite3.Row | None) -> None:
+                                     existing_op: sqlite3.Row | None,
+                                     conn: sqlite3.Connection | None = None) -> None:
         """Fail-closed integrity check on a stored receipt BEFORE trusting it for
         an idempotent replay or a transition. Catches a tampered digest, a broken
-        consent pointer, or receipt↔operation status drift."""
+        consent pointer, or receipt↔operation status drift. ``conn`` is required
+        for the granted+cancelled carve-out's resource check."""
         if existing_op is None:
             raise ConsentIntegrityError(
                 f"receipt {existing_rc['receipt_digest']} exists without an operation row"
@@ -1095,12 +1097,28 @@ class ConsentService:
             # Single carve-out: a definitive title no-match cancels the operation
             # and clears the consent pointer while the granted receipt is kept as
             # history. This is the ONLY granted+cancelled+NULL-pointer topology
-            # accepted; anything else with a NULL/mismatched pointer fails closed.
+            # accepted. Verify the FULL closed shape: the closed error code, a
+            # cleared lease, a completed_at timestamp, and (if conn given) NO
+            # remote video resource. Anything else fails closed.
             if (
                 existing_op["status"] == "cancelled"
                 and ptr is None
                 and existing_op["last_error_code"] == _RECONCILE_NO_MATCH
+                and existing_op["lease_owner"] is None
+                and existing_op["lease_expires_at"] is None
+                and existing_op["completed_at"] is not None
             ):
+                if conn is not None:
+                    leftover = conn.execute(
+                        "SELECT 1 FROM heygen_remote_resources r "
+                        "JOIN heygen_resource_operation_refs ref ON ref.resource_id = r.resource_id "
+                        "WHERE ref.operation_id = ? AND r.resource_kind = 'video' LIMIT 1",
+                        (existing_op["operation_id"],),
+                    ).fetchone()
+                    if leftover is not None:
+                        raise ConsentIntegrityError(
+                            "granted+cancelled no-match topology must have no video resource"
+                        )
                 return
             if ptr != existing_rc["receipt_digest"]:
                 raise ConsentIntegrityError("granted receipt consent pointer mismatch")
