@@ -41,12 +41,14 @@ from lecturecast.consent import (
     ProductionManifest,
     SubmitConsentResult,
 )
+from lecturecast.heygen_adapter import HeyGenAdapterError, SubmitAccepted, SubmitOutcome
 from lecturecast.heygen_journal import _chmod_secure, init_database
 
 _RUNTIME_DB = Path(".lecturecast") / "runtime" / "heygen-operations.db"
 _LEASE_OWNER_RE = re.compile(r"^[A-Za-z0-9_:.\-]{3,96}$")
 LEASE_MIN_SECONDS = 30
 LEASE_MAX_SECONDS = 3600
+NEXT_RETRY_BACKOFF_SECONDS = 60  # linear submit retry backoff (anti-hotloop is e3c)
 
 
 class OperationError(RuntimeError):
@@ -318,8 +320,146 @@ class OperationRepository:
         )
         return RenewResult(operation_id, "renewed", fence, new_expires)
 
+    # -- submit outcome (§5.5e3b) ---------------------------------------
+
+    def apply_submit_outcome_in_tx(
+        self,
+        conn: sqlite3.Connection,
+        operation_id: str,
+        lease_owner: str,
+        fence: int,
+        now_iso: str,
+        outcome: SubmitAccepted | HeyGenAdapterError,
+    ) -> SubmitOutcome:
+        """Apply a submit outcome behind a fenced CAS
+        (operation_id + lease_owner + lease_fence + status='submit_pending' +
+        attempt_started_at set). Clears the lease on every terminal outcome;
+        the fence is retained.
+
+        Outcome → status mapping (per Codex e3 plan):
+          SubmitAccepted(remote_id)            → submitted (+ atomic video resource/ref)
+          SubmitAccepted(empty remote_id)      → reconciliation_required (ambiguous)
+          HeyGenAdapterError maybe_sent        → reconciliation_required
+          HeyGenAdapterError not_sent retryable→ submit_pending (reset attempt + next_retry_at)
+          HeyGenAdapterError not_sent permanent→ failed
+        A fence mismatch writes nothing and returns status='fence_conflict'."""
+        self._require_tx(conn)
+        conn.row_factory = sqlite3.Row
+        _require_lease_owner(lease_owner)
+        now = _parse_utc(now_iso)
+        now_c = _canonical(now)
+
+        target, remote_id, provider_status, last_error, next_retry = self._plan_submit_outcome(
+            outcome, now
+        )
+
+        # Common: clear lease, set status + updated_at. Extras per target.
+        sets = ["status = ?", "lease_owner = NULL", "lease_expires_at = NULL", "updated_at = ?"]
+        params: list = [target, now_c]
+        if target == "submitted":
+            sets += ["submitted_at = ?", "provider_status = ?"]
+            params += [now_c, provider_status or ""]
+        elif target == "submit_pending":
+            sets += ["attempt_started_at = NULL", "next_retry_at = ?", "last_error_code = ?"]
+            params += [next_retry, last_error]
+        elif target == "failed":
+            sets += ["last_error_code = ?", "completed_at = ?"]
+            params += [last_error, now_c]
+        elif target == "reconciliation_required":
+            sets += ["last_error_code = ?"]
+            params += [last_error]
+        sql = (
+            "UPDATE heygen_operations SET " + ", ".join(sets) +
+            " WHERE operation_id = ? AND lease_owner = ? AND lease_fence = ? "
+            "AND status = 'submit_pending' AND attempt_started_at IS NOT NULL"
+        )
+        where_params = [operation_id, lease_owner, fence]
+        cur = conn.execute(sql, params + where_params)
+        if cur.rowcount == 0:
+            row = conn.execute(
+                "SELECT lease_fence FROM heygen_operations WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+            cur_fence = row["lease_fence"] if row is not None else 0
+            return SubmitOutcome("fence_conflict", cur_fence, None, None, None)
+
+        remote_resource_id = None
+        if target == "submitted" and remote_id:
+            remote_resource_id = self._write_video_resource(
+                conn, operation_id, remote_id, now_c
+            )
+        return SubmitOutcome(target, fence, remote_resource_id, last_error, next_retry)
+
+    @staticmethod
+    def _plan_submit_outcome(outcome, now):
+        """Map a typed outcome to (target_status, remote_id, provider_status,
+        last_error_code, next_retry_iso)."""
+        if isinstance(outcome, SubmitAccepted):
+            rid = (outcome.remote_id or "").strip()
+            if rid:
+                return ("submitted", rid, outcome.provider_status, None, None)
+            # Accepted but no remote id — ambiguous; reconcile to learn the truth.
+            return ("reconciliation_required", None, "", "unknown", None)
+        if isinstance(outcome, HeyGenAdapterError):
+            if outcome.submission_certainty == "maybe_sent":
+                return ("reconciliation_required", None, "", outcome.code, None)
+            # not_sent
+            if outcome.retryable:
+                retry = _canonical(now + timedelta(seconds=NEXT_RETRY_BACKOFF_SECONDS))
+                return ("submit_pending", None, "", outcome.code, retry)
+            return ("failed", None, "", outcome.code, None)
+        raise TypeError(f"unsupported submit outcome type: {type(outcome)!r}")
+
+    @staticmethod
+    def _write_video_resource(conn, operation_id: str, remote_id: str, now_c: str) -> int:
+        """Atomically record the remote video resource + its operation ref. The
+        UNIQUE(credential_profile_id, resource_kind, remote_id) makes it
+        idempotent if the same remote id surfaces again (e.g. after recovery)."""
+        conn.execute(
+            "INSERT OR IGNORE INTO heygen_remote_resources "
+            "(credential_profile_id, resource_kind, remote_id, retention_mode, "
+            "created_by_operation_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("heygen_env_default", "video", remote_id, "ephemeral", operation_id, now_c, now_c),
+        )
+        row = conn.execute(
+            "SELECT resource_id FROM heygen_remote_resources "
+            "WHERE credential_profile_id = ? AND resource_kind = ? AND remote_id = ?",
+            ("heygen_env_default", "video", remote_id),
+        ).fetchone()
+        resource_id = row["resource_id"]
+        conn.execute(
+            "INSERT OR IGNORE INTO heygen_resource_operation_refs "
+            "(resource_id, operation_id, created_at) VALUES (?, ?, ?)",
+            (resource_id, operation_id, now_c),
+        )
+        return resource_id
+
 
 # --- coordinator -------------------------------------------------------
+
+
+class SubmitProcessor:
+    """Records the outcome of a submit attempt. The adapter call happens
+    OUTSIDE any transaction (the worker holds the claim lease across it); this
+    method opens its own fenced transaction to apply the outcome."""
+
+    def __init__(self, project_dir: str | Path) -> None:
+        self._project_dir = Path(project_dir)
+        self._repository = OperationRepository(self._project_dir)
+
+    def record_submit_outcome(
+        self,
+        *,
+        operation_id: str,
+        lease_owner: str,
+        fence: int,
+        now_iso: str,
+        outcome: SubmitAccepted | HeyGenAdapterError,
+    ) -> SubmitOutcome:
+        with self._repository.begin_immediate() as conn:
+            return self._repository.apply_submit_outcome_in_tx(
+                conn, operation_id, lease_owner, fence, now_iso, outcome,
+            )
 
 
 class SubmitCoordinator:
