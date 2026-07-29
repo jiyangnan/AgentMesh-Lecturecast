@@ -415,6 +415,13 @@ class ConsentIntegrityError(ConsentError):
 # Operation statuses that may legally receive a fresh consent receipt. Anything
 # else means the operation already progressed past the consent gate.
 _ATTACHABLE_OPERATION_STATUSES = frozenset({"submit_pending", "cancelled"})
+# Operation statuses consistent with an active granted receipt (the grant
+# survives the whole post-submit lifecycle). The integrity validator fail-closes
+# on anything outside this set rather than trusting the DB CHECK constraint.
+_GRANTED_OPERATION_STATUSES = frozenset({
+    "submit_pending", "submitted", "processing", "completed",
+    "failed", "reconciliation_required",
+})
 # Columns that must be zero/absent for an existing operation to be safe to attach
 # a receipt to (no remote side effect has happened yet).
 _PRISTINE_INT_ZERO = ("submit_attempts", "reconcile_attempts", "lease_fence")
@@ -682,11 +689,14 @@ class ConsentService:
         if status == "granted":
             if ptr != existing_rc["receipt_digest"]:
                 raise ConsentIntegrityError("granted receipt consent pointer mismatch")
-            # A granted receipt persists across the post-submit lifecycle
-            # (submitted/processing/completed/failed/reconciliation_required);
-            # only 'cancelled' is inconsistent with an active grant.
-            if existing_op["status"] == "cancelled":
-                raise ConsentIntegrityError("granted receipt paired with a cancelled operation")
+            # The grant survives the post-submit lifecycle; fail-closed on any
+            # operation status outside the closed allow-set (don't trust the
+            # CHECK constraint to have held).
+            if existing_op["status"] not in _GRANTED_OPERATION_STATUSES:
+                raise ConsentIntegrityError(
+                    f"granted receipt paired with invalid operation status "
+                    f"{existing_op['status']!r}"
+                )
         elif status == "declined":
             if ptr is not None:
                 raise ConsentIntegrityError("declined receipt must have a NULL consent pointer")
@@ -732,20 +742,6 @@ class ConsentService:
                 raise ConsentStateError(
                     f"existing operation {operation_id} already references a remote resource"
                 )
-
-    @staticmethod
-    def _require_pristine(conn, operation_id: str) -> None:
-        row = conn.execute(
-            "SELECT submit_attempts, lease_owner FROM heygen_operations WHERE operation_id = ?",
-            (operation_id,),
-        ).fetchone()
-        if row is None:
-            return
-        if row["submit_attempts"] > 0 or row["lease_owner"] is not None:
-            raise ConsentStateError(
-                "operation is not pristine (already submitted or leased); "
-                "cannot change a declined decision to granted"
-            )
 
     @staticmethod
     def _stored_content_no_time(row: sqlite3.Row) -> dict:

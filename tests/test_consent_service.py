@@ -454,3 +454,22 @@ def test_resource_operation_ref_blocks_attach(tmp_path: Path):
     with pytest.raises(ConsentStateError):
         svc.record_decision(prepared=pre, disclosure=_disclosure(), decision="granted",
                             creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+
+
+def test_granted_receipt_with_unknown_operation_status_fail_closed(tmp_path: Path):
+    from lecturecast.consent import ConsentIntegrityError
+    svc = ConsentService(tmp_path)
+    first = svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+                                creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+    # Bypass the CHECK constraint to plant an operation status the validator
+    # must reject on its own (not trust the DB constraint to have held).
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.execute("PRAGMA ignore_check_constraints = ON")
+    db.execute("UPDATE heygen_operations SET status = 'bogus' WHERE operation_id = ?",
+               (first.operation_id,))
+    db.commit()
+    db.close()
+    with pytest.raises(ConsentIntegrityError):
+        svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+                            creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:30Z")
