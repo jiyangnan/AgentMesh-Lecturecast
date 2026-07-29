@@ -41,7 +41,9 @@ from lecturecast.consent import (
     ProductionManifest,
     SubmitConsentResult,
 )
-from lecturecast.heygen_adapter import HeyGenAdapterError, PollAdapterError, PollResult, SubmitAccepted, SubmitOutcome
+from lecturecast.heygen_adapter import (HeyGenAdapterError, PollAdapterError, PollResult,
+    SubmitAccepted, SubmitOutcome, TitleCandidate, TitleQuery, TitleQueryAdapterError,
+    TitleQueryResult)
 from lecturecast.heygen_journal import _chmod_secure, init_database
 
 _RUNTIME_DB = Path(".lecturecast") / "runtime" / "heygen-operations.db"
@@ -59,6 +61,11 @@ _UNPOLLABLE_DELETION = frozenset({"deletion_pending", "deleted"})
 # still submit_pending (worker crashed before the outcome write) or already
 # flagged reconciliation_required. They have NO known video resource.
 RECONCILE_STATUSES = frozenset({"submit_pending", "reconciliation_required"})
+RECONCILE_SEARCH_WINDOW_SECONDS = 24 * 3600  # fixed 24h HeyGen idempotency/search window
+RECONCILE_CLOCK_SKEW_SECONDS = 300            # 5m clock-skew margin
+RECONCILE_BACKOFF_SECONDS = 300               # indeterminate reconcile retry backoff
+_RECONCILE_NO_MATCH = "reconciliation_no_match"
+_RECONCILE_WITHDRAWN = "consent_withdrawn_cleanup_required"
 
 
 class OperationError(RuntimeError):
@@ -161,6 +168,23 @@ class ReconcileClaim:
     fence: int
     heygen_title: str | None
     attempt_started_at: str | None
+
+
+@dataclass(frozen=True)
+class ReconcileOutcome:
+    operation_id: str
+    verdict: str         # exact_found | definitive_no_match | indeterminate | cleanup_required | fence_conflict
+    fence: int
+    target_status: str
+    last_error_code: str | None
+    next_retry_at: str | None
+    written_remote_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReconcileOnceResult:
+    claim: ReconcileClaim
+    outcome: ReconcileOutcome | None
 
 
 # --- repository --------------------------------------------------------
@@ -466,7 +490,8 @@ class OperationRepository:
         raise TypeError(f"unsupported submit outcome type: {type(outcome)!r}")
 
     @staticmethod
-    def _write_video_resource(conn, operation_id: str, remote_id: str, now_c: str) -> int:
+    def _write_video_resource(conn, operation_id: str, remote_id: str, now_c: str,
+                              deletion_status: str = 'not_started') -> int:
         """Record the remote video resource + its operation ref. For an ephemeral
         video a remote_id must belong to at most one operation — a collision with
         another operation's resource is fail-closed (the whole tx rolls back).
@@ -503,8 +528,9 @@ class OperationRepository:
             cur = conn.execute(
                 "INSERT INTO heygen_remote_resources "
                 "(credential_profile_id, resource_kind, remote_id, retention_mode, "
-                "created_by_operation_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (profile, "video", remote_id, "ephemeral", operation_id, now_c, now_c),
+                "created_by_operation_id, deletion_status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (profile, "video", remote_id, "ephemeral", operation_id, deletion_status, now_c, now_c),
             )
             resource_id = cur.lastrowid
         conn.execute(
@@ -868,8 +894,191 @@ class OperationRepository:
                                   row["heygen_title"], row["attempt_started_at"])
         return None
 
+    def apply_reconcile_outcome_in_tx(
+        self,
+        conn: sqlite3.Connection,
+        operation_id: str,
+        lease_owner: str,
+        fence: int,
+        now_iso: str,
+        outcome_input,  # TitleQueryResult | TitleQueryAdapterError
+    ) -> ReconcileOutcome:
+        """Apply a title-reconciliation verdict behind a fenced CAS
+        (operation_id + lease_owner + lease_fence + status='reconciliation_required'
+        + attempt set). Verdicts:
+          exact_found          → write video resource/ref + map candidate status
+                                 (completed is NOT finalized here — it lands
+                                 submitted/processing and hands to e3c poll to
+                                 re-fetch the required video_url)
+          definitive_no_match  → cancelled (the granted+cancelled+NULL-pointer
+                                 carve-out, last_error_code=reconciliation_no_match)
+          cleanup_required     → receipt withdrawn: record every precise candidate
+                                 as deletion_pending, cancel, no delivery
+          indeterminate        → stay reconciliation_required (+ backoff)
+        A fence mismatch writes nothing and returns verdict='fence_conflict'."""
+        self._require_tx(conn)
+        conn.row_factory = sqlite3.Row
+        _require_lease_owner(lease_owner)
+        now = _parse_utc(now_iso)
+        now_c = _canonical(now)
+
+        op = conn.execute(
+            "SELECT status, attempt_started_at, heygen_title, consent_receipt_digest "
+            "FROM heygen_operations WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()
+        receipt = conn.execute(
+            "SELECT status FROM heygen_consent_receipts WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()
+        if op is None:
+            return ReconcileOutcome(operation_id, "indeterminate", 0, "reconciliation_required",
+                                    "missing_operation", None, ())
+        receipt_status = receipt["status"] if receipt is not None else None
+        verdict = self._plan_reconcile(
+            outcome_input, op["heygen_title"], op["attempt_started_at"],
+            receipt_status, now,
+        )
+
+        always = {"lease_owner": None, "lease_expires_at": None, "updated_at": now_c}
+        target = verdict["target"]
+        if target == "cancelled":
+            always.update(status="cancelled", consent_receipt_digest=None,
+                          completed_at=now_c, next_retry_at=None,
+                          last_error_code=verdict["last_error"])
+        elif verdict["verdict"] == "exact_found":
+            always.update(status=target, next_retry_at=None, last_error_code=None,
+                          completed_at=(now_c if target == "failed" else None))
+        else:  # indeterminate — stay reconciliation_required
+            always.update(status="reconciliation_required", next_retry_at=verdict["next_retry"],
+                          last_error_code=verdict["last_error"], completed_at=None)
+        set_clause = ", ".join(f"{col} = ?" for col in always)
+        params = list(always.values()) + [operation_id, lease_owner, fence]
+        cur = conn.execute(
+            f"UPDATE heygen_operations SET {set_clause} "
+            "WHERE operation_id = ? AND lease_owner = ? AND lease_fence = ? "
+            "AND status = 'reconciliation_required' AND attempt_started_at IS NOT NULL",
+            params,
+        )
+        if cur.rowcount == 0:
+            row = conn.execute(
+                "SELECT lease_fence FROM heygen_operations WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+            cur_fence = row["lease_fence"] if row is not None else 0
+            return ReconcileOutcome(operation_id, "fence_conflict", cur_fence,
+                                    "reconciliation_required", None, None, ())
+
+        written: list[str] = []
+        if verdict["verdict"] in ("exact_found", "cleanup_required"):
+            deletion = "deletion_pending" if verdict["verdict"] == "cleanup_required" else "not_started"
+            for remote_id in verdict["remote_ids"]:
+                self._write_video_resource(conn, operation_id, remote_id, now_c, deletion)
+                written.append(remote_id)
+        return ReconcileOutcome(
+            operation_id, verdict["verdict"], fence, verdict["target"],
+            verdict["last_error"], verdict["next_retry"], tuple(written),
+        )
+
+    @staticmethod
+    def _plan_reconcile(outcome_input, heygen_title, attempt_started_at,
+                        receipt_status, now) -> dict:
+        """Three-way title verdict. See apply_reconcile_outcome_in_tx."""
+        a = _parse_utc(attempt_started_at)
+        created_after = a - timedelta(seconds=RECONCILE_CLOCK_SKEW_SECONDS)
+        window_end = a + timedelta(seconds=RECONCILE_SEARCH_WINDOW_SECONDS + RECONCILE_CLOCK_SKEW_SECONDS)
+        backoff = _canonical(now + timedelta(seconds=RECONCILE_BACKOFF_SECONDS))
+        withdrawn = receipt_status == "withdrawn"
+
+        if isinstance(outcome_input, TitleQueryAdapterError):
+            return {
+                "verdict": "indeterminate", "target": "reconciliation_required",
+                "last_error": outcome_input.code,
+                "next_retry": backoff if outcome_input.retryable else None,
+                "remote_ids": [],
+            }
+        if not isinstance(outcome_input, TitleQueryResult):
+            raise TypeError(f"unsupported reconcile outcome type: {type(outcome_input)!r}")
+
+        precise = [
+            c for c in outcome_input.candidates
+            if c.title == heygen_title
+            and created_after <= _parse_utc(c.created_at) <= window_end
+        ]
+        if not outcome_input.query_complete:
+            return {"verdict": "indeterminate", "target": "reconciliation_required",
+                    "last_error": "title_query_incomplete", "next_retry": backoff, "remote_ids": []}
+
+        if len(precise) == 0:
+            if now >= window_end:
+                return {"verdict": "definitive_no_match", "target": "cancelled",
+                        "last_error": _RECONCILE_NO_MATCH, "next_retry": None, "remote_ids": []}
+            return {"verdict": "indeterminate", "target": "reconciliation_required",
+                    "last_error": "search_window_open", "next_retry": backoff, "remote_ids": []}
+
+        if len(precise) == 1:
+            if withdrawn:
+                return {"verdict": "cleanup_required", "target": "cancelled",
+                        "last_error": _RECONCILE_WITHDRAWN, "next_retry": None,
+                        "remote_ids": [precise[0].remote_id]}
+            ps = precise[0].provider_status
+            target = "failed" if ps == "failed" else ("processing" if ps == "processing" else "submitted")
+            return {"verdict": "exact_found", "target": target,
+                    "last_error": None, "next_retry": None,
+                    "remote_ids": [precise[0].remote_id]}
+
+        # Multiple precise matches.
+        if withdrawn:
+            return {"verdict": "cleanup_required", "target": "cancelled",
+                    "last_error": _RECONCILE_WITHDRAWN, "next_retry": None,
+                    "remote_ids": [c.remote_id for c in precise]}
+        return {"verdict": "indeterminate", "target": "reconciliation_required",
+                "last_error": "multiple_matches", "next_retry": backoff,
+                "remote_ids": []}
+
 
 # --- coordinator -------------------------------------------------------
+
+
+class ReconcileProcessor:
+    """One title-reconciliation step of an unknown-id maybe-sent operation:
+    claim → query HeyGen by title outside any tx → fenced verdict apply."""
+
+    def __init__(self, project_dir: str | Path) -> None:
+        self._project_dir = Path(project_dir)
+        self._repository = OperationRepository(self._project_dir)
+
+    def reconcile_once(
+        self,
+        *,
+        operation_id: str,
+        lease_owner: str,
+        adapter,
+        now_iso: str,
+        lease_seconds: int,
+    ) -> ReconcileOnceResult:
+        with self._repository.begin_immediate() as conn:
+            claim = self._repository.claim_reconcile_in_tx(
+                conn, operation_id, lease_owner, now_iso, lease_seconds,
+            )
+        if claim.status != "claimed" or not claim.heygen_title or not claim.attempt_started_at:
+            return ReconcileOnceResult(claim=claim, outcome=None)
+        a = _parse_utc(claim.attempt_started_at)
+        created_after = _canonical(a - timedelta(seconds=RECONCILE_CLOCK_SKEW_SECONDS))
+        created_before = _canonical(
+            a + timedelta(seconds=RECONCILE_SEARCH_WINDOW_SECONDS + RECONCILE_CLOCK_SKEW_SECONDS)
+        )
+        query = TitleQuery(heygen_title=claim.heygen_title,
+                           created_after=created_after, created_before=created_before)
+        try:
+            outcome_input = adapter.query_videos_by_title(query)
+        except TitleQueryAdapterError as exc:
+            outcome_input = exc
+        with self._repository.begin_immediate() as conn:
+            outcome = self._repository.apply_reconcile_outcome_in_tx(
+                conn, operation_id, lease_owner, claim.fence, now_iso, outcome_input,
+            )
+        return ReconcileOnceResult(claim=claim, outcome=outcome)
 
 
 class PollProcessor:
