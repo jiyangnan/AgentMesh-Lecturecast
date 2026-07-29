@@ -41,7 +41,7 @@ from lecturecast.consent import (
     ProductionManifest,
     SubmitConsentResult,
 )
-from lecturecast.heygen_adapter import HeyGenAdapterError, PollResult, SubmitAccepted, SubmitOutcome
+from lecturecast.heygen_adapter import HeyGenAdapterError, PollAdapterError, PollResult, SubmitAccepted, SubmitOutcome
 from lecturecast.heygen_journal import _chmod_secure, init_database
 
 _RUNTIME_DB = Path(".lecturecast") / "runtime" / "heygen-operations.db"
@@ -50,6 +50,7 @@ LEASE_MIN_SECONDS = 30
 LEASE_MAX_SECONDS = 3600
 NEXT_RETRY_BACKOFF_SECONDS = 60  # linear submit retry backoff (anti-hotloop is e3c)
 POLL_BACKOFF_SECONDS = 30        # transient poll-error backoff
+POLL_INTERVAL_SECONDS = 30       # minimum gap between successful polls (anti-hotloop)
 POLLABLE_STATUSES = frozenset({"submitted", "processing", "reconciliation_required"})
 
 
@@ -137,6 +138,7 @@ class PollOutcome:
     fence: int
     last_error_code: str | None
     next_retry_at: str | None
+    video_url: str | None  # transient download locator for completed (handed to e4)
 
 
 @dataclass(frozen=True)
@@ -523,53 +525,70 @@ class OperationRepository:
             "FROM heygen_operations WHERE operation_id = ?",
             (operation_id,),
         ).fetchone()
-        resource = conn.execute(
+        resources = conn.execute(
             "SELECT r.remote_id FROM heygen_remote_resources r "
             "JOIN heygen_resource_operation_refs ref ON ref.resource_id = r.resource_id "
             "WHERE ref.operation_id = ? AND r.resource_kind = 'video'",
             (operation_id,),
-        ).fetchone()
+        ).fetchall()
         if row is None or row["status"] not in POLLABLE_STATUSES:
             return PollClaim(operation_id, "not_ready", 0, None)
-        if resource is None:
+        if len(resources) == 0:
             return PollClaim(operation_id, "not_ready", 0, None)
+        if len(resources) > 1:
+            # A pollable operation must own exactly one video resource.
+            raise OperationIntegrityError(
+                f"operation {operation_id} has {len(resources)} video resources"
+            )
+        remote_id = resources[0]["remote_id"]
+
+        owner = row["lease_owner"]
+        exp = row["lease_expires_at"]
+        # Half lease is a corrupt topology — fail-closed.
+        if (owner is None) != (exp is None):
+            raise OperationIntegrityError(
+                f"operation {operation_id} has a half poll lease state "
+                f"(owner={owner!r}, expires={exp!r})"
+            )
         # Active lease held by anyone → busy (anti-hotloop).
-        if (
-            row["lease_owner"] is not None
-            and row["lease_expires_at"] is not None
-            and _parse_utc(row["lease_expires_at"]) > now
-        ):
+        if owner is not None and _parse_utc(exp) > now:
             return PollClaim(operation_id, "busy", row["lease_fence"], None)
-        # Transient-error backoff gate.
+        # Fresh (no lease) or expired lease → eligible to claim/reclaim. The fence
+        # CAS below atomically handles both; a concurrent reclaimer bumps the fence.
+        # Transient backoff gate.
         nr = row["next_retry_at"]
         if nr is not None and _parse_utc(nr) > now:
             return PollClaim(operation_id, "retry_wait", row["lease_fence"], None)
 
         new_fence = row["lease_fence"] + 1
+        placeholders = ",".join("?" for _ in POLLABLE_STATUSES)
         cur = conn.execute(
             "UPDATE heygen_operations SET lease_owner = ?, lease_expires_at = ?, "
             "lease_fence = ?, updated_at = ? WHERE operation_id = ? "
-            "AND lease_owner IS NULL AND lease_expires_at IS NULL AND lease_fence = ?",
+            "AND lease_fence = ? AND status IN (" + placeholders + ")",
             (lease_owner, expires_iso, new_fence, _canonical(now),
-             operation_id, row["lease_fence"]),
+             operation_id, row["lease_fence"], *POLLABLE_STATUSES),
         )
         if cur.rowcount == 0:
-            # Lost a concurrent poll claim — re-classify.
+            # Lost a concurrent claim/reclaim — re-read and classify fully.
             row2 = conn.execute(
-                "SELECT lease_owner, lease_expires_at, next_retry_at FROM heygen_operations "
-                "WHERE operation_id = ?",
+                "SELECT lease_owner, lease_expires_at, next_retry_at, status "
+                "FROM heygen_operations WHERE operation_id = ?",
                 (operation_id,),
             ).fetchone()
-            if row2 is None:
-                return PollClaim(operation_id, "not_ready", 0, None)
-            if (
-                row2["lease_owner"] is not None
-                and row2["lease_expires_at"] is not None
-                and _parse_utc(row2["lease_expires_at"]) > now
-            ):
+            if row2 is None or row2["status"] not in POLLABLE_STATUSES:
+                return PollClaim(operation_id, "not_ready", new_fence, None)
+            o2, e2 = row2["lease_owner"], row2["lease_expires_at"]
+            if o2 is not None and e2 is not None and _parse_utc(e2) > now:
                 return PollClaim(operation_id, "busy", new_fence, None)
-            return PollClaim(operation_id, "retry_wait", new_fence, None)
-        return PollClaim(operation_id, "claimed", new_fence, resource["remote_id"])
+            nr2 = row2["next_retry_at"]
+            if nr2 is not None and _parse_utc(nr2) > now:
+                return PollClaim(operation_id, "retry_wait", new_fence, None)
+            # Eligible again after a lost CAS — concurrent tx must have rolled back.
+            raise OperationStateError(
+                f"operation {operation_id} became eligible again after a lost poll CAS"
+            )
+        return PollClaim(operation_id, "claimed", new_fence, remote_id)
 
     def apply_poll_outcome_in_tx(
         self,
@@ -578,29 +597,31 @@ class OperationRepository:
         lease_owner: str,
         fence: int,
         now_iso: str,
-        outcome: PollResult | HeyGenAdapterError,
+        outcome: PollResult | PollAdapterError,
     ) -> PollOutcome:
         """Apply a poll outcome behind a fenced CAS (operation_id + lease_owner +
         lease_fence + status in POLLABLE_STATUSES). Clears the poll lease on every
-        terminal outcome; the fence is retained.
+        outcome; the fence is retained.
 
         Outcome → status mapping (per Codex e3 plan):
-          PollResult queued/submitted   → submitted
-          PollResult processing         → processing
-          PollResult completed          → completed (download is e4)
+          PollResult queued/submitted   → submitted  (next_retry = poll interval)
+          PollResult processing         → processing (next_retry = poll interval)
+          PollResult completed          → completed (requires video_url; download is e4)
           PollResult failed             → failed
           PollResult not_found          → reconciliation_required
-          PollResult unknown            → reconciliation_required (malformed)
-          HeyGenAdapterError retryable+not_sent → keep status + next_retry_at
-          HeyGenAdapterError else       → reconciliation_required
-        A fence mismatch writes nothing and returns status='fence_conflict'."""
+          PollAdapterError retryable    → keep status + next_retry (transient backoff)
+          PollAdapterError not retryable→ reconciliation_required
+        Every non-terminal poll (submitted/processing/keep) sets next_retry_at to
+        the next permissible poll time so a caller cannot hot-loop. A fence
+        mismatch writes nothing and returns status='fence_conflict'."""
         self._require_tx(conn)
         conn.row_factory = sqlite3.Row
         _require_lease_owner(lease_owner)
         now = _parse_utc(now_iso)
         now_c = _canonical(now)
 
-        target, provider_status, last_error, next_retry = self._plan_poll_outcome(outcome, now)
+        target, provider_status, last_error, next_retry, video_url = self._plan_poll_outcome(outcome, now)
+        poll_again = _canonical(now + timedelta(seconds=POLL_INTERVAL_SECONDS))
 
         always = {
             "lease_owner": None,
@@ -608,15 +629,15 @@ class OperationRepository:
             "updated_at": now_c,
         }
         if target == "keep":
-            # transient poll error — preserve status, set retry backoff
+            # transient poll error — preserve status, back off
             always.update(next_retry_at=next_retry, last_error_code=last_error,
                           provider_status="")
         elif target == "submitted":
             always.update(status="submitted", provider_status=provider_status or "",
-                          next_retry_at=None, last_error_code=None, completed_at=None)
+                          next_retry_at=poll_again, last_error_code=None, completed_at=None)
         elif target == "processing":
             always.update(status="processing", provider_status=provider_status or "",
-                          next_retry_at=None, last_error_code=None, completed_at=None)
+                          next_retry_at=poll_again, last_error_code=None, completed_at=None)
         elif target == "completed":
             always.update(status="completed", provider_status=provider_status or "",
                           completed_at=now_c, next_retry_at=None, last_error_code=None)
@@ -625,8 +646,7 @@ class OperationRepository:
                           completed_at=now_c, next_retry_at=None, last_error_code=last_error)
         elif target == "reconciliation_required":
             always.update(status="reconciliation_required", provider_status="",
-                          next_retry_at=None, last_error_code=last_error,
-                          completed_at=None)
+                          next_retry_at=None, last_error_code=last_error, completed_at=None)
         set_clause = ", ".join(f"{col} = ?" for col in always)
         params = list(always.values()) + [operation_id, lease_owner, fence]
         placeholders = ",".join("?" for _ in POLLABLE_STATUSES)
@@ -642,29 +662,33 @@ class OperationRepository:
                 (operation_id,),
             ).fetchone()
             cur_fence = row["lease_fence"] if row is not None else 0
-            return PollOutcome(operation_id, "fence_conflict", cur_fence, None, None)
-        return PollOutcome(operation_id, target, fence, last_error, next_retry)
+            return PollOutcome(operation_id, "fence_conflict", cur_fence, None, None, None)
+        return PollOutcome(operation_id, target, fence, last_error,
+                           next_retry if target == "keep" else (poll_again if target in ("submitted", "processing") else None),
+                           video_url)
 
     @staticmethod
     def _plan_poll_outcome(outcome, now):
+        """Map a typed poll outcome to (target, provider_status, last_error,
+        next_retry_iso, video_url)."""
         if isinstance(outcome, PollResult):
             ps = outcome.provider_status
             if ps in ("queued", "submitted"):
-                return ("submitted", ps, None, None)
+                return ("submitted", ps, None, None, None)
             if ps == "processing":
-                return ("processing", ps, None, None)
+                return ("processing", ps, None, None, None)
             if ps == "completed":
-                return ("completed", ps, None, None)
+                # PollResult.__post_init__ guarantees a non-empty video_url here.
+                return ("completed", ps, None, None, outcome.video_url)
             if ps == "failed":
-                return ("failed", ps, None, None)
-            if ps == "not_found":
-                return ("reconciliation_required", "", "provider_not_found", None)
-            return ("reconciliation_required", "", "malformed_response", None)
-        if isinstance(outcome, HeyGenAdapterError):
-            if outcome.retryable and outcome.submission_certainty == "not_sent":
+                return ("failed", ps, None, None, None)
+            # not_found — provider no longer knows this id
+            return ("reconciliation_required", "", "provider_not_found", None, None)
+        if isinstance(outcome, PollAdapterError):
+            if outcome.retryable:
                 return ("keep", "", outcome.code,
-                        _canonical(now + timedelta(seconds=POLL_BACKOFF_SECONDS)))
-            return ("reconciliation_required", "", outcome.code, None)
+                        _canonical(now + timedelta(seconds=POLL_BACKOFF_SECONDS)), None)
+            return ("reconciliation_required", "", outcome.code, None, None)
         raise TypeError(f"unsupported poll outcome type: {type(outcome)!r}")
 
 
@@ -697,7 +721,7 @@ class PollProcessor:
             return PollOnceResult(claim=claim, outcome=None)
         try:
             outcome_input = adapter.poll_video(claim.remote_id)
-        except HeyGenAdapterError as exc:
+        except PollAdapterError as exc:
             outcome_input = exc
         with self._repository.begin_immediate() as conn:
             outcome = self._repository.apply_poll_outcome_in_tx(
