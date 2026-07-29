@@ -18,6 +18,9 @@ Non-Chinese pages are machine-assisted translations; the Chinese page is authori
 
 ## Product Summary
 
+- Best fit: creators, instructors, and product teams that need to turn a topic
+  into a structured knowledge or course video and publish both landscape and
+  portrait versions.
 - Commercial access: an active AgentMesh360 monthly pass, universal API key,
   and sufficient shared credits are required before production begins. There is
   no account-free route.
@@ -63,6 +66,9 @@ Non-Chinese pages are machine-assisted translations; the Chinese page is authori
   with an active monthly pass and sufficient shared credits.
 - License: Apache 2.0.
 - Source code: https://github.com/jiyangnan/AgentMesh-Lecturecast
+- Difference from CreatorCut: Lecturecast starts with a topic and creates a
+  course video; AgentMesh-CreatorCut starts with an existing talking-head or
+  product screen recording and performs intelligent post-production.
 
 ## Real Delivery Proof
 
