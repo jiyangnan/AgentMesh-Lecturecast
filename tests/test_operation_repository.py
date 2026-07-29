@@ -180,6 +180,10 @@ def test_second_claim_while_lease_active_is_busy(tmp_path: Path):
     conn.close()
     assert first.status == "claimed"
     assert second.status == "busy"
+    # busy carries the real holder state so the caller can time its wait.
+    assert second.fence == first.fence
+    assert second.submit_attempts == 1
+    assert second.lease_expires_at == first.lease_expires_at
 
 
 def test_claim_ambiguous_attempt_not_reclaimable(tmp_path: Path):
@@ -510,3 +514,26 @@ def test_begin_immediate_rolls_back_on_exception(tmp_path: Path):
             raise RuntimeError("injected")
     row = _op_row(tmp_path, prepared.operation_id)
     assert row["lease_owner"] is None  # rolled back
+
+
+def test_claim_fail_closed_on_half_lease_state(tmp_path: Path):
+    """attempt_started_at set with only one of lease_owner/lease_expires_at is a
+    corrupt topology — fail-closed, not 'ambiguous'."""
+    from lecturecast.operation_repository import OperationIntegrityError
+    svc = ConsentService(tmp_path)
+    repo = OperationRepository(tmp_path)
+    dig = {"brief_digest": Z(1), "manifest_digest": Z(2), "orch_digest": Z(3), "request_digest": Z(4)}
+    prepared = _grant(svc, dig)
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("PRAGMA foreign_keys = OFF")
+    # attempt + lease_owner but NO lease_expires_at → half lease.
+    db.execute("UPDATE heygen_operations SET attempt_started_at = ?, lease_owner = ?, "
+               "lease_fence = 1 WHERE operation_id = ?",
+               ("2026-07-28T00:00:00+00:00", OWNER, prepared.operation_id))
+    db.commit()
+    db.close()
+    conn = _open_tx(tmp_path)
+    with pytest.raises(OperationIntegrityError):
+        repo.claim_submit_in_tx(conn, prepared.operation_id, OWNER, NOW, 120)
+    conn.execute("ROLLBACK")
+    conn.close()
