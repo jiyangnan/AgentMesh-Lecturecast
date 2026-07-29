@@ -1651,6 +1651,14 @@ class OperationRepository:
         if ds == "not_started":
             if res["retention_mode"] != "ephemeral" or op["download_status"] != "verified":
                 return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
+            # Normal post-download: exactly one deliverable video per operation.
+            video_count = conn.execute(
+                "SELECT COUNT(*) FROM heygen_remote_resources r "
+                "JOIN heygen_resource_operation_refs ref ON ref.resource_id=r.resource_id "
+                "WHERE ref.operation_id=? AND r.resource_kind='video'",
+                (operation_id,)).fetchone()[0]
+            if video_count != 1:
+                return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
         elif ds == "deletion_failed":
             lec = res["last_deletion_error"]
             if lec in _DELETION_MANUAL_CODES:
@@ -1716,44 +1724,65 @@ class OperationRepository:
         self._require_tx(conn)
         conn.row_factory = sqlite3.Row
         now_c = _canonical(_parse_utc(now_iso))
+        if type(max_attempts) is not int or not (1 <= max_attempts <= 10):
+            raise ValueError("max_attempts must be an int in [1, 10]")
         # Fence CAS on operation
         op = conn.execute(
             "SELECT lease_fence FROM heygen_operations WHERE operation_id=? "
             "AND lease_owner=? AND lease_fence=?", (operation_id, lease_owner, fence)).fetchone()
         if op is None:
             return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
+        # Re-verify FULL exclusive topology (claim and apply are separate txs).
         res = conn.execute(
             "SELECT r.deletion_attempts FROM heygen_remote_resources r "
-            "WHERE r.resource_id=? AND r.deletion_status='deletion_pending' "
+            "WHERE r.resource_id=? AND r.resource_kind='video' "
+            "AND r.deletion_status='deletion_pending' "
             "AND r.created_by_operation_id=? "
-            "AND r.credential_profile_id=(SELECT o.credential_profile_id FROM heygen_operations o WHERE o.operation_id=?)",
-            (resource_id, operation_id, operation_id)).fetchone()
+            "AND r.credential_profile_id=(SELECT o.credential_profile_id "
+            "  FROM heygen_operations o WHERE o.operation_id=?) "
+            "AND EXISTS (SELECT 1 FROM heygen_resource_operation_refs ref "
+            "  WHERE ref.resource_id=r.resource_id AND ref.operation_id=?) "
+            "AND NOT EXISTS (SELECT 1 FROM heygen_resource_operation_refs ref2 "
+            "  WHERE ref2.resource_id=r.resource_id AND ref2.operation_id<>?)",
+            (resource_id, operation_id, operation_id, operation_id, operation_id)).fetchone()
         if res is None:
             return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
+        # Gated UPDATE condition shared by all outcomes.
+        gate = ("resource_kind='video' AND created_by_operation_id=? "
+                "AND deletion_status='deletion_pending'")
 
         if isinstance(outcome, DeleteResult):
-            conn.execute(
+            cur = conn.execute(
                 "UPDATE heygen_remote_resources SET deletion_status='deleted', deleted_at=?, "
                 "deletion_next_retry_at=NULL, last_deletion_error=NULL, updated_at=? "
-                "WHERE resource_id=?", (now_c, now_c, resource_id))
+                "WHERE resource_id=? AND " + gate,
+                (now_c, now_c, resource_id, operation_id))
+            if cur.rowcount == 0:
+                return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
             self._clear_operation_lease(conn, operation_id, now_c)
             return DeletionOutcome(operation_id, resource_id, "deleted", fence, None, None)
         # DeleteAdapterError
         attempts = res["deletion_attempts"]
         if outcome.retryable and attempts < max_attempts:
             retry = _canonical(_parse_utc(now_iso) + timedelta(seconds=DELETION_BACKOFF_SECONDS))
-            conn.execute(
+            cur = conn.execute(
                 "UPDATE heygen_remote_resources SET deletion_status='deletion_failed', "
                 "last_deletion_error=?, deletion_next_retry_at=?, updated_at=? "
-                "WHERE resource_id=?", (outcome.code, retry, now_c, resource_id))
+                "WHERE resource_id=? AND " + gate,
+                (outcome.code, retry, now_c, resource_id, operation_id))
+            if cur.rowcount == 0:
+                return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
             self._clear_operation_lease(conn, operation_id, now_c)
             return DeletionOutcome(operation_id, resource_id, "failed", fence, outcome.code, retry)
         # Exhausted or permanent
         code = "deletion_retry_exhausted" if outcome.retryable else "deletion_reconciliation_required"
-        conn.execute(
+        cur = conn.execute(
             "UPDATE heygen_remote_resources SET deletion_status='deletion_failed', "
             "last_deletion_error=?, deletion_next_retry_at=NULL, updated_at=? "
-            "WHERE resource_id=?", (code, now_c, resource_id))
+            "WHERE resource_id=? AND " + gate,
+            (code, now_c, resource_id, operation_id))
+        if cur.rowcount == 0:
+            return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
         self._clear_operation_lease(conn, operation_id, now_c)
         return DeletionOutcome(operation_id, resource_id, "failed", fence, code, None)
 
