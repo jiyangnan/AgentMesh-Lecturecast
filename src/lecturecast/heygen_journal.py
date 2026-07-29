@@ -52,10 +52,12 @@ def _reject_symlink_components(components, *, context: str) -> None:
             raise ValueError(f"{context} must not be a symlink: {p}")
 
 
-# --- DDL (v0 → v1) -----------------------------------------------------
+# --- DDL (latest schema snapshot / fresh install) ---------------------
+# These statements create the current (v2) shape directly on a fresh install.
 # Individual statements (not one script) so they execute inside one explicit
 # BEGIN/COMMIT. sqlite3.executescript() issues an implicit COMMIT that would
-# break transactional migration.
+# break transactional migration. Existing v1 databases are upgraded to this
+# shape by _migrate_v1_to_v2.
 
 _OPERATIONS_DDL = """
     CREATE TABLE IF NOT EXISTS heygen_operations (

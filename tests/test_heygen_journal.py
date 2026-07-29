@@ -231,6 +231,29 @@ def test_v1_to_v2_fail_closed_on_populated_receipts(tmp_path: Path):
     check.close()
 
 
+def test_v1_to_v2_rollback_restores_if_create_fails(tmp_path: Path, monkeypatch):
+    """If the rebuild fails after DROP (before CREATE commits), the migration
+    transaction rolls back: the original v1 receipts table and user_version=1
+    survive, so a later init can retry cleanly."""
+    import lecturecast.heygen_journal as hj
+
+    db_path = tmp_path / ".lecturecast" / "runtime" / "heygen-operations.db"
+    _bootstrap_v1_db(db_path)
+    # Force the rebuild's CREATE to fail after the DROP ran.
+    monkeypatch.setattr(hj, "_RECEIPTS_DDL", "THIS IS NOT VALID SQL")
+
+    with pytest.raises(sqlite3.OperationalError):
+        init_database(tmp_path)
+
+    check = sqlite3.connect(str(db_path))
+    assert check.execute("PRAGMA user_version").fetchone()[0] == 1
+    cols = {row[1] for row in check.execute("PRAGMA table_info(heygen_consent_receipts)")}
+    # Original v1 table restored by ROLLBACK.
+    assert "receipt_digest" in cols
+    assert "request_digest" not in cols
+    check.close()
+
+
 def hj_operations_seed() -> str:
     return (
         "INSERT INTO heygen_operations (operation_id, kind, endpoint, generation_id, "
