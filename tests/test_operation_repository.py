@@ -163,13 +163,12 @@ def test_claim_eligible_leases_and_bumps_fence(tmp_path: Path):
     assert row["lease_owner"] == OWNER
     assert row["lease_fence"] == 1
     assert row["submit_attempts"] == 1
-    assert row["attempt_started_at"] == NOW
+    assert row["attempt_started_at"].startswith("2026-07-29T00:00:00")
 
 
-def test_second_claim_is_ambiguous(tmp_path: Path):
-    """A claim sets attempt_started_at, so a second claim (sequential) is
-    ambiguous — an attempt is in flight. The caller must poll/reconcile, not
-    re-submit."""
+def test_second_claim_while_lease_active_is_busy(tmp_path: Path):
+    """An active lease + an in-flight attempt → 'busy' (another worker is on
+    it; wait for the lease, do not reconcile)."""
     svc = ConsentService(tmp_path)
     repo = OperationRepository(tmp_path)
     dig = {"brief_digest": Z(1), "manifest_digest": Z(2), "orch_digest": Z(3), "request_digest": Z(4)}
@@ -180,7 +179,7 @@ def test_second_claim_is_ambiguous(tmp_path: Path):
     conn.execute("COMMIT")
     conn.close()
     assert first.status == "claimed"
-    assert second.status == "ambiguous"
+    assert second.status == "busy"
 
 
 def test_claim_ambiguous_attempt_not_reclaimable(tmp_path: Path):
@@ -264,7 +263,7 @@ def test_concurrent_claim_only_one_wins(tmp_path: Path):
     for t in threads:
         t.join()
     assert results.count("claimed") == 1
-    assert results.count("ambiguous") == 1
+    assert results.count("busy") == 1
 
 
 # ---- renew -------------------------------------------------------------
@@ -366,3 +365,148 @@ def test_coordinator_not_claimable_raises_and_writes_nothing(tmp_path: Path):
         )
     row = _op_row(tmp_path, prepared.operation_id)
     assert row["lease_owner"] is None
+
+
+# ---- e3a round-2: fail-closed topology + tx binding + time hardening ----
+
+
+def test_claim_rejects_wrong_project_connection(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    repo = OperationRepository(tmp_path)
+    dig = {"brief_digest": Z(1), "manifest_digest": Z(2), "orch_digest": Z(3), "request_digest": Z(4)}
+    prepared = _grant(svc, dig)
+    # A connection to a DIFFERENT project's journal.
+    import tempfile
+    other = Path(tempfile.mkdtemp())
+    ConsentService(other).record_decision = lambda **k: None  # init schema only
+    from lecturecast.heygen_journal import init_database
+    other_conn = init_database(other)
+    other_conn.execute("BEGIN IMMEDIATE")
+    with pytest.raises(OperationStateError):
+        repo.claim_submit_in_tx(other_conn, prepared.operation_id, OWNER, NOW, 120)
+    other_conn.execute("ROLLBACK")
+    other_conn.close()
+
+
+def test_claim_fail_closed_on_lease_without_attempt(tmp_path: Path):
+    """A lease present without an attempt_started_at is an anomalous journal
+    state; the repository refuses to overwrite it rather than silently claiming."""
+    svc = ConsentService(tmp_path)
+    repo = OperationRepository(tmp_path)
+    dig = {"brief_digest": Z(1), "manifest_digest": Z(2), "orch_digest": Z(3), "request_digest": Z(4)}
+    prepared = _grant(svc, dig)
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.execute("UPDATE heygen_operations SET lease_owner = ?, lease_expires_at = ? WHERE operation_id = ?",
+               (OWNER, "2026-07-29T00:05:00+00:00", prepared.operation_id))
+    db.commit()
+    db.close()
+    conn = _open_tx(tmp_path)
+    with pytest.raises(OperationStateError):
+        repo.claim_submit_in_tx(conn, prepared.operation_id, OWNER, NOW, 120)
+    conn.execute("ROLLBACK")
+    conn.close()
+
+
+def test_claim_fail_closed_on_pointer_receipt_mismatch(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    repo = OperationRepository(tmp_path)
+    dig = {"brief_digest": Z(1), "manifest_digest": Z(2), "orch_digest": Z(3), "request_digest": Z(4)}
+    prepared = _grant(svc, dig)
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.execute("UPDATE heygen_operations SET consent_receipt_digest = ? WHERE operation_id = ?",
+               ("sha256:" + "f" * 64, prepared.operation_id))
+    db.commit()
+    db.close()
+    conn = _open_tx(tmp_path)
+    from lecturecast.operation_repository import OperationIntegrityError
+    with pytest.raises(OperationIntegrityError):
+        repo.claim_submit_in_tx(conn, prepared.operation_id, OWNER, NOW, 120)
+    conn.execute("ROLLBACK")
+    conn.close()
+
+
+def test_claim_timezones_represent_same_instant_consistently(tmp_path: Path):
+    """Z, +00:00, and a non-UTC offset naming the same instant must produce the
+    same canonical expiry (datetime comparison, not lexical)."""
+    repo = OperationRepository(tmp_path)
+    svc = ConsentService(tmp_path)
+    expiries = []
+    for i, now in enumerate([
+        "2026-07-29T00:00:00Z",
+        "2026-07-29T00:00:00+00:00",
+        "2026-07-28T16:00:00-08:00",  # same instant
+    ]):
+        dig = {"brief_digest": Z(10 + i), "manifest_digest": Z(20 + i), "orch_digest": Z(30 + i), "request_digest": Z(40 + i)}
+        prepared = _grant(svc, dig, gen=f"gen_tz_{i}")
+        conn = _open_tx(tmp_path)
+        res = repo.claim_submit_in_tx(conn, prepared.operation_id, OWNER, now, 120)
+        conn.execute("COMMIT")
+        conn.close()
+        assert res.status == "claimed"
+        expiries.append(res.lease_expires_at)
+    assert len(set(expiries)) == 1
+    assert expiries[0] == "2026-07-29T00:02:00+00:00"
+
+
+def test_renew_at_exact_expiry_is_expired(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    repo = OperationRepository(tmp_path)
+    dig = {"brief_digest": Z(1), "manifest_digest": Z(2), "orch_digest": Z(3), "request_digest": Z(4)}
+    prepared = _grant(svc, dig)
+    conn = _open_tx(tmp_path)
+    claimed = repo.claim_submit_in_tx(conn, prepared.operation_id, OWNER, "2026-07-29T00:00:00Z", 60)
+    # Lease expires exactly at 00:01:00; renewing AT that instant must fail.
+    renewed = repo.renew_lease_in_tx(conn, prepared.operation_id, OWNER, claimed.fence,
+                                     "2026-07-29T00:01:00Z", 60)
+    conn.execute("COMMIT")
+    conn.close()
+    assert renewed.status == "expired"
+
+
+def test_renew_after_withdraw_fails(tmp_path: Path):
+    """Withdraw clears the consent pointer; a worker must not keep renewing a
+    submit lease on a withdrawn operation."""
+    svc = ConsentService(tmp_path)
+    repo = OperationRepository(tmp_path)
+    dig = {"brief_digest": Z(1), "manifest_digest": Z(2), "orch_digest": Z(3), "request_digest": Z(4)}
+    prepared = _grant(svc, dig)
+    conn = _open_tx(tmp_path)
+    claimed = repo.claim_submit_in_tx(conn, prepared.operation_id, OWNER, NOW, 120)
+    conn.execute("COMMIT")
+    conn.close()
+    svc.withdraw(prepared.operation_id)  # clears pointer (engaged → cleanup_required)
+    conn = _open_tx(tmp_path)
+    renewed = repo.renew_lease_in_tx(conn, prepared.operation_id, OWNER, claimed.fence, NOW, 120)
+    conn.execute("COMMIT")
+    conn.close()
+    assert renewed.status == "not_held"
+
+
+def test_begin_immediate_context_manager_commits_and_tightens(tmp_path: Path):
+    import os, stat
+    repo = OperationRepository(tmp_path)
+    svc = ConsentService(tmp_path)
+    dig = {"brief_digest": Z(1), "manifest_digest": Z(2), "orch_digest": Z(3), "request_digest": Z(4)}
+    prepared = _grant(svc, dig)
+    with repo.begin_immediate() as conn:
+        res = repo.claim_submit_in_tx(conn, prepared.operation_id, OWNER, NOW, 120)
+        assert res.status == "claimed"
+    # Committed + permissions tightened.
+    row = _op_row(tmp_path, prepared.operation_id)
+    assert row["lease_owner"] == OWNER
+    assert stat.S_IMODE(os.stat(tmp_path / DB_REL).st_mode) == 0o600
+
+
+def test_begin_immediate_rolls_back_on_exception(tmp_path: Path):
+    repo = OperationRepository(tmp_path)
+    svc = ConsentService(tmp_path)
+    dig = {"brief_digest": Z(1), "manifest_digest": Z(2), "orch_digest": Z(3), "request_digest": Z(4)}
+    prepared = _grant(svc, dig)
+    with pytest.raises(RuntimeError):
+        with repo.begin_immediate() as conn:
+            repo.claim_submit_in_tx(conn, prepared.operation_id, OWNER, NOW, 120)
+            raise RuntimeError("injected")
+    row = _op_row(tmp_path, prepared.operation_id)
+    assert row["lease_owner"] is None  # rolled back
