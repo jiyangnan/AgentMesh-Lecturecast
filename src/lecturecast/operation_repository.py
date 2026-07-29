@@ -54,6 +54,11 @@ POLL_INTERVAL_SECONDS = 30       # minimum gap between successful polls (anti-ho
 POLLABLE_STATUSES = frozenset({"submitted", "processing", "reconciliation_required"})
 # A video in active deletion is not meaningfully pollable.
 _UNPOLLABLE_DELETION = frozenset({"deletion_pending", "deleted"})
+# Crash-recovery title-reconciliation candidates: an attempt may have reached
+# HeyGen (attempt_started_at set) but the outcome was never recorded — either
+# still submit_pending (worker crashed before the outcome write) or already
+# flagged reconciliation_required. They have NO known video resource.
+RECONCILE_STATUSES = frozenset({"submit_pending", "reconciliation_required"})
 
 
 class OperationError(RuntimeError):
@@ -147,6 +152,15 @@ class PollOutcome:
 class PollOnceResult:
     claim: PollClaim
     outcome: PollOutcome | None
+
+
+@dataclass(frozen=True)
+class ReconcileClaim:
+    operation_id: str
+    status: str          # "claimed" | "busy" | "retry_wait" | "not_ready"
+    fence: int
+    heygen_title: str | None
+    attempt_started_at: str | None
 
 
 # --- repository --------------------------------------------------------
@@ -720,6 +734,139 @@ class OperationRepository:
                         _canonical(now + timedelta(seconds=POLL_BACKOFF_SECONDS)), None)
             return ("reconciliation_required", "", outcome.code, None, None)
         raise TypeError(f"unsupported poll outcome type: {type(outcome)!r}")
+
+    # -- crash-recovery title reconciliation (§5.5e3d1) ------------------
+
+    def find_reconciliation_candidates(
+        self, now_iso: str
+    ) -> list[ReconcileClaim]:
+        """Hint scan for operations that may have reached HeyGen without a
+        recorded outcome (a maybe-sent submit): in RECONCILE_STATUSES with
+        attempt_started_at set, no active lease, and backoff elapsed. This is
+        advisory only — claim_reconcile_in_tx re-validates eligibility under
+        BEGIN IMMEDIATE before any write."""
+        now = _parse_utc(now_iso)
+        with self.begin_immediate() as conn:
+            rows = conn.execute(
+                "SELECT operation_id, lease_fence, heygen_title, attempt_started_at "
+                "FROM heygen_operations "
+                "WHERE status IN ('submit_pending', 'reconciliation_required') "
+                "AND attempt_started_at IS NOT NULL "
+                "AND (lease_owner IS NULL OR lease_expires_at IS NULL "
+                "     OR lease_expires_at < ?) "
+                "AND (next_retry_at IS NULL OR next_retry_at <= ?) "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM heygen_resource_operation_refs ref "
+                "  JOIN heygen_remote_resources r ON r.resource_id = ref.resource_id "
+                "  WHERE ref.operation_id = heygen_operations.operation_id "
+                "  AND r.resource_kind = 'video')",
+                (_canonical(now), _canonical(now)),
+            ).fetchall()
+            return [
+                ReconcileClaim(
+                    operation_id=r["operation_id"], status="not_ready",
+                    fence=r["lease_fence"], heygen_title=r["heygen_title"],
+                    attempt_started_at=r["attempt_started_at"],
+                )
+                for r in rows
+            ]
+
+    def claim_reconcile_in_tx(
+        self,
+        conn: sqlite3.Connection,
+        operation_id: str,
+        lease_owner: str,
+        now_iso: str,
+        lease_seconds: int,
+    ) -> ReconcileClaim:
+        """Claim a reconciliation lease on a maybe-sent submit (an attempt that
+        may have reached HeyGen but has no recorded outcome / known remote id).
+        Eligibility: status ∈ RECONCILE_STATUSES + attempt_started_at set + NO
+        video resource + no active lease + backoff elapsed. A half lease →
+        OperationIntegrityError; an active lease → busy. Claim atomically flips
+        an ambiguous submit_pending to reconciliation_required and bumps the
+        fence. A lost CAS re-classifies with the same rules."""
+        self._require_tx(conn)
+        conn.row_factory = sqlite3.Row
+        _require_lease_owner(lease_owner)
+        now = _parse_utc(now_iso)
+        _check_lease_seconds(lease_seconds)
+        expires_iso = _canonical(now + timedelta(seconds=lease_seconds))
+
+        row = conn.execute(
+            "SELECT status, attempt_started_at, lease_owner, lease_expires_at, "
+            "lease_fence, next_retry_at, heygen_title FROM heygen_operations "
+            "WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()
+        if row is None:
+            return ReconcileClaim(operation_id, "not_ready", 0, None, None)
+        if row["status"] not in RECONCILE_STATUSES or row["attempt_started_at"] is None:
+            return ReconcileClaim(operation_id, "not_ready", row["lease_fence"],
+                                  row["heygen_title"], row["attempt_started_at"])
+        # Must have NO known video resource (unknown-id path; known-id uses poll).
+        has_video = conn.execute(
+            "SELECT 1 FROM heygen_remote_resources r "
+            "JOIN heygen_resource_operation_refs ref ON ref.resource_id = r.resource_id "
+            "WHERE ref.operation_id = ? AND r.resource_kind = 'video' LIMIT 1",
+            (operation_id,),
+        ).fetchone()
+        if has_video is not None:
+            return ReconcileClaim(operation_id, "not_ready", row["lease_fence"],
+                                  row["heygen_title"], row["attempt_started_at"])
+
+        verdict = self._classify_reconcile_row(row, operation_id, now)
+        if verdict is not None:
+            return verdict
+
+        new_fence = row["lease_fence"] + 1
+        placeholders = ",".join("?" for _ in RECONCILE_STATUSES)
+        # Flip ambiguous submit_pending → reconciliation_required as we claim.
+        cur = conn.execute(
+            "UPDATE heygen_operations SET status = 'reconciliation_required', "
+            "lease_owner = ?, lease_expires_at = ?, lease_fence = ?, updated_at = ? "
+            "WHERE operation_id = ? AND lease_fence = ? "
+            "AND status IN (" + placeholders + ") AND attempt_started_at IS NOT NULL",
+            (lease_owner, expires_iso, new_fence, _canonical(now),
+             operation_id, row["lease_fence"], *RECONCILE_STATUSES),
+        )
+        if cur.rowcount == 0:
+            row2 = conn.execute(
+                "SELECT status, attempt_started_at, lease_owner, lease_expires_at, "
+                "lease_fence, next_retry_at, heygen_title FROM heygen_operations "
+                "WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+            if row2 is None:
+                return ReconcileClaim(operation_id, "not_ready", new_fence, None, None)
+            v2 = self._classify_reconcile_row(row2, operation_id, now)
+            if v2 is None:
+                raise OperationStateError(
+                    f"operation {operation_id} became eligible again after a lost reconcile CAS"
+                )
+            return v2
+        return ReconcileClaim(operation_id, "claimed", new_fence,
+                              row["heygen_title"], row["attempt_started_at"])
+
+    @staticmethod
+    def _classify_reconcile_row(row, operation_id: str, now) -> ReconcileClaim | None:
+        if row["status"] not in RECONCILE_STATUSES or row["attempt_started_at"] is None:
+            return ReconcileClaim(operation_id, "not_ready", row["lease_fence"],
+                                  row["heygen_title"], row["attempt_started_at"])
+        owner = row["lease_owner"]
+        exp = row["lease_expires_at"]
+        if (owner is None) != (exp is None):
+            raise OperationIntegrityError(
+                f"operation {operation_id} has a half reconcile lease state"
+            )
+        if owner is not None and _parse_utc(exp) > now:
+            return ReconcileClaim(operation_id, "busy", row["lease_fence"],
+                                  row["heygen_title"], row["attempt_started_at"])
+        nr = row["next_retry_at"]
+        if nr is not None and _parse_utc(nr) > now:
+            return ReconcileClaim(operation_id, "retry_wait", row["lease_fence"],
+                                  row["heygen_title"], row["attempt_started_at"])
+        return None
 
 
 # --- coordinator -------------------------------------------------------
