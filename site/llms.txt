@@ -81,6 +81,11 @@ audio-coverage, subtitle-glyph, dimension, and full-render QA:
 - Xiaohongshu portrait, 1080×1920, H.264 + AAC, 288.433 seconds:
   https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu.mp4
 
+## Further Reading
+
+- AI course-video generator workflow: https://lecturecast.agentmesh360.com/guides/ai-course-video-generator/
+- Bilibili and Xiaohongshu course-video layouts: https://lecturecast.agentmesh360.com/guides/course-video-for-bilibili-xiaohongshu/
+
 ## Best Short Description
 
 Lecturecast is an AgentMesh360 commercial course-video product: the required

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI 课程视频生成：从一个主题到讲稿、配音、字幕与双版成片</title>
+  <meta name="description" content="AI 课程视频生成实用指南：从主题、Creative Brief、签名讲稿到本地 TTS、字幕、横版与竖版视频，并了解 LectureCast 的人工门禁。" />
+  <meta name="robots" content="index,follow,max-image-preview:large" />
+  <link rel="canonical" href="https://lecturecast.agentmesh360.com/guides/ai-course-video-generator/" />
+  <meta property="og:title" content="AI 课程视频生成：从主题到双版成片" />
+  <meta property="og:description" content="写一段脚本很容易，真正难的是把计划、讲稿、配音、字幕、横竖布局与 QA 连成一次可交付生产。" />
+  <meta property="og:type" content="article" />
+  <meta property="og:url" content="https://lecturecast.agentmesh360.com/guides/ai-course-video-generator/" />
+  <meta property="og:image" content="https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili-poster.jpg" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/seo.css" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {"@type": "Article", "headline": "AI 课程视频生成：从一个主题到讲稿、配音、字幕与双版成片", "datePublished": "2026-07-30", "dateModified": "2026-07-30", "inLanguage": "zh-CN", "author": {"@type": "Organization", "name": "AgentMesh360", "url": "https://agentmesh360.com/"}},
+      {"@type": "BreadcrumbList", "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "LectureCast", "item": "https://lecturecast.agentmesh360.com/"},
+        {"@type": "ListItem", "position": 2, "name": "AI 课程视频生成", "item": "https://lecturecast.agentmesh360.com/guides/ai-course-video-generator/"}
+      ]},
+      {"@type": "FAQPage", "mainEntity": [
+        {"@type": "Question", "name": "LectureCast 是否会自动开始付费生成？", "acceptedAnswer": {"@type": "Answer", "text": "不会。用户先批准 Creative Brief，再明确批准一次 10-credit ProductionManifest 生成，最后审阅并批准完整签名讲稿，之后才进入本地 TTS 与渲染。"}},
+        {"@type": "Question", "name": "原始媒体和成片会上传到云端吗？", "acceptedAnswer": {"@type": "Answer", "text": "不会。原始媒体、生成音频、字幕、渲染和成片留在本机；旁白文本会发送给用户选择的 TTS 服务。"}},
+        {"@type": "Question", "name": "LectureCast 支持哪些系统？", "acceptedAnswer": {"@type": "Answer", "text": "当前支持 macOS 和 Windows 原生环境；Linux 与 WSL 不在支持范围内。"}}
+      ]}
+    ]
+  }
+  </script>
+</head>
+<body data-product-contract="commercial-only-v1">
+  <header class="site-nav"><div class="container nav-inner"><a class="brand" href="/">LectureCast</a><nav class="nav-links" aria-label="页面导航"><a href="/guides/course-video-for-bilibili-xiaohongshu/">B站与小红书</a><a href="https://creatorcut.agentmesh360.com/">已有素材剪辑</a><a href="https://agentmesh360.com/app/#pricing">开通通行证</a></nav></div></header>
+  <main>
+    <section class="hero"><div class="container"><p class="eyebrow">AI 课程视频生成指南</p><h1>从一个主题到课程视频，中间不是只差一段脚本。</h1><p class="lead">一条可发布的课程视频还需要事实边界、章节结构、旁白时长、画面布局、字幕、配音、横竖双版和最终 QA。任何一个环节漂移，都会让“生成成功”变成不能交付。</p><div class="hero-actions"><a class="button primary" href="/">查看 LectureCast</a><a class="button" href="#workflow">看完整生产链</a></div></div></section>
+    <article class="container article">
+      <nav class="toc" aria-label="本页目录"><strong>本页内容</strong><a href="#inputs">准备输入</a><a href="#workflow">生产链路</a><a href="#gates">人工门禁</a><a href="#faq">常见问题</a></nav>
+      <section id="inputs">
+        <h2>开始前，先把主题变成可执行的 Creative Brief</h2>
+        <div class="grid">
+          <article class="card"><h3>目标观众</h3><p>他们已经知道什么、最需要解决什么、能接受多深的技术细节。面向初学者和面向专业团队的脚本结构完全不同。</p></article>
+          <article class="card"><h3>核心结论</h3><p>视频结束时希望观众记住哪一件事。没有明确结论，章节很容易变成相关信息的堆叠。</p></article>
+          <article class="card"><h3>事实与来源</h3><p>医学、法律、金融和版本敏感软件内容必须由用户提供或确认可靠事实，Agent 不能凭看似合理的语言补齐权威结论。</p></article>
+          <article class="card"><h3>风格与节奏</h3><p>语气、视觉密度、旁白速度、视频时长和平台比例需要在渲染前确定，不能等成片后再用裁切修补。</p></article>
+        </div>
+      </section>
+      <section id="workflow">
+        <h2>LectureCast 的完整生产链</h2>
+        <ol class="checklist">
+          <li><strong>商业 onboarding：</strong>Agent 验证通用 API Key、有效月卡、共享 credits 与本地渲染器。</li>
+          <li><strong>稳定选择与 Brief：</strong>用户确认受众、重点、风格和素材边界，不在这一步扣 credits。</li>
+          <li><strong>签名 ProductionManifest：</strong>用户明确批准 10 credits 后，Director 返回不可变计划和完整签名讲稿。</li>
+          <li><strong>完整讲稿审阅：</strong>用户逐段查看旁白并再次批准，宿主 Agent 不得自行改写签名内容。</li>
+          <li><strong>本地 TTS 与实测时长：</strong>使用 Edge TTS 或用户自己的 MiniMax Key 生成旁白，实际音频时长驱动画面和字幕。</li>
+          <li><strong>双版渲染：</strong>Remotion 分别生成 B 站 1920×1080 横版和小红书 1080×1920 竖版，不是把一个画面简单裁成两种容器。</li>
+          <li><strong>字幕、封面与 QA：</strong>ffmpeg 烧录中文字幕，生成两张 PNG 封面，并检查解码、音频覆盖、字幕字形、尺寸和完整渲染。</li>
+        </ol>
+        <div class="callout"><strong>标准交付是四个文件。</strong>两条 MP4 成片和两张对应封面。任何访问、素材、时长、字幕或渲染检查失败，都应停止交付，而不是用一段“完成了”的文字代替文件。</div>
+      </section>
+      <section id="gates">
+        <h2>三次独立人工门禁，分别保护什么</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>门禁</th><th>用户确认什么</th><th>不确认会怎样</th></tr></thead>
+            <tbody>
+              <tr><td>Creative Brief</td><td>主题方向、目标观众、事实与视觉选择</td><td>不进入付费生成</td></tr>
+              <tr><td>10-credit Manifest</td><td>同意按当前任务生成一次签名 ProductionManifest</td><td>不扣 credits，不生成签名计划</td></tr>
+              <tr><td>完整签名讲稿</td><td>逐段确认最终旁白文本</td><td>不进入 TTS、字幕与渲染</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>这些门禁不是重复弹窗。它们分别保护创意方向、付费动作和对外表达，任何一项都不能由宿主 Agent 代替用户假设同意。</p>
+      </section>
+      <section id="faq" class="faq">
+        <h2>常见问题</h2>
+        <details><summary>LectureCast 是否会自动开始付费生成？</summary><p>不会。用户先批准 Brief，再明确批准一次 10-credit Manifest，最后审阅完整签名讲稿，之后才进入本地执行。</p></details>
+        <details><summary>原始媒体和成片会上传吗？</summary><p>不会。原始媒体、音频、字幕、渲染和成片留在本机；旁白文本会发送给所选 TTS 服务。</p></details>
+        <details><summary>支持哪些系统？</summary><p>当前支持 macOS 和 Windows 原生环境；Linux 与 WSL 不在支持范围内。</p></details>
+      </section>
+      <section><div class="related"><h2>从一个主题开始生产</h2><p>查看 <a href="/">LectureCast 产品页</a>，确认有效月卡、安装环境、10-credit Manifest 与本地渲染边界。</p></div></section>
+    </article>
+  </main>
+  <footer class="site-footer"><div class="container footer-inner"><span>LectureCast · Cloud direction, local production</span><div class="footer-links"><a href="/">产品首页</a><a href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a><a href="https://agentmesh360.com/">AgentMesh360</a></div></div></footer>
+</body>
+</html>

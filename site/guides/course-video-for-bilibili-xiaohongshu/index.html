@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>B站与小红书课程视频：横版、竖版如何一次规划两套布局</title>
+  <meta name="description" content="B站横版和小红书竖版课程视频制作指南：比较 16:9 与 9:16 的构图、字幕、节奏、封面和信息密度，并了解 LectureCast 双版渲染。" />
+  <meta name="robots" content="index,follow,max-image-preview:large" />
+  <link rel="canonical" href="https://lecturecast.agentmesh360.com/guides/course-video-for-bilibili-xiaohongshu/" />
+  <meta property="og:title" content="B站与小红书课程视频：一次规划两套原生布局" />
+  <meta property="og:description" content="横版和竖版不是一次渲染加一次裁切。结构相同，视觉层级、字幕和安全区需要分别设计。" />
+  <meta property="og:type" content="article" />
+  <meta property="og:url" content="https://lecturecast.agentmesh360.com/guides/course-video-for-bilibili-xiaohongshu/" />
+  <meta property="og:image" content="https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu-poster.jpg" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/seo.css" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {"@type": "Article", "headline": "B站与小红书课程视频：横版、竖版如何一次规划两套布局", "datePublished": "2026-07-30", "dateModified": "2026-07-30", "inLanguage": "zh-CN", "author": {"@type": "Organization", "name": "AgentMesh360", "url": "https://agentmesh360.com/"}},
+      {"@type": "BreadcrumbList", "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "LectureCast", "item": "https://lecturecast.agentmesh360.com/"},
+        {"@type": "ListItem", "position": 2, "name": "B站与小红书课程视频", "item": "https://lecturecast.agentmesh360.com/guides/course-video-for-bilibili-xiaohongshu/"}
+      ]},
+      {"@type": "FAQPage", "mainEntity": [
+        {"@type": "Question", "name": "16:9 视频可以直接裁成 9:16 吗？", "acceptedAnswer": {"@type": "Answer", "text": "简单裁切通常会丢失左右信息、破坏标题层级和字幕安全区。更可靠的方法是共用讲稿与时间线，但分别渲染横版和竖版布局。"}},
+        {"@type": "Question", "name": "LectureCast 的两个版本是否使用同一讲稿？", "acceptedAnswer": {"@type": "Answer", "text": "是。两个版本使用同一份签名讲稿与实测时间线，但采用各自原生布局，并分别生成对应尺寸封面。"}},
+        {"@type": "Question", "name": "生成后会自动发布到平台吗？", "acceptedAnswer": {"@type": "Answer", "text": "不会。产品在本机交付视频和封面，最终是否发布、发布到哪个账号以及使用什么文案由用户决定。"}}
+      ]}
+    ]
+  }
+  </script>
+</head>
+<body data-product-contract="commercial-only-v1">
+  <header class="site-nav"><div class="container nav-inner"><a class="brand" href="/">LectureCast</a><nav class="nav-links" aria-label="页面导航"><a href="/guides/ai-course-video-generator/">AI 课程视频</a><a href="https://creatorcut.agentmesh360.com/">已有素材剪辑</a><a href="https://agentmesh360.com/app/#pricing">开通通行证</a></nav></div></header>
+  <main>
+    <section class="hero"><div class="container"><p class="eyebrow">Bilibili × Xiaohongshu</p><h1>同一份课程内容，需要两套原生画面。</h1><p class="lead">B站横版适合分栏、图表和长时间观看；小红书竖版强调中心构图、移动端字幕与更紧凑的信息层级。共用讲稿，不等于共用画布。</p><div class="hero-actions"><a class="button primary" href="/">查看 LectureCast</a><a class="button" href="#compare">比较两种布局</a></div></div></section>
+    <article class="container article">
+      <nav class="toc" aria-label="本页目录"><strong>本页内容</strong><a href="#compare">横竖对比</a><a href="#workflow">一次生产</a><a href="#qa">交付检查</a><a href="#faq">常见问题</a></nav>
+      <section id="compare">
+        <h2>16:9 与 9:16，不只是分辨率不同</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>维度</th><th>B站横版 1920×1080</th><th>小红书竖版 1080×1920</th></tr></thead>
+            <tbody>
+              <tr><td>构图</td><td>适合左右分栏、讲解加图表、长代码或宽流程</td><td>核心信息集中在中轴，避免重要内容靠近顶部和底部 UI 区</td></tr>
+              <tr><td>字幕</td><td>可使用较宽单行，但要避开播放器控制区</td><td>单行更短、字号更大，不能遮挡核心画面</td></tr>
+              <tr><td>信息密度</td><td>同屏可展示更多关系与上下文</td><td>一次只强调一个信息块，复杂图表需要重排</td></tr>
+              <tr><td>节奏</td><td>允许更长停留和更完整推导</td><td>需要更快建立主题，但不能因此删掉必要解释</td></tr>
+              <tr><td>封面</td><td>横向标题与主体关系</td><td>移动端小尺寸下仍要读清标题，主体避免被平台裁切</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section id="workflow">
+        <h2>如何用一份讲稿生产两套布局</h2>
+        <ol class="checklist">
+          <li><strong>共用事实与叙事：</strong>两版使用同一签名讲稿，避免平台版本之间出现结论不一致。</li>
+          <li><strong>共用实测音频：</strong>旁白时长驱动同一时间线，章节开始和结束保持一致。</li>
+          <li><strong>分别选择组件：</strong>横版可以并排展示，竖版改用上下层级、分页或重点放大。</li>
+          <li><strong>分别生成字幕布局：</strong>文本相同，但单行长度、位置和安全区独立适配。</li>
+          <li><strong>分别渲染与 QA：</strong>两个 MP4 都要完成解码、音频覆盖、字幕字形和尺寸检查。</li>
+          <li><strong>分别生成封面：</strong>一张横版、一张竖版，不能只对同一封面做居中裁切。</li>
+        </ol>
+        <div class="callout"><strong>LectureCast 不是把横版裁成竖版。</strong>标准交付用同一签名脚本和实测时间线，分别渲染两种原生布局，并产出两张对应封面。</div>
+      </section>
+      <section id="qa">
+        <h2>发布前分别检查</h2>
+        <ul class="checklist">
+          <li>两个版本的章节、旁白和结论是否完全一致。</li>
+          <li>竖版是否出现被平台按钮遮挡的字幕或底部信息。</li>
+          <li>横版的图表、代码和引用是否在普通笔记本屏幕上可读。</li>
+          <li>是否存在一个版本使用了错误素材或历史缓存。</li>
+          <li>两条视频的音频覆盖是否完整，结尾是否被提前截断。</li>
+          <li>两张封面的标题是否在缩略图尺寸下仍然清楚。</li>
+        </ul>
+        <p>关于从主题、Brief 到签名讲稿的完整过程，请阅读 <a href="/guides/ai-course-video-generator/">AI 课程视频生成指南</a>。</p>
+      </section>
+      <section id="faq" class="faq">
+        <h2>常见问题</h2>
+        <details><summary>16:9 视频可以直接裁成 9:16 吗？</summary><p>简单裁切通常会丢失左右信息、破坏标题层级与字幕安全区。更可靠的方法是共用讲稿和时间线，分别渲染两套布局。</p></details>
+        <details><summary>两个版本是否使用同一讲稿？</summary><p>是。两个版本使用同一签名讲稿与实测时间线，但采用各自原生布局，并分别生成封面。</p></details>
+        <details><summary>生成后会自动发布到平台吗？</summary><p>不会。产品在本机交付视频与封面，最终是否发布、发布到哪个账号和使用什么文案由用户决定。</p></details>
+      </section>
+      <section><div class="related"><h2>一次主题，交付两套原生视频</h2><p>查看 <a href="/">LectureCast 产品页</a>中的真实横竖双版交付样例、安装要求与人工门禁。</p></div></section>
+    </article>
+  </main>
+  <footer class="site-footer"><div class="container footer-inner"><span>LectureCast · One script, two native layouts</span><div class="footer-links"><a href="/">产品首页</a><a href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a><a href="https://agentmesh360.com/">AgentMesh360</a></div></div></footer>
+</body>
+</html>
