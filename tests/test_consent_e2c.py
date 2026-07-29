@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import copy
+import json
 import sqlite3
 import threading
 from pathlib import Path
@@ -22,64 +22,22 @@ from lecturecast.consent import (
     ThirdPartyTransferDisclosure,
     prepare_operation,
 )
+from lecturecast.protocol import (
+    CreativeBriefV1_1,
+    OrchestrationPlanV1_1,
+    ProductionManifest,
+)
 from lecturecast.protocol.canonical import canonical_digest
 
 D = "sha256:" + "a" * 64
 GEN = "gen_1"
 DB_REL = Path(".lecturecast") / "runtime" / "heygen-operations.db"
+FIXTURE_DIR = Path(__file__).parent / "fixtures"
+import hashlib
 
-
-class _Doc:
-    """Lightweight stand-in for a ProtocolDocument. The guard recomputes digests
-    from model_dump() and reads .payload; it does NOT validate schema or
-    signatures (that is e3's job before calling the guard)."""
-
-    def __init__(self, payload: dict):
-        self._payload = payload
-
-    def model_dump(self) -> dict:
-        return copy.deepcopy(self._payload)
-
-    @property
-    def payload(self) -> dict:
-        return self._payload
-
-
-def _chain(*, avatar="photo", consent_status="granted", consented_at="2026-07-29T00:00:00Z",
-           gen=GEN):
-    brief_p = {
-        "schema_version": "1.1",
-        "brief_id": "b1",
-        "presenter": {
-            "avatar": avatar,
-            "voice_mode": "own_voice",
-            "third_party_processing": {
-                "provider": "heygen",
-                "credential_mode": "byo_local",
-                "consent_status": consent_status,
-                "disclosure_version": "heygen-transfer-2026-07-27",
-                "consented_at": consented_at,
-            },
-        },
-    }
-    brief = _Doc(brief_p)
-    brief_digest = canonical_digest(brief)
-    manifest_p = {"generation_id": gen, "brief_digest": brief_digest, "scenes": [], "outputs": []}
-    manifest = _Doc(manifest_p)
-    manifest_digest = canonical_digest(manifest)
-    orch_p = {
-        "generation_id": gen,
-        "production_manifest_digest": manifest_digest,
-        "presenter_plan_digest": "sha256:" + "p" * 64,
-    }
-    orch = _Doc(orch_p)
-    orch_digest = canonical_digest(orch)
-    request_descriptor = {"video_inputs": {"avatar": "photo"}, "title": "lecturecast:t"}
-    request_digest = canonical_digest(request_descriptor)
-    return brief, manifest, orch, request_descriptor, {
-        "brief_digest": brief_digest, "manifest_digest": manifest_digest,
-        "orch_digest": orch_digest, "request_digest": request_digest,
-    }
+def Z(seed) -> str:
+    """A valid, distinct sha256 digest from any seed (for non-artifact identities)."""
+    return "sha256:" + hashlib.sha256(str(seed).encode()).hexdigest()
 
 
 def _identity(digests, gen=GEN) -> HeyGenOperationIdentity:
@@ -103,9 +61,75 @@ def _disclosure() -> ThirdPartyTransferDisclosure:
     )
 
 
-def _grant(svc, prepared, brief_digest):
-    return svc.record_decision(prepared=prepared, disclosure=_disclosure(), decision="granted",
-                               creative_brief_digest=brief_digest, decision_at="2026-07-29T00:00:00Z")
+def _grant_only(svc, gen=GEN):
+    """Grant an operation using arbitrary (non-artifact) digests — enough for
+    withdraw tests, which don't verify the artifact chain."""
+    digests = {"brief_digest": Z("b"), "manifest_digest": Z("m"),
+               "orch_digest": Z("o"), "request_digest": Z("r")}
+    prepared = prepare_operation(_identity(digests, gen))
+    svc.record_decision(prepared=prepared, disclosure=_disclosure(), decision="granted",
+                        creative_brief_digest=digests["brief_digest"], decision_at="2026-07-29T00:00:00Z")
+    return prepared
+
+
+def _real_chain(gen=GEN, avatar="photo", consent_status="granted",
+                consented_at="2026-07-29T00:00:00Z"):
+    """Build real schema-valid Brief/Manifest/Orchestration with a chained digest
+    set, for the guard (which isinstance-checks each)."""
+    brief_p = json.loads((FIXTURE_DIR / "creative-brief-v1_1.json").read_text())
+    brief_p["presenter"] = {
+        "avatar": avatar, "voice_mode": "own_voice", "presenter_mode": "three_segment",
+        "bgm": "none",
+        "third_party_processing": {
+            "provider": "heygen", "credential_mode": "byo_local",
+            "consent_status": consent_status,
+            "disclosure_version": "heygen-transfer-2026-07-27",
+            "consented_at": consented_at,
+        },
+    }
+    brief = CreativeBriefV1_1.model_validate(brief_p)
+    brief_digest = canonical_digest(brief)
+    manifest_p = json.loads((FIXTURE_DIR / "production-manifest-v1.json").read_text())
+    manifest_p["generation_id"] = gen
+    manifest_p["brief_digest"] = brief_digest
+    manifest = ProductionManifest.model_validate(manifest_p)
+    manifest_digest = canonical_digest(manifest)
+    orch_p = {
+        "schema_version": "1.1", "orchestration_plan_id": "orch_1", "generation_id": gen,
+        "production_manifest_digest": manifest_digest, "brief_digest": brief_digest,
+        "capability_digest": Z("c"), "component_catalog_digest": Z("d"),
+        "bgm_enabled": False, "ffmpeg_overlay_template_id": "lec.overlay.v1",
+        "timing_placeholder_contract": "{{placeholder}}", "voice_orchestration": None,
+        "speed": 1.25, "bgm_genre": "none", "presenter_plan_digest": Z("p"),
+        "signature": {"algorithm": "Ed25519", "key_id": "lec.signing.v1", "value": "A" * 86 + "=="},
+        "created_at": "2026-07-29T00:00:00Z", "content_expires_at": "2026-07-29T00:00:00Z",
+    }
+    orch = OrchestrationPlanV1_1.model_validate(orch_p)
+    orch_digest = canonical_digest(orch)
+    request_descriptor = {"video_inputs": {"avatar": "photo"}, "title": "lecturecast:t"}
+    request_digest = canonical_digest(request_descriptor)
+    digests = {"brief_digest": brief_digest, "manifest_digest": manifest_digest,
+               "orch_digest": orch_digest, "request_digest": request_digest}
+    return brief, manifest, orch, request_descriptor, digests
+
+
+def _manifest_variant(manifest, **changes):
+    p = manifest.model_dump()
+    p.update(changes)
+    return ProductionManifest.model_validate(p)
+
+
+def _orch_variant(orch, **changes):
+    p = orch.model_dump()
+    p.update(changes)
+    return OrchestrationPlanV1_1.model_validate(p)
+
+
+def _grant_real(svc, digests):
+    prepared = prepare_operation(_identity(digests))
+    svc.record_decision(prepared=prepared, disclosure=_disclosure(), decision="granted",
+                        creative_brief_digest=digests["brief_digest"], decision_at="2026-07-29T00:00:00Z")
+    return prepared
 
 
 def _fk_off(project: Path) -> sqlite3.Connection:
@@ -114,35 +138,35 @@ def _fk_off(project: Path) -> sqlite3.Connection:
     return db
 
 
+def _row(project, sql, params=()):
+    db = sqlite3.connect(str(project / DB_REL))
+    db.row_factory = sqlite3.Row
+    row = db.execute(sql, params).fetchone()
+    db.close()
+    return row
+
+
 # ---- withdraw ----------------------------------------------------------
 
-def test_withdraw_pristine_cancels_operation_and_clears_pointer(tmp_path: Path):
+def test_withdraw_pristine_cancels_and_no_cleanup(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, _, _, _, dig = _chain()
-    prepared = prepare_operation(_identity(dig))
-    _grant(svc, prepared, dig["brief_digest"])
+    prepared = _grant_only(svc)
     res = svc.withdraw(prepared.operation_id)
     assert res.cleanup_required is False
     assert res.idempotent is False
-    db = sqlite3.connect(str(tmp_path / DB_REL))
-    db.row_factory = sqlite3.Row
-    op = db.execute("SELECT status, consent_receipt_digest FROM heygen_operations WHERE operation_id = ?",
-                    (prepared.operation_id,)).fetchone()
-    rc = db.execute("SELECT status, withdrawn_at FROM heygen_consent_receipts WHERE operation_id = ?",
-                    (prepared.operation_id,)).fetchone()
-    db.close()
+    op = _row(tmp_path, "SELECT status, consent_receipt_digest FROM heygen_operations WHERE operation_id = ?",
+              (prepared.operation_id,))
+    rc = _row(tmp_path, "SELECT status, withdrawn_at FROM heygen_consent_receipts WHERE operation_id = ?",
+              (prepared.operation_id,))
     assert op["status"] == "cancelled"
     assert op["consent_receipt_digest"] is None
     assert rc["status"] == "withdrawn"
-    assert rc["withdrawn_at"] is not None
 
 
 @pytest.mark.parametrize("progressed", ["submitted", "failed", "submit_attempts", "remote_ref"])
 def test_withdraw_non_pristine_requires_cleanup(tmp_path: Path, progressed: str):
     svc = ConsentService(tmp_path)
-    brief, _, _, _, dig = _chain()
-    prepared = prepare_operation(_identity(dig))
-    _grant(svc, prepared, dig["brief_digest"])
+    prepared = _grant_only(svc)
     db = _fk_off(tmp_path)
     if progressed == "submit_attempts":
         db.execute("UPDATE heygen_operations SET submit_attempts = 1 WHERE operation_id = ?",
@@ -161,35 +185,44 @@ def test_withdraw_non_pristine_requires_cleanup(tmp_path: Path, progressed: str)
     db.close()
     res = svc.withdraw(prepared.operation_id)
     assert res.cleanup_required is True
-    db = sqlite3.connect(str(tmp_path / DB_REL))
-    db.row_factory = sqlite3.Row
-    op = db.execute("SELECT status, consent_receipt_digest FROM heygen_operations WHERE operation_id = ?",
-                    (prepared.operation_id,)).fetchone()
-    db.close()
-    # operation status preserved (not silently cancelled), pointer cleared
+    op = _row(tmp_path, "SELECT status, consent_receipt_digest FROM heygen_operations WHERE operation_id = ?",
+              (prepared.operation_id,))
     assert op["consent_receipt_digest"] is None
     if progressed not in ("submitted", "failed"):
         assert op["status"] != "cancelled"
 
 
-def test_withdraw_replay_keeps_original_withdrawn_at(tmp_path: Path):
+def test_withdraw_replay_keeps_cleanup_topology(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, _, _, _, dig = _chain()
-    prepared = prepare_operation(_identity(dig))
-    _grant(svc, prepared, dig["brief_digest"])
+    # pristine: both calls cleanup_required=False
+    prepared = _grant_only(svc)
     first = svc.withdraw(prepared.operation_id)
     second = svc.withdraw(prepared.operation_id)
+    assert first.cleanup_required is False
+    assert second.cleanup_required is False
     assert second.idempotent is True
     assert second.withdrawn_at == first.withdrawn_at
-    assert second.cleanup_required is True  # already withdrawn ⇒ not pristine
+
+    # engaged: both calls cleanup_required=True
+    engaged = _grant_only(svc, gen="gen_2")
+    db = _fk_off(tmp_path)
+    db.execute("UPDATE heygen_operations SET status = 'submitted' WHERE operation_id = ?",
+               (engaged.operation_id,))
+    db.commit()
+    db.close()
+    e1 = svc.withdraw(engaged.operation_id)
+    e2 = svc.withdraw(engaged.operation_id)
+    assert e1.cleanup_required is True and e2.cleanup_required is True
 
 
 def test_withdraw_declined_or_missing_rejected(tmp_path: Path):
+    from lecturecast.consent import ConsentStateError as _CSE  # noqa: F401
     svc = ConsentService(tmp_path)
-    brief, _, _, _, dig = _chain()
-    prepared = prepare_operation(_identity(dig))
+    digests = {"brief_digest": Z("b"), "manifest_digest": Z("m"),
+               "orch_digest": Z("o"), "request_digest": Z("r")}
+    prepared = prepare_operation(_identity(digests))
     svc.record_decision(prepared=prepared, disclosure=_disclosure(), decision="declined",
-                        creative_brief_digest=dig["brief_digest"], decision_at="2026-07-29T00:00:00Z")
+                        creative_brief_digest=digests["brief_digest"], decision_at="2026-07-29T00:00:00Z")
     with pytest.raises(ConsentStateError):
         svc.withdraw(prepared.operation_id)
     with pytest.raises(ConsentStateError):
@@ -198,9 +231,7 @@ def test_withdraw_declined_or_missing_rejected(tmp_path: Path):
 
 def test_withdraw_fail_closed_on_tampered_receipt(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, _, _, _, dig = _chain()
-    prepared = prepare_operation(_identity(dig))
-    _grant(svc, prepared, dig["brief_digest"])
+    prepared = _grant_only(svc)
     db = _fk_off(tmp_path)
     db.execute("UPDATE heygen_consent_receipts SET disclosed_assets_json = '[]' WHERE operation_id = ?",
                (prepared.operation_id,))
@@ -208,20 +239,14 @@ def test_withdraw_fail_closed_on_tampered_receipt(tmp_path: Path):
     db.close()
     with pytest.raises(ConsentIntegrityError):
         svc.withdraw(prepared.operation_id)
-    # State unchanged: still granted, pointer intact.
-    db = sqlite3.connect(str(tmp_path / DB_REL))
-    db.row_factory = sqlite3.Row
-    rc = db.execute("SELECT status FROM heygen_consent_receipts WHERE operation_id = ?",
-                    (prepared.operation_id,)).fetchone()
-    db.close()
+    rc = _row(tmp_path, "SELECT status FROM heygen_consent_receipts WHERE operation_id = ?",
+              (prepared.operation_id,))
     assert rc["status"] == "granted"
 
 
 def test_concurrent_withdraw_transitions_once(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, _, _, _, dig = _chain()
-    prepared = prepare_operation(_identity(dig))
-    _grant(svc, prepared, dig["brief_digest"])
+    prepared = _grant_only(svc)
     barrier = threading.Barrier(2)
     results = []
 
@@ -229,54 +254,102 @@ def test_concurrent_withdraw_transitions_once(tmp_path: Path):
         barrier.wait()
         results.append(svc.withdraw(prepared.operation_id))
 
-    t1 = threading.Thread(target=run)
-    t2 = threading.Thread(target=run)
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
-    transitions = [r for r in results if not r.idempotent]
-    replays = [r for r in results if r.idempotent]
-    assert len(transitions) == 1
-    assert len(replays) == 1
-    db = sqlite3.connect(str(tmp_path / DB_REL))
-    db.row_factory = sqlite3.Row
-    rc = db.execute("SELECT status FROM heygen_consent_receipts WHERE operation_id = ?",
-                    (prepared.operation_id,)).fetchone()
-    db.close()
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sum(1 for r in results if not r.idempotent) == 1
+    assert sum(1 for r in results if r.idempotent) == 1
+    rc = _row(tmp_path, "SELECT status FROM heygen_consent_receipts WHERE operation_id = ?",
+              (prepared.operation_id,))
     assert rc["status"] == "withdrawn"
+
+
+def test_withdraw_rolls_back_when_operation_update_fails(tmp_path: Path):
+    """Fault injection: if the operation UPDATE fails after the receipt is
+    flipped to withdrawn, the whole transaction rolls back — receipt still
+    granted, consent pointer still set."""
+    svc = ConsentService(tmp_path)
+    prepared = _grant_only(svc)
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("CREATE TRIGGER stop_op_update BEFORE UPDATE ON heygen_operations "
+               "BEGIN SELECT RAISE(ABORT, 'injected'); END")
+    db.commit()
+    db.close()
+    with pytest.raises(Exception):
+        svc.withdraw(prepared.operation_id)
+    rc = _row(tmp_path, "SELECT status FROM heygen_consent_receipts WHERE operation_id = ?",
+              (prepared.operation_id,))
+    op = _row(tmp_path, "SELECT consent_receipt_digest FROM heygen_operations WHERE operation_id = ?",
+              (prepared.operation_id,))
+    assert rc["status"] == "granted"
+    assert op["consent_receipt_digest"] is not None
+
+
+# ---- record_decision fault injection ----------------------------------
+
+def test_record_decision_rolls_back_when_receipt_insert_fails(tmp_path: Path):
+    from lecturecast.heygen_journal import init_database
+    init_database(tmp_path).close()
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("CREATE TRIGGER stop_receipt_insert BEFORE INSERT ON heygen_consent_receipts "
+               "BEGIN SELECT RAISE(ABORT, 'injected'); END")
+    db.commit()
+    db.close()
+    svc = ConsentService(tmp_path)
+    digests = {"brief_digest": Z("b"), "manifest_digest": Z("m"),
+               "orch_digest": Z("o"), "request_digest": Z("r")}
+    prepared = prepare_operation(_identity(digests))
+    with pytest.raises(Exception):
+        svc.record_decision(prepared=prepared, disclosure=_disclosure(), decision="granted",
+                            creative_brief_digest=digests["brief_digest"], decision_at="2026-07-29T00:00:00Z")
+    n = sqlite3.connect(str(tmp_path / DB_REL)).execute(
+        "SELECT COUNT(*) FROM heygen_operations WHERE operation_id = ?", (prepared.operation_id,)
+    ).fetchone()[0]
+    assert n == 0  # operation row must not be residual
 
 
 # ---- forged PreparedOperation -----------------------------------------
 
 def test_record_decision_rejects_forged_prepared(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, _, _, _, dig = _chain()
-    prepared = prepare_operation(_identity(dig))
+    prepared = _grant_only(svc)
     forged = PreparedOperation(
-        operation_id="lc_hg_forged",
-        idempotency_key=prepared.idempotency_key,
-        heygen_title=prepared.heygen_title,
-        identity=prepared.identity,
+        operation_id="lc_hg_forged", idempotency_key=prepared.idempotency_key,
+        heygen_title=prepared.heygen_title, identity=prepared.identity,
     )
     with pytest.raises(ConsentConflictError):
         svc.record_decision(prepared=forged, disclosure=_disclosure(), decision="granted",
-                            creative_brief_digest=dig["brief_digest"], decision_at="2026-07-29T00:00:00Z")
+                            creative_brief_digest=Z("b"), decision_at="2026-07-29T00:00:00Z")
 
 
 # ---- validate_submit_consent guard ------------------------------------
 
-def _guard_ok(svc, prepared, brief, manifest, orch, request_descriptor):
-    return svc.validate_submit_consent(prepared=prepared, brief=brief, manifest=manifest,
-                                       orchestration_plan=orch, request_descriptor=request_descriptor)
+def _guard(svc, prepared, brief, manifest, orch, req, *, in_tx=False):
+    if in_tx:
+        from lecturecast.heygen_journal import init_database
+        conn = init_database(svc._project_dir)
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            res = svc.validate_submit_consent_in_tx(
+                conn, prepared=prepared, brief=brief, manifest=manifest,
+                orchestration_plan=orch, request_descriptor=req)
+            conn.execute("COMMIT")
+            return res
+        finally:
+            conn.close()
+    return svc.validate_submit_consent(
+        prepared=prepared, brief=brief, manifest=manifest,
+        orchestration_plan=orch, request_descriptor=req)
 
 
 def test_guard_authorizes_a_properly_chained_submit(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, manifest, orch, request_descriptor, dig = _chain()
-    prepared = prepare_operation(_identity(dig))
-    _grant(svc, prepared, dig["brief_digest"])
-    result = _guard_ok(svc, prepared, brief, manifest, orch, request_descriptor)
+    brief, manifest, orch, req, dig = _real_chain()
+    prepared = _grant_real(svc, dig)
+    result = _guard(svc, prepared, brief, manifest, orch, req)
     assert result.operation_id == prepared.operation_id
     assert result.manifest_digest == dig["manifest_digest"]
     assert result.orchestration_plan_digest == dig["orch_digest"]
@@ -284,80 +357,117 @@ def test_guard_authorizes_a_properly_chained_submit(tmp_path: Path):
     assert result.generation_id == GEN
 
 
+def test_guard_runs_in_caller_transaction(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    brief, manifest, orch, req, dig = _real_chain()
+    prepared = _grant_real(svc, dig)
+    result = _guard(svc, prepared, brief, manifest, orch, req, in_tx=True)
+    assert result.receipt_digest.startswith("sha256:")
+
+
+def test_guard_rejects_non_protocol_objects(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    brief, manifest, orch, req, dig = _real_chain()
+    prepared = _grant_real(svc, dig)
+
+    class _FakeDoc:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def model_dump(self):
+            return dict(self._payload)
+
+        @property
+        def payload(self):
+            return self._payload
+
+    fake_brief = _FakeDoc(brief.model_dump())
+    with pytest.raises(ConsentConflictError):
+        svc.validate_submit_consent(prepared=prepared, brief=fake_brief, manifest=manifest,
+                                    orchestration_plan=orch, request_descriptor=req)
+
+
 def test_guard_rejects_brief_not_granted(tmp_path: Path):
     svc = ConsentService(tmp_path)
     for status in ("declined", "not_applicable"):
-        brief, manifest, orch, req, dig = _chain(consent_status=status)
-        prepared = prepare_operation(_identity(dig))
-        _grant(svc, prepared, dig["brief_digest"])
+        brief, manifest, orch, req, dig = _real_chain(consent_status=status)
+        prepared = _grant_real(svc, dig)
         with pytest.raises(ConsentStateError):
-            _guard_ok(svc, prepared, brief, manifest, orch, req)
+            _guard(svc, prepared, brief, manifest, orch, req)
 
 
 def test_guard_rejects_brief_avatar_not_photo(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, manifest, orch, req, dig = _chain(avatar="none", consent_status="not_applicable")
-    prepared = prepare_operation(_identity(dig))
-    _grant(svc, prepared, dig["brief_digest"])
+    brief, manifest, orch, req, dig = _real_chain(avatar="none", consent_status="not_applicable")
+    prepared = _grant_real(svc, dig)
     with pytest.raises(ConsentStateError):
-        _guard_ok(svc, prepared, brief, manifest, orch, req)
+        _guard(svc, prepared, brief, manifest, orch, req)
 
 
 @pytest.mark.parametrize("break_", ["brief_digest", "manifest_digest", "orch_digest",
                                     "request_digest", "manifest_generation", "orch_generation"])
 def test_guard_rejects_broken_chain(tmp_path: Path, break_: str):
     svc = ConsentService(tmp_path)
-    brief, manifest, orch, req, dig = _chain()
-    prepared = prepare_operation(_identity(dig))
-    _grant(svc, prepared, dig["brief_digest"])
-    # Mutate one artifact to break the chain after grant.
+    brief, manifest, orch, req, dig = _real_chain()
+    prepared = _grant_real(svc, dig)
     if break_ == "brief_digest":
-        manifest.payload["brief_digest"] = "sha256:" + "0" * 64
+        manifest = _manifest_variant(manifest, brief_digest=Z("0"))
     elif break_ == "manifest_digest":
-        # identity carries the old manifest_digest; mutate manifest content.
-        manifest.payload["extra"] = "tampered"
+        manifest = _manifest_variant(manifest, total_frames=manifest.payload["total_frames"] + 1000)
     elif break_ == "orch_digest":
-        orch.payload["extra"] = "tampered"
+        orch = _orch_variant(orch, created_at="2026-07-28T00:00:00Z")
     elif break_ == "request_digest":
-        req["extra"] = "tampered"
+        req = dict(req, extra="tampered")
     elif break_ == "manifest_generation":
-        manifest.payload["generation_id"] = "gen_other"
+        manifest = _manifest_variant(manifest, generation_id="gen_other")
     elif break_ == "orch_generation":
-        orch.payload["generation_id"] = "gen_other"
+        orch = _orch_variant(orch, generation_id="gen_other")
     with pytest.raises(ConsentConflictError):
-        _guard_ok(svc, prepared, brief, manifest, orch, req)
+        _guard(svc, prepared, brief, manifest, orch, req)
 
 
 def test_guard_rejects_forged_prepared(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, manifest, orch, req, dig = _chain()
-    prepared = prepare_operation(_identity(dig))
-    _grant(svc, prepared, dig["brief_digest"])
+    brief, manifest, orch, req, dig = _real_chain()
+    prepared = _grant_real(svc, dig)
     forged = PreparedOperation(
         operation_id="lc_hg_forged", idempotency_key=prepared.idempotency_key,
         heygen_title=prepared.heygen_title, identity=prepared.identity,
     )
     with pytest.raises(ConsentConflictError):
-        _guard_ok(svc, forged, brief, manifest, orch, req)
+        _guard(svc, forged, brief, manifest, orch, req)
 
 
 def test_guard_rejects_after_withdraw(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, manifest, orch, req, dig = _chain()
-    prepared = prepare_operation(_identity(dig))
-    _grant(svc, prepared, dig["brief_digest"])
+    brief, manifest, orch, req, dig = _real_chain()
+    prepared = _grant_real(svc, dig)
     svc.withdraw(prepared.operation_id)
-    # Withdraw cleared the pointer + cancelled the (pristine) operation.
     with pytest.raises(ConsentStateError):
-        _guard_ok(svc, prepared, brief, manifest, orch, req)
+        _guard(svc, prepared, brief, manifest, orch, req)
 
 
 def test_guard_rejects_unauthorized_operation(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, manifest, orch, req, dig = _chain()
+    brief, manifest, orch, req, dig = _real_chain()
     prepared = prepare_operation(_identity(dig))
-    # Decline → no consent pointer, operation cancelled.
     svc.record_decision(prepared=prepared, disclosure=_disclosure(), decision="declined",
                         creative_brief_digest=dig["brief_digest"], decision_at="2026-07-29T00:00:00Z")
     with pytest.raises(ConsentStateError):
-        _guard_ok(svc, prepared, brief, manifest, orch, req)
+        _guard(svc, prepared, brief, manifest, orch, req)
+
+
+def test_guard_vs_claim_race_is_deterministic(tmp_path: Path):
+    """If e3 has already claimed (submit_attempts>0) and committed, a subsequent
+    withdraw reports cleanup_required=True (remote engaged)."""
+    svc = ConsentService(tmp_path)
+    brief, manifest, orch, req, dig = _real_chain()
+    prepared = _grant_real(svc, dig)
+    # Simulate the claim tx having committed an attempt.
+    db = _fk_off(tmp_path)
+    db.execute("UPDATE heygen_operations SET submit_attempts = 1, attempt_started_at = ? "
+               "WHERE operation_id = ?", ("2026-07-29T00:00:00Z", prepared.operation_id))
+    db.commit()
+    db.close()
+    res = svc.withdraw(prepared.operation_id)
+    assert res.cleanup_required is True
