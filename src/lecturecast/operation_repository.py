@@ -69,6 +69,7 @@ _RECONCILE_WITHDRAWN = "consent_withdrawn_cleanup_required"
 # A permanent title-search failure parks the operation for manual recovery; the
 # candidate scan and claim exclude this code so maintenance does not hot-loop it.
 _MANUAL_RECONCILE_CODE = "manual_reconciliation_required"
+DOWNLOAD_BACKOFF_SECONDS = 120        # failed-download retry backoff
 
 
 class OperationError(RuntimeError):
@@ -188,6 +189,15 @@ class ReconcileOutcome:
 class ReconcileOnceResult:
     claim: ReconcileClaim
     outcome: ReconcileOutcome | None
+
+
+@dataclass(frozen=True)
+class DownloadClaim:
+    operation_id: str
+    status: str          # "claimed" | "busy" | "retry_wait" | "not_ready" | "consent_withdrawn"
+    fence: int
+    remote_id: str | None
+    resource_id: int | None
 
 
 # --- repository --------------------------------------------------------
@@ -1084,6 +1094,137 @@ class OperationRepository:
         # Multiple precise matches — never pick arbitrarily.
         return {"verdict": "indeterminate", "target": "reconciliation_required", "register": [],
                 "last_error": "multiple_matches", "next_retry": backoff}
+
+    # -- download claim (§5.5e4a1) -------------------------------------
+
+    def claim_download_in_tx(
+        self,
+        conn: sqlite3.Connection,
+        operation_id: str,
+        lease_owner: str,
+        now_iso: str,
+        lease_seconds: int,
+    ) -> DownloadClaim:
+        """Claim a download lease on a completed operation with exactly one
+        exclusive video resource. Eligible download_status: not_started; failed
+        with backoff elapsed; or downloading with an EXPIRED lease (crash
+        recovery reclaim). A withdrawn receipt (user withdrew after completion,
+        before download) refuses the download and flips the resource into
+        consent-cleanup (deletion_pending + consent_withdrawal) for e4b. Guards:
+        operation status=completed, granted receipt with valid pointer/integrity
+        (full validator), exactly one exclusive non-deleted video resource, no
+        active lease / backoff. Bumps fence + download_attempts; sets
+        download_status='downloading'."""
+        self._require_tx(conn)
+        conn.row_factory = sqlite3.Row
+        _require_lease_owner(lease_owner)
+        now = _parse_utc(now_iso)
+        _check_lease_seconds(lease_seconds)
+        expires_iso = _canonical(now + timedelta(seconds=lease_seconds))
+
+        row = conn.execute(
+            "SELECT status, download_status, download_attempts, lease_owner, "
+            "lease_expires_at, lease_fence, next_retry_at FROM heygen_operations "
+            "WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()
+        if row is None or row["status"] != "completed":
+            return DownloadClaim(operation_id, "not_ready", 0, None, None)
+
+        receipt = conn.execute(
+            "SELECT * FROM heygen_consent_receipts WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()
+        op_full = conn.execute(
+            "SELECT * FROM heygen_operations WHERE operation_id = ?", (operation_id,)
+        ).fetchone()
+        if receipt is None:
+            return DownloadClaim(operation_id, "not_ready", row["lease_fence"], None, None)
+        ConsentService._validate_existing_integrity(receipt, op_full, conn)
+
+        # Withdrawn after completion → no delivery; route the resource to cleanup.
+        if receipt["status"] == "withdrawn":
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_status = 'deletion_pending', "
+                "deletion_reason = 'consent_withdrawal', updated_at = ? "
+                "WHERE created_by_operation_id = ? AND resource_kind = 'video' "
+                "AND deletion_status = 'not_started'",
+                (_canonical(now), operation_id),
+            )
+            return DownloadClaim(operation_id, "consent_withdrawn", row["lease_fence"], None, None)
+        if receipt["status"] != "granted":
+            return DownloadClaim(operation_id, "not_ready", row["lease_fence"], None, None)
+
+        # Exactly one exclusive, non-deleted video resource.
+        resources = conn.execute(
+            "SELECT r.resource_id, r.remote_id, r.created_by_operation_id, "
+            "r.credential_profile_id, r.deletion_status FROM heygen_remote_resources r "
+            "JOIN heygen_resource_operation_refs ref ON ref.resource_id = r.resource_id "
+            "WHERE ref.operation_id = ? AND r.resource_kind = 'video'",
+            (operation_id,),
+        ).fetchall()
+        if len(resources) != 1:
+            return DownloadClaim(operation_id, "not_ready", row["lease_fence"], None, None)
+        res = resources[0]
+        if res["created_by_operation_id"] != operation_id:
+            raise OperationIntegrityError(
+                f"operation {operation_id} downloads a video owned by another operation"
+            )
+        if res["credential_profile_id"] != op_full["credential_profile_id"]:
+            raise OperationIntegrityError("credential_profile_id mismatch on video resource")
+        other_ref = conn.execute(
+            "SELECT 1 FROM heygen_resource_operation_refs WHERE resource_id = ? AND operation_id <> ?",
+            (res["resource_id"], operation_id),
+        ).fetchone()
+        if other_ref is not None:
+            raise OperationIntegrityError("video resource referenced by another operation")
+        if res["deletion_status"] in ("deletion_pending", "deleted"):
+            return DownloadClaim(operation_id, "not_ready", row["lease_fence"], None, None)
+
+        ds = row["download_status"]
+        if ds == "verified":
+            return DownloadClaim(operation_id, "not_ready", row["lease_fence"], None, None)
+        # Lease classification (half lease → fail-closed).
+        owner = row["lease_owner"]
+        exp = row["lease_expires_at"]
+        if (owner is None) != (exp is None):
+            raise OperationIntegrityError(f"operation {operation_id} half download lease")
+        if owner is not None and _parse_utc(exp) > now:
+            return DownloadClaim(operation_id, "busy", row["lease_fence"], None, None)
+        # Backoff gate (a failed download sets next_retry_at).
+        nr = row["next_retry_at"]
+        if ds == "failed" and nr is not None and _parse_utc(nr) > now:
+            return DownloadClaim(operation_id, "retry_wait", row["lease_fence"], None, None)
+
+        new_fence = row["lease_fence"] + 1
+        cur = conn.execute(
+            "UPDATE heygen_operations SET lease_owner = ?, lease_expires_at = ?, "
+            "lease_fence = ?, download_status = 'downloading', "
+            "download_attempts = download_attempts + 1, updated_at = ? "
+            "WHERE operation_id = ? AND lease_fence = ? AND status = 'completed' "
+            "AND download_status IN ('not_started', 'downloading', 'failed')",
+            (lease_owner, expires_iso, new_fence, _canonical(now),
+             operation_id, row["lease_fence"]),
+        )
+        if cur.rowcount == 0:
+            # Lost a concurrent claim/reclaim — re-classify.
+            row2 = conn.execute(
+                "SELECT lease_owner, lease_expires_at, download_status, next_retry_at "
+                "FROM heygen_operations WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+            if row2 is None:
+                return DownloadClaim(operation_id, "not_ready", new_fence, None, None)
+            o2, e2 = row2["lease_owner"], row2["lease_expires_at"]
+            if o2 is not None and e2 is not None and _parse_utc(e2) > now:
+                return DownloadClaim(operation_id, "busy", new_fence, None, None)
+            if row2["download_status"] == "failed" and row2["next_retry_at"] is not None \
+                    and _parse_utc(row2["next_retry_at"]) > now:
+                return DownloadClaim(operation_id, "retry_wait", new_fence, None, None)
+            raise OperationStateError(
+                f"operation {operation_id} became eligible again after a lost download CAS"
+            )
+        return DownloadClaim(operation_id, "claimed", new_fence, res["remote_id"], res["resource_id"])
 
 
 # --- coordinator -------------------------------------------------------

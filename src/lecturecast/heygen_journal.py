@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 _RUNTIME_DIR_NAME = "runtime"
 _DB_NAME = "heygen-operations.db"
 
@@ -88,6 +88,7 @@ _OPERATIONS_DDL = """
         download_verified_at TEXT,
         submit_attempts INTEGER NOT NULL DEFAULT 0 CHECK (submit_attempts >= 0),
         reconcile_attempts INTEGER NOT NULL DEFAULT 0 CHECK (reconcile_attempts >= 0),
+        download_attempts INTEGER NOT NULL DEFAULT 0 CHECK (download_attempts >= 0),
         next_retry_at TEXT,
         last_error_code TEXT,
         lease_owner TEXT,
@@ -151,6 +152,10 @@ _RESOURCES_DDL = """
                 'not_started', 'deletion_pending', 'deleted', 'deletion_failed'
             )),
         deletion_attempts INTEGER NOT NULL DEFAULT 0 CHECK (deletion_attempts >= 0),
+        deletion_reason TEXT
+            CHECK (deletion_reason IS NULL OR deletion_reason IN (
+                'post_download', 'consent_withdrawal', 'manual_force'
+            )),
         last_deletion_error TEXT,
         deleted_at TEXT,
         created_at TEXT NOT NULL,
@@ -209,6 +214,25 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     conn.execute(_RECEIPTS_DDL)
 
 
+def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
+    """v2 → v3: add operations.download_attempts (NOT NULL DEFAULT 0) and
+    heygen_remote_resources.deletion_reason (nullable, closed vocabulary).
+    ADD COLUMN with a CHECK-satisfying default is safe on a populated table."""
+    op_cols = {row[1] for row in conn.execute("PRAGMA table_info(heygen_operations)")}
+    if "download_attempts" not in op_cols:
+        conn.execute(
+            "ALTER TABLE heygen_operations ADD COLUMN download_attempts "
+            "INTEGER NOT NULL DEFAULT 0 CHECK (download_attempts >= 0)"
+        )
+    res_cols = {row[1] for row in conn.execute("PRAGMA table_info(heygen_remote_resources)")}
+    if "deletion_reason" not in res_cols:
+        conn.execute(
+            "ALTER TABLE heygen_remote_resources ADD COLUMN deletion_reason TEXT "
+            "CHECK (deletion_reason IS NULL OR deletion_reason IN "
+            "('post_download', 'consent_withdrawal', 'manual_force'))"
+        )
+
+
 def _migrate(conn: sqlite3.Connection, current_version: int) -> None:
     """Run all version steps < _SCHEMA_VERSION, then bump user_version, in one
     BEGIN IMMEDIATE transaction. All-or-nothing: on any failure the whole
@@ -220,6 +244,8 @@ def _migrate(conn: sqlite3.Connection, current_version: int) -> None:
                 conn.execute(stmt)
         if current_version < 2:
             _migrate_v1_to_v2(conn)
+        if current_version < 3:
+            _migrate_v2_to_v3(conn)
         conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         conn.execute("COMMIT")
     except Exception:
