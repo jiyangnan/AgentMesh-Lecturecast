@@ -76,6 +76,11 @@ _DOWNLOAD_MANUAL_CODES = frozenset({
     "download_reconciliation_required", "download_file_missing",
     "consent_withdrawn_cleanup_required",
 })
+DELETION_MAX_ATTEMPTS = 3
+DELETION_BACKOFF_SECONDS = 120
+_DELETION_MANUAL_CODES = frozenset({
+    "deletion_retry_exhausted", "deletion_reconciliation_required",
+})
 
 
 class OperationError(RuntimeError):
@@ -240,6 +245,31 @@ class DownloadOutcome:
 class DownloadOnceResult:
     claim: DownloadClaim
     outcome: DownloadOutcome | None
+
+
+@dataclass(frozen=True)
+class DeletionClaim:
+    operation_id: str
+    resource_id: int
+    status: str          # "claimed" | "busy" | "retry_wait" | "not_ready"
+    fence: int
+    remote_id: str | None
+
+
+@dataclass(frozen=True)
+class DeletionOutcome:
+    operation_id: str
+    resource_id: int
+    status: str          # "deleted" | "failed" | "fence_conflict"
+    fence: int
+    last_error: str | None
+    next_retry_at: str | None
+
+
+@dataclass(frozen=True)
+class DeletionOnceResult:
+    claim: DeletionClaim
+    outcome: DeletionOutcome | None
 
 
 # --- repository --------------------------------------------------------
@@ -1570,6 +1600,137 @@ class OperationRepository:
             return None
         return rows[0]
 
+    # -- deletion lifecycle (§5.5e4b) -----------------------------------
+
+    def claim_deletion_in_tx(self, conn, operation_id, resource_id, lease_owner,
+                             now_iso, lease_seconds, max_attempts=DELETION_MAX_ATTEMPTS):
+        """Claim a per-resource deletion lease. Eligibility:
+        - not_started + ephemeral + op.download_status=verified → post_download
+        - deletion_pending (consent_withdrawal or post_download reclaim) → eligible
+        - deletion_failed + backoff elapsed + < max + not manual → retry
+        Bumps fence + deletion_attempts; sets deletion_status='deletion_pending'."""
+        self._require_tx(conn)
+        conn.row_factory = sqlite3.Row
+        _require_lease_owner(lease_owner)
+        now = _parse_utc(now_iso)
+        _check_lease_seconds(lease_seconds)
+        expires_iso = _canonical(now + timedelta(seconds=lease_seconds))
+
+        op = conn.execute(
+            "SELECT download_status, lease_owner, lease_expires_at, lease_fence, "
+            "credential_profile_id FROM heygen_operations WHERE operation_id=?",
+            (operation_id,)).fetchone()
+        if op is None:
+            return DeletionClaim(operation_id, resource_id, "not_ready", 0, None)
+        res = conn.execute(
+            "SELECT resource_id, remote_id, deletion_status, deletion_reason, "
+            "retention_mode, created_by_operation_id, credential_profile_id, "
+            "deletion_attempts, deletion_next_retry_at, last_deletion_error "
+            "FROM heygen_remote_resources WHERE resource_id=?",
+            (resource_id,)).fetchone()
+        if res is None or res["created_by_operation_id"] != operation_id:
+            return DeletionClaim(operation_id, resource_id, "not_ready", 0, None)
+        if res["credential_profile_id"] != op["credential_profile_id"]:
+            raise OperationIntegrityError("credential mismatch on deletion resource")
+        other_ref = conn.execute(
+            "SELECT 1 FROM heygen_resource_operation_refs WHERE resource_id=? AND operation_id<>?",
+            (resource_id, operation_id)).fetchone()
+        if other_ref is not None:
+            raise OperationIntegrityError("resource referenced by another operation")
+
+        ds = res["deletion_status"]
+        # Eligibility gate
+        if ds == "deleted":
+            return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
+        if ds == "not_started":
+            if res["retention_mode"] != "ephemeral" or op["download_status"] != "verified":
+                return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
+        elif ds == "deletion_failed":
+            lec = res["last_deletion_error"]
+            if lec in _DELETION_MANUAL_CODES:
+                return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
+            if res["deletion_attempts"] >= max_attempts:
+                return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
+            nr = res["deletion_next_retry_at"]
+            if nr is not None and _parse_utc(nr) > now:
+                return DeletionClaim(operation_id, resource_id, "retry_wait", op["lease_fence"], None)
+        # deletion_pending: eligible (reclaim if lease expired)
+        # Lease classification
+        owner = op["lease_owner"]; exp = op["lease_expires_at"]
+        if (owner is None) != (exp is None):
+            raise OperationIntegrityError(f"operation {operation_id} half lease")
+        if owner is not None and _parse_utc(exp) > now:
+            return DeletionClaim(operation_id, resource_id, "busy", op["lease_fence"], None)
+
+        new_fence = op["lease_fence"] + 1
+        reason = "post_download" if ds == "not_started" else res["deletion_reason"]
+        cur = conn.execute(
+            "UPDATE heygen_remote_resources SET deletion_status='deletion_pending', "
+            "deletion_reason=?, deletion_attempts=deletion_attempts+1, updated_at=? "
+            "WHERE resource_id=? AND deletion_status=?",
+            (reason, _canonical(now), resource_id, ds))
+        if cur.rowcount == 0:
+            return DeletionClaim(operation_id, resource_id, "busy", new_fence, None)
+        conn.execute(
+            "UPDATE heygen_operations SET lease_owner=?, lease_expires_at=?, "
+            "lease_fence=?, updated_at=? WHERE operation_id=?",
+            (lease_owner, expires_iso, new_fence, _canonical(now), operation_id))
+        return DeletionClaim(operation_id, resource_id, "claimed", new_fence, res["remote_id"])
+
+    def apply_deletion_outcome_in_tx(self, conn, operation_id, resource_id,
+                                     lease_owner, fence, now_iso, outcome,
+                                     max_attempts=DELETION_MAX_ATTEMPTS):
+        """Apply a deletion outcome (fenced on operation lease + resource
+        deletion_status='deletion_pending'). Maps DeleteResult/DeleteAdapterError
+        to deleted/failed states."""
+        from lecturecast.heygen_adapter import DeleteResult, DeleteAdapterError
+        self._require_tx(conn)
+        conn.row_factory = sqlite3.Row
+        now_c = _canonical(_parse_utc(now_iso))
+        # Fence CAS on operation
+        op = conn.execute(
+            "SELECT lease_fence FROM heygen_operations WHERE operation_id=? "
+            "AND lease_owner=? AND lease_fence=?", (operation_id, lease_owner, fence)).fetchone()
+        if op is None:
+            return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
+        res = conn.execute(
+            "SELECT deletion_attempts FROM heygen_remote_resources WHERE resource_id=? "
+            "AND deletion_status='deletion_pending'", (resource_id,)).fetchone()
+        if res is None:
+            return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
+
+        if isinstance(outcome, DeleteResult):
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_status='deleted', deleted_at=?, "
+                "deletion_next_retry_at=NULL, last_deletion_error=NULL, updated_at=? "
+                "WHERE resource_id=?", (now_c, now_c, resource_id))
+            self._clear_operation_lease(conn, operation_id, now_c)
+            return DeletionOutcome(operation_id, resource_id, "deleted", fence, None, None)
+        # DeleteAdapterError
+        attempts = res["deletion_attempts"]
+        if outcome.retryable and attempts < max_attempts:
+            retry = _canonical(_parse_utc(now_iso) + timedelta(seconds=DELETION_BACKOFF_SECONDS))
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_status='deletion_failed', "
+                "last_deletion_error=?, deletion_next_retry_at=?, updated_at=? "
+                "WHERE resource_id=?", (outcome.code, retry, now_c, resource_id))
+            self._clear_operation_lease(conn, operation_id, now_c)
+            return DeletionOutcome(operation_id, resource_id, "failed", fence, outcome.code, retry)
+        # Exhausted or permanent
+        code = "deletion_retry_exhausted" if outcome.retryable else "deletion_reconciliation_required"
+        conn.execute(
+            "UPDATE heygen_remote_resources SET deletion_status='deletion_failed', "
+            "last_deletion_error=?, deletion_next_retry_at=NULL, updated_at=? "
+            "WHERE resource_id=?", (code, now_c, resource_id))
+        self._clear_operation_lease(conn, operation_id, now_c)
+        return DeletionOutcome(operation_id, resource_id, "failed", fence, code, None)
+
+    @staticmethod
+    def _clear_operation_lease(conn, operation_id, now_c):
+        conn.execute(
+            "UPDATE heygen_operations SET lease_owner=NULL, lease_expires_at=NULL, "
+            "updated_at=? WHERE operation_id=?", (now_c, operation_id))
+
 
 def _output_ref(operation_id: str) -> str:
     return f"outputs/heygen/{operation_id}.mp4"
@@ -1842,6 +2003,32 @@ class DownloadProcessor:
                 conn, operation_id, lease_owner, claim.fence, now_iso,
             )
         return DownloadOnceResult(claim=claim, outcome=outcome)
+
+
+class DeleteProcessor:
+    """One deletion step of a video resource: claim → delete outside tx →
+    fenced apply."""
+
+    def __init__(self, project_dir):
+        self._project_dir = Path(project_dir)
+        self._repository = OperationRepository(self._project_dir)
+
+    def delete_once(self, *, operation_id, resource_id, lease_owner, deleter,
+                    now_iso, lease_seconds, max_attempts=DELETION_MAX_ATTEMPTS):
+        with self._repository.begin_immediate() as conn:
+            claim = self._repository.claim_deletion_in_tx(
+                conn, operation_id, resource_id, lease_owner, now_iso, lease_seconds, max_attempts)
+        if claim.status != "claimed":
+            return DeletionOnceResult(claim=claim, outcome=None)
+        try:
+            result = deleter.delete_video(claim.remote_id)
+        except Exception as exc:
+            result = exc
+        with self._repository.begin_immediate() as conn:
+            outcome = self._repository.apply_deletion_outcome_in_tx(
+                conn, operation_id, resource_id, lease_owner, claim.fence,
+                now_iso, result, max_attempts)
+        return DeletionOnceResult(claim=claim, outcome=outcome)
 
 
 def _has_any_video(conn: sqlite3.Connection, operation_id: str) -> bool:
