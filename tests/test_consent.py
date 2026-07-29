@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
+import unicodedata
 
 import pytest
-
 
 from lecturecast.consent import (
     DisclosedAsset,
@@ -21,16 +20,17 @@ from lecturecast.consent import (
 
 D = "sha256:" + "a" * 64
 BRIEF = "sha256:" + "b" * 64
+REQ = "sha256:" + "c" * 64
 
 
 def _identity(**over) -> HeyGenOperationIdentity:
     base = dict(
         operation_kind="video",
-        endpoint="/v3/videos",
         generation_id="gen_1",
         manifest_digest=D,
-        request_digest="sha256:" + "c" * 64,
+        request_digest=REQ,
         credential_profile_id="cp_1",
+        endpoint="/v3/videos",
     )
     base.update(over)
     return HeyGenOperationIdentity(**base)
@@ -51,12 +51,31 @@ def _disclosure(**over) -> ThirdPartyTransferDisclosure:
     return ThirdPartyTransferDisclosure(**base)
 
 
+def _payload_kwargs(**over):
+    base = dict(
+        operation_id="lc_hg_op1",
+        generation_id="gen_1",
+        request_digest=REQ,
+        creative_brief_digest=BRIEF,
+        decision="granted",
+        decision_at="2026-07-29T00:00:00Z",
+    )
+    base.update(over)
+    return base
+
+
 # --- canonical / digest helpers ---
 
 def test_canonical_json_is_key_sorted_and_minimal():
     a = canonical_json({"b": 1, "a": 2})
     b = canonical_json({"a": 2, "b": 1})
     assert a == b == '{"a":2,"b":1}'
+
+
+def test_canonical_json_nfc_normalizes_strings():
+    nfd = unicodedata.normalize("NFD", "café.png")
+    nfc = unicodedata.normalize("NFC", "café.png")
+    assert canonical_json({"f": nfd}) == canonical_json({"f": nfc})
 
 
 def test_is_digest_shape():
@@ -85,6 +104,12 @@ def test_asset_filename_strips_control_chars():
     assert a.display_filename == "voice.wav"
 
 
+def test_asset_filename_nfc_normalizes():
+    nfd = unicodedata.normalize("NFD", "café.png")
+    a = DisclosedAsset(asset_kind="portrait_photo", display_filename=nfd, asset_digest=D)
+    assert a.display_filename == unicodedata.normalize("NFC", "café.png")
+
+
 def test_asset_digest_must_be_sha256():
     with pytest.raises(ValueError):
         DisclosedAsset(asset_kind="portrait_photo", display_filename="f.png",
@@ -103,7 +128,7 @@ def test_asset_rejects_extra_fields():
 def test_disclosure_accepts_valid():
     d = _disclosure()
     assert d.provider == "heygen"
-    assert d.disclosure_version == "heygen-transfer-2026-07-27"
+    assert d.disclosed_assets == tuple(d.disclosed_assets)  # frozen to tuple
 
 
 def test_disclosure_rejects_empty_assets():
@@ -117,9 +142,25 @@ def test_disclosure_rejects_duplicate_assets():
         _disclosure(disclosed_assets=[asset, asset])
 
 
-def test_disclosure_rejects_empty_and_duplicate_categories():
+def test_disclosure_categories_must_match_assets():
+    # portrait_photo without facial_biometric_template → reject.
     with pytest.raises(ValueError):
-        _disclosure(data_categories=[])
+        _disclosure(data_categories=["portrait_image"])
+    # over-report a category with no matching asset → reject.
+    with pytest.raises(ValueError):
+        _disclosure(data_categories=["portrait_image", "facial_biometric_template",
+                                     "synthetic_narration_audio"])
+
+
+def test_disclosure_synthetic_audio_requires_its_category():
+    asset = DisclosedAsset(asset_kind="synthetic_narration_audio", display_filename="v.wav", asset_digest=D)
+    with pytest.raises(ValueError):
+        _disclosure(disclosed_assets=[asset], data_categories=["portrait_image"])
+    d = _disclosure(disclosed_assets=[asset], data_categories=["synthetic_narration_audio"])
+    assert set(d.data_categories) == {"synthetic_narration_audio"}
+
+
+def test_disclosure_rejects_duplicate_categories():
     with pytest.raises(ValueError):
         _disclosure(data_categories=["portrait_image", "portrait_image"])
 
@@ -131,32 +172,21 @@ def test_disclosure_requires_cost_and_non_processor_text():
         _disclosure(agentmesh_non_processor_disclosure="")
 
 
-def test_disclosure_rejects_unknown_data_category():
-    with pytest.raises(ValueError):
-        _disclosure(data_categories=["passport_number"])
-
-
-# --- canonical_payload: deterministic + decision-bound ---
+# --- canonical_payload: deterministic + decision-bound + validated ---
 
 def test_payload_is_deterministic_regardless_of_input_order():
-    d = _disclosure()
     a1 = DisclosedAsset(asset_kind="portrait_photo", display_filename="b.png", asset_digest=D)
     a2 = DisclosedAsset(asset_kind="synthetic_narration_audio", display_filename="a.wav", asset_digest=D)
-    d_rev = _disclosure(disclosed_assets=[a1, a2])
-    d_rev2 = _disclosure(disclosed_assets=[a2, a1])
-    kw = dict(operation_id="op", generation_id="g", request_digest="sha256:" + "c" * 64,
-              creative_brief_digest=BRIEF, decision="granted", decision_at="2026-07-29T00:00:00Z")
-    assert d_rev.canonical_payload(**kw) == d_rev2.canonical_payload(**kw)
-    # assets canonical-sorted alphabetically by kind (portrait_photo < synthetic_narration_audio)
-    payload = d_rev.canonical_payload(**kw)
-    assert payload["disclosed_assets"][0]["kind"] == "portrait_photo"
-    assert payload["disclosed_assets"][1]["kind"] == "synthetic_narration_audio"
+    cats = ["portrait_image", "facial_biometric_template", "synthetic_narration_audio"]
+    d_rev = _disclosure(disclosed_assets=[a1, a2], data_categories=cats)
+    d_rev2 = _disclosure(disclosed_assets=[a2, a1], data_categories=cats)
+    assert d_rev.canonical_payload(**_payload_kwargs()) == d_rev2.canonical_payload(**_payload_kwargs())
 
 
 def test_payload_decision_changes_digest():
     d = _disclosure()
-    kw = dict(operation_id="op", generation_id="g", request_digest="sha256:" + "c" * 64,
-              creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+    kw = _payload_kwargs()
+    kw.pop("decision")
     g = sha256_digest(d.canonical_payload(decision="granted", **kw))
     dec = sha256_digest(d.canonical_payload(decision="declined", **kw))
     assert g != dec
@@ -164,15 +194,35 @@ def test_payload_decision_changes_digest():
 
 def test_payload_decision_at_and_request_participate_in_digest():
     d = _disclosure()
-    base = dict(operation_id="op", generation_id="g", creative_brief_digest=BRIEF,
-                decision="granted")
-    d1 = sha256_digest(d.canonical_payload(decision_at="2026-07-29T00:00:00Z",
-                       request_digest="sha256:" + "c" * 64, **base))
-    d2 = sha256_digest(d.canonical_payload(decision_at="2026-07-29T00:00:01Z",
-                       request_digest="sha256:" + "c" * 64, **base))
+    base = dict(operation_id="op", generation_id="g", creative_brief_digest=BRIEF, decision="granted")
+    d1 = sha256_digest(d.canonical_payload(decision_at="2026-07-29T00:00:00Z", request_digest=REQ, **base))
+    d2 = sha256_digest(d.canonical_payload(decision_at="2026-07-29T00:00:01Z", request_digest=REQ, **base))
     d3 = sha256_digest(d.canonical_payload(decision_at="2026-07-29T00:00:00Z",
                        request_digest="sha256:" + "d" * 64, **base))
     assert len({d1, d2, d3}) == 3
+
+
+def test_payload_rejects_bad_inputs():
+    d = _disclosure()
+    with pytest.raises(ValueError):
+        d.canonical_payload(**_payload_kwargs(decision="maybe"))
+    with pytest.raises(ValueError):
+        d.canonical_payload(**_payload_kwargs(operation_id="  "))
+    with pytest.raises(ValueError):
+        d.canonical_payload(**_payload_kwargs(request_digest="not-a-digest"))
+    with pytest.raises(ValueError):
+        d.canonical_payload(**_payload_kwargs(creative_brief_digest="not-a-digest"))
+    with pytest.raises(ValueError):
+        d.canonical_payload(**_payload_kwargs(decision_at="2026-07-29T00:00:00"))  # naive
+    with pytest.raises(ValueError):
+        d.canonical_payload(**_payload_kwargs(decision_at="not-a-time"))
+
+
+def test_payload_canonicalizes_decision_at_to_utc_seconds():
+    d = _disclosure()
+    # +08:00 offset → 00:00:00Z ; fractional seconds dropped.
+    p = d.canonical_payload(**_payload_kwargs(decision_at="2026-07-29T08:00:00.250+08:00"))
+    assert p["decision_at"] == "2026-07-29T00:00:00Z"
 
 
 # --- HeyGenOperationIdentity + prepare_operation ---
@@ -188,9 +238,34 @@ def test_identity_rejects_bad_digests_and_empty_fields():
         _identity(credential_profile_id="  ")
 
 
-def test_identity_payload_namespace_and_keys():
-    ident = _identity()
-    payload = ident.identity_payload()
+def test_identity_closes_operation_kind_and_endpoint():
+    with pytest.raises(ValueError):
+        _identity(operation_kind="bogus")
+    with pytest.raises(ValueError):
+        _identity(endpoint="/v3/widgets")  # not in closed set
+    with pytest.raises(ValueError):
+        _identity(endpoint="/v3/videos?x=1")  # query rejected
+    with pytest.raises(ValueError):
+        _identity(endpoint="/v3/videos#frag")  # fragment rejected
+    with pytest.raises(ValueError):
+        _identity(operation_kind="video", endpoint="/v3/assets")  # inconsistent with kind
+
+
+def test_identity_validates_optional_fields():
+    with pytest.raises(ValueError):
+        _identity(orchestration_plan_digest="not-a-digest")
+    with pytest.raises(ValueError):
+        _identity(segment_id="bad space")
+    with pytest.raises(ValueError):
+        _identity(segment_id="   ")
+    # valid optional fields accepted.
+    ident = _identity(orchestration_plan_digest=BRIEF, segment_id="seg_01")
+    assert ident.orchestration_plan_digest == BRIEF
+    assert ident.segment_id == "seg_01"
+
+
+def test_identity_payload_namespace_and_no_secret_keys():
+    payload = _identity().identity_payload()
     assert payload["namespace"] == OPERATION_IDENTITY_NAMESPACE
     assert "api_key" not in payload
     assert "timestamp" not in payload
@@ -202,12 +277,14 @@ def test_prepare_operation_is_deterministic():
     p2 = prepare_operation(ident)
     assert p1 == p2
     assert p1.operation_id.startswith("lc_hg_")
+    # 128-bit (32 hex) after the prefix — no truncation-collision risk.
+    assert len(p1.operation_id) == len("lc_hg_") + 32
     assert p1.idempotency_key.startswith("lc-hg-")
     assert p1.heygen_title == f"lecturecast:{p1.operation_id}"
 
 
 def test_prepare_operation_changes_when_request_digest_changes():
-    p1 = prepare_operation(_identity(request_digest="sha256:" + "c" * 64))
+    p1 = prepare_operation(_identity(request_digest=REQ))
     p2 = prepare_operation(_identity(request_digest="sha256:" + "d" * 64))
     assert p1.operation_id != p2.operation_id
     assert p1.idempotency_key != p2.idempotency_key
@@ -220,11 +297,9 @@ def test_prepare_operation_changes_when_credential_profile_changes():
 
 
 def test_prepare_operation_independent_of_optional_fields_when_none():
-    # orchestration_plan_digest / segment_id default None; both None ⇒ same id.
     p1 = prepare_operation(_identity())
     p2 = prepare_operation(_identity())
     assert p1 == p2
-    # setting one diverges.
     p3 = prepare_operation(_identity(segment_id="seg_a"))
     assert p1.operation_id != p3.operation_id
 
