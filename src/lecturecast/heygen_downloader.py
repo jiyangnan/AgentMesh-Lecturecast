@@ -22,7 +22,6 @@ import socket
 import ssl
 import stat
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Protocol
 from urllib import request as urllib_request
@@ -153,17 +152,26 @@ class StdlibVideoDownloader:
         temp_path.parent.mkdir(parents=True, exist_ok=True)
         _verify_lexical_containment(temp_path, runtime_root)
 
-        # Pin the verified IP into the connection to prevent DNS rebinding.
+        # Pin the verified IP via DNS override to prevent DNS rebinding, while
+        # preserving TLS SNI/certificate verification (the URL and hostname stay
+        # unchanged; only the actual TCP connect uses the verified IP).
         pinned_ip = verified_ips[0]
-        pinned_url = url.replace(host, pinned_ip, 1)
+        import socket as _socket
+        _orig_getaddrinfo = _socket.getaddrinfo
+
+        def _pinned_resolver(hostname, port, *args, **kwargs):
+            if hostname == host:
+                return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "",
+                         (pinned_ip, port))]
+            return _orig_getaddrinfo(hostname, port, *args, **kwargs)
 
         h = hashlib.sha256()
         total = 0
         fd = None
         resp = None
         try:
-            req = urllib_request.Request(pinned_url, method="GET",
-                                         headers={"Host": host})
+            _socket.getaddrinfo = _pinned_resolver
+            req = urllib_request.Request(url, method="GET")
             opener = urllib_request.build_opener(_NoRedirectHandler)
             resp = opener.open(req, timeout=30)
             flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
@@ -218,6 +226,7 @@ class StdlibVideoDownloader:
                     temp_path.unlink()
             raise
         finally:
+            _socket.getaddrinfo = _orig_getaddrinfo
             if resp is not None:
                 resp.close()
 
@@ -244,25 +253,36 @@ class FfprobeMediaProbe:
         p = Path(path)
         if not p.is_file() or p.is_symlink():
             raise ValueError(f"probe target must be a regular file: {path}")
-        # Stream stdout to a capped temp file instead of capture_output buffering.
-        with tempfile.NamedTemporaryFile(mode="w+b", suffix=".json", delete=True) as tmp_out:
-            proc = subprocess.Popen(
-                [self._ffprobe, "-v", "quiet", "-print_format", "json",
-                 "-show_streams", "-show_format", path],
-                stdout=tmp_out, stderr=subprocess.DEVNULL,
-            )
-            try:
-                proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-                raise ValueError("ffprobe timed out")
-            if proc.returncode != 0:
-                raise ValueError(f"ffprobe failed (exit {proc.returncode})")
-            tmp_out.seek(0)
-            raw = tmp_out.read(_PROBE_STDOUT_MAX + 1)
-            if len(raw) > _PROBE_STDOUT_MAX:
-                raise ValueError("ffprobe stdout exceeded 1 MiB")
+        # Incremental PIPE read with kill-on-overflow.
+        proc = subprocess.Popen(
+            [self._ffprobe, "-v", "quiet", "-print_format", "json",
+             "-show_streams", "-show_format", path],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )
+        chunks: list[bytes] = []
+        total_size = 0
+        overflowed = False
+        try:
+            while True:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                total_size += len(chunk)
+                if total_size > _PROBE_STDOUT_MAX:
+                    overflowed = True
+                    proc.kill()
+                    break
+                chunks.append(chunk)
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            raise ValueError("ffprobe timed out")
+        if overflowed:
+            raise ValueError("ffprobe stdout exceeded 1 MiB")
+        if proc.returncode != 0:
+            raise ValueError(f"ffprobe failed (exit {proc.returncode})")
+        raw = b"".join(chunks)
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
