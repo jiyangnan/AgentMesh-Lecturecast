@@ -1302,6 +1302,139 @@ class OperationRepository:
                 return DownloadClaim(operation_id, "retry_wait", row["lease_fence"], None, None)
         return None  # eligible: not_started, failed+backoff-elapsed, or downloading+expired
 
+    # -- download two-phase: stage + finalize (§5.5e4a2) -----------------
+
+    def stage_download_in_tx(self, conn, operation_id, lease_owner, fence,
+                             now_iso, prepared):
+        """Phase 1: stage the downloaded temp file's ref + digest in the journal
+        (download_status='downloaded'). Re-verifies owner/fence/status + consent.
+        A withdrawn receipt during download flips the resource to cleanup."""
+        self._require_tx(conn)
+        conn.row_factory = sqlite3.Row
+        now_c = _canonical(_parse_utc(now_iso))
+        op = conn.execute("SELECT * FROM heygen_operations WHERE operation_id=?",
+                          (operation_id,)).fetchone()
+        receipt = conn.execute("SELECT * FROM heygen_consent_receipts WHERE operation_id=?",
+                               (operation_id,)).fetchone()
+        if (op is None or op["download_status"] != "downloading"
+                or op["lease_owner"] != lease_owner or op["lease_fence"] != fence):
+            return DownloadOutcome(operation_id, "fence_conflict", fence, None, None)
+        ConsentService._validate_existing_integrity(receipt, op, conn)
+        if receipt["status"] == "withdrawn":
+            res = self._exclusive_video(conn, operation_id)
+            if res is not None:
+                conn.execute("UPDATE heygen_remote_resources SET deletion_status='deletion_pending', "
+                             "deletion_reason='consent_withdrawal', updated_at=? WHERE resource_id=?",
+                             (now_c, res["resource_id"]))
+            return DownloadOutcome(operation_id, "consent_withdrawn", fence,
+                                   _RECONCILE_WITHDRAWN, None)
+        if receipt["status"] != "granted":
+            return DownloadOutcome(operation_id, "fence_conflict", fence, None, None)
+        cur = conn.execute(
+            "UPDATE heygen_operations SET download_status='downloaded', "
+            "local_output_ref=?, local_output_digest=?, updated_at=? "
+            "WHERE operation_id=? AND lease_owner=? AND lease_fence=? "
+            "AND download_status='downloading'",
+            (prepared.local_output_ref, prepared.digest, now_c,
+             operation_id, lease_owner, fence))
+        if cur.rowcount == 0:
+            return DownloadOutcome(operation_id, "fence_conflict", fence, None, None)
+        return DownloadOutcome(operation_id, "staged", fence, None, None)
+
+    def finalize_download_in_tx(self, conn, operation_id, lease_owner, fence,
+                                now_iso, project_dir, temp_path=None):
+        """Phase 2: publish the staged file and mark verified. Re-verifies
+        consent; withdrawn receipt → cleanup temp + resource, no publication.
+        Crash recovery: final exists + digest match → just verified; temp
+        exists → os.replace; neither → fail."""
+        import os as _os
+        self._require_tx(conn)
+        conn.row_factory = sqlite3.Row
+        now_c = _canonical(_parse_utc(now_iso))
+        op = conn.execute("SELECT * FROM heygen_operations WHERE operation_id=?",
+                          (operation_id,)).fetchone()
+        receipt = conn.execute("SELECT * FROM heygen_consent_receipts WHERE operation_id=?",
+                               (operation_id,)).fetchone()
+        if (op is None or op["download_status"] != "downloaded"
+                or op["lease_owner"] != lease_owner or op["lease_fence"] != fence):
+            return DownloadOutcome(operation_id, "fence_conflict",
+                                   op["lease_fence"] if op else 0, None, None)
+        ConsentService._validate_existing_integrity(receipt, op, conn)
+        staged_ref = op["local_output_ref"]
+        staged_digest = op["local_output_digest"]
+        if receipt["status"] == "withdrawn":
+            res = self._exclusive_video(conn, operation_id)
+            if res is not None:
+                conn.execute("UPDATE heygen_remote_resources SET deletion_status='deletion_pending', "
+                             "deletion_reason='consent_withdrawal', updated_at=? WHERE resource_id=?",
+                             (now_c, res["resource_id"]))
+            if temp_path and _os.path.exists(temp_path):
+                _os.unlink(temp_path)
+            return DownloadOutcome(operation_id, "consent_withdrawn", fence,
+                                   _RECONCILE_WITHDRAWN, None)
+        if receipt["status"] != "granted" or not staged_ref or not staged_digest:
+            return DownloadOutcome(operation_id, "fence_conflict", fence, None, None)
+        # Derive temp path from staged_ref if not supplied (finalize-recovery).
+        if temp_path is None:
+            temp_path = str(Path(project_dir) / ".lecturecast" / "runtime" / (staged_ref + ".tmp"))
+        final_path = Path(project_dir) / ".lecturecast" / "runtime" / staged_ref
+        if _os.path.exists(final_path):
+            import hashlib as _h
+            h = _h.sha256()
+            with open(final_path, "rb") as f:
+                for chunk in iter(lambda: f.read(65536), b""):
+                    h.update(chunk)
+            if h.hexdigest() != staged_digest.split(":")[-1]:
+                raise OperationIntegrityError(
+                    f"final file digest mismatch for {operation_id}")
+        elif temp_path and _os.path.exists(temp_path):
+            final_path.parent.mkdir(parents=True, exist_ok=True)
+            _os.replace(temp_path, final_path)
+        else:
+            return DownloadOutcome(operation_id, "failed", fence,
+                                   "download_file_missing", None)
+        cur = conn.execute(
+            "UPDATE heygen_operations SET download_status='verified', "
+            "download_verified_at=?, lease_owner=NULL, lease_expires_at=NULL, "
+            "updated_at=? WHERE operation_id=? AND lease_owner=? AND lease_fence=? "
+            "AND download_status='downloaded'",
+            (now_c, now_c, operation_id, lease_owner, fence))
+        if cur.rowcount == 0:
+            return DownloadOutcome(operation_id, "fence_conflict", fence, None, None)
+        return DownloadOutcome(operation_id, "verified", fence, None, None)
+
+    def apply_download_failure_in_tx(self, conn, operation_id, lease_owner,
+                                     fence, now_iso, error_code, next_retry_iso):
+        """Mark a download attempt failed (URL not ready / poll error / download
+        error). Clears the lease; sets backoff or parks for manual recovery."""
+        self._require_tx(conn)
+        now_c = _canonical(_parse_utc(now_iso))
+        cur = conn.execute(
+            "UPDATE heygen_operations SET download_status='failed', "
+            "last_error_code=?, next_retry_at=?, lease_owner=NULL, "
+            "lease_expires_at=NULL, updated_at=? WHERE operation_id=? "
+            "AND lease_owner=? AND lease_fence=? AND status='completed' "
+            "AND download_status='downloading'",
+            (error_code, next_retry_iso, now_c, operation_id, lease_owner, fence))
+        if cur.rowcount == 0:
+            return DownloadOutcome(operation_id, "fence_conflict", fence, None, None)
+        return DownloadOutcome(operation_id, "failed", fence, error_code, next_retry_iso)
+
+    @staticmethod
+    def _exclusive_video(conn, operation_id):
+        rows = conn.execute(
+            "SELECT r.resource_id FROM heygen_remote_resources r "
+            "JOIN heygen_resource_operation_refs ref ON ref.resource_id=r.resource_id "
+            "WHERE ref.operation_id=? AND r.resource_kind='video'",
+            (operation_id,)).fetchall()
+        if len(rows) != 1:
+            return None
+        return rows[0]
+
+
+def _output_ref(operation_id: str) -> str:
+    return f"outputs/heygen/{operation_id}.mp4"
+
 
 # --- coordinator -------------------------------------------------------
 
@@ -1447,6 +1580,107 @@ class SubmitCoordinator:
                     f"operation {prepared.operation_id} not claimable: {claim.status}"
                 )
         return SubmitClaim(consent=consent, claim=claim)
+
+
+class DownloadProcessor:
+    """Two-phase download of a completed operation's video: claim → re-poll for
+    URL → stream-download + verify → stage → finalize. Handles crash recovery
+    (downloaded state → finalize-only claim) and consent withdrawal races."""
+
+    def __init__(self, project_dir: str | Path) -> None:
+        self._project_dir = Path(project_dir)
+        self._repository = OperationRepository(self._project_dir)
+
+    def download_once(self, *, operation_id, lease_owner, adapter, downloader,
+                      now_iso, lease_seconds, max_bytes=536_870_912,
+                      probe=None):
+        """One download attempt. Returns DownloadOnceResult. The adapter and
+        downloader are called OUTSIDE any transaction; stage + finalize are
+        fenced. ``downloader`` must implement VideoDownloader; ``adapter`` must
+        implement HeyGenVideoAdapter (only poll_video is used)."""
+        with self._repository.begin_immediate() as conn:
+            claim = self._repository.claim_download_in_tx(
+                conn, operation_id, lease_owner, now_iso, lease_seconds,
+            )
+        if claim.status not in ("claimed", "finalize"):
+            return DownloadOnceResult(claim=claim, outcome=None)
+
+        # Finalize-only path (crash recovery: already staged).
+        if claim.status == "finalize":
+            with self._repository.begin_immediate() as conn:
+                outcome = self._repository.finalize_download_in_tx(
+                    conn, operation_id, lease_owner, claim.fence, now_iso,
+                    str(self._project_dir),
+                )
+            return DownloadOnceResult(claim=claim, outcome=outcome)
+
+        # Normal path: re-poll for the transient URL.
+        try:
+            poll = adapter.poll_video(claim.remote_id)
+        except PollAdapterError as exc:
+            poll = exc
+        # Map poll result to action.
+        if isinstance(poll, PollAdapterError):
+            code = poll.code if poll.retryable else "download_reconciliation_required"
+            retry = _canonical(_parse_utc(now_iso) + timedelta(seconds=DOWNLOAD_BACKOFF_SECONDS)) \
+                if poll.retryable else None
+            with self._repository.begin_immediate() as conn:
+                outcome = self._repository.apply_download_failure_in_tx(
+                    conn, operation_id, lease_owner, claim.fence, now_iso, code, retry,
+                )
+            return DownloadOnceResult(claim=claim, outcome=outcome)
+        # PollResult
+        if poll.provider_status == "completed" and poll.video_url:
+            url = poll.video_url
+        elif poll.provider_status in ("queued", "submitted", "processing"):
+            retry = _canonical(_parse_utc(now_iso) + timedelta(seconds=DOWNLOAD_BACKOFF_SECONDS))
+            with self._repository.begin_immediate() as conn:
+                outcome = self._repository.apply_download_failure_in_tx(
+                    conn, operation_id, lease_owner, claim.fence, now_iso,
+                    "provider_output_not_ready", retry,
+                )
+            return DownloadOnceResult(claim=claim, outcome=outcome)
+        else:  # not_found / failed — contradiction with local 'completed'
+            with self._repository.begin_immediate() as conn:
+                outcome = self._repository.apply_download_failure_in_tx(
+                    conn, operation_id, lease_owner, claim.fence, now_iso,
+                    "download_reconciliation_required", None,
+                )
+            return DownloadOnceResult(claim=claim, outcome=outcome)
+
+        # Download + verify (outside tx). The downloader derives its temp path
+        # from the deterministic local_output_ref; it never chooses an arbitrary
+        # filename. The URL is NEVER persisted.
+        ref = _output_ref(operation_id)
+        try:
+            prepared = downloader.download_and_verify(
+                url, str(self._project_dir / ".lecturecast" / "runtime"),
+                ref, max_bytes, probe,
+            )
+        except Exception:
+            retry = _canonical(_parse_utc(now_iso) + timedelta(seconds=DOWNLOAD_BACKOFF_SECONDS))
+            with self._repository.begin_immediate() as conn:
+                outcome = self._repository.apply_download_failure_in_tx(
+                    conn, operation_id, lease_owner, claim.fence, now_iso,
+                    "download_failed", retry,
+                )
+            return DownloadOnceResult(claim=claim, outcome=outcome)
+
+        # Stage (tx1).
+        with self._repository.begin_immediate() as conn:
+            staged = self._repository.stage_download_in_tx(
+                conn, operation_id, lease_owner, claim.fence, now_iso, prepared,
+            )
+        if staged.status not in ("staged",):
+            return DownloadOnceResult(claim=claim, outcome=staged)
+
+        # Finalize (tx2): publish + verify.
+        with self._repository.begin_immediate() as conn:
+            outcome = self._repository.finalize_download_in_tx(
+                conn, operation_id, lease_owner, claim.fence, now_iso,
+                str(self._project_dir), str(prepared.temp_path_str),
+            )
+        return DownloadOnceResult(claim=claim, outcome=outcome)
 
 
 def _has_any_video(conn: sqlite3.Connection, operation_id: str) -> bool:

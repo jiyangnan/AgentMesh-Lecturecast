@@ -231,3 +231,27 @@ class SubmitOutcome:
     remote_resource_id: int | None
     last_error_code: str | None
     next_retry_at: str | None
+
+
+# --- download + media probe (e4a2) -------------------------------------
+
+
+class MediaProbe(Protocol):
+    """Probe a downloaded file for media validity. Production uses subprocess
+    ffprobe; tests inject a fake. Returns a structured result the download
+    processor validates (≥1 video stream, finite positive duration, positive
+    dimensions, non-empty codec)."""
+
+    def probe(self, path: str) -> "MediaProbeResult":
+        ...
+
+
+class VideoDownloader(Protocol):
+    """Download a video URL to a safe runtime-local temp file with streaming
+    SHA-256, size enforcement, and media validation. Returns a PreparedDownload
+    for atomic publication. Production uses a stdlib HTTPS implementation; tests
+    inject a fake. The URL is NEVER persisted or logged."""
+
+    def download_and_verify(self, url: str, runtime_dir: str,
+                            max_bytes: int, probe: MediaProbe) -> "PreparedDownload":
+        ...
