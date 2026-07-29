@@ -1362,14 +1362,14 @@ class OperationRepository:
             raise OperationIntegrityError("invalid video_codec")
         if not prepared.digest.startswith("sha256:") or len(prepared.digest) != 71:
             raise OperationIntegrityError("invalid digest format")
-        # Exact deterministic temp path (not just "inside runtime").
+        # Exact deterministic temp path (lexical comparison, not resolve).
         expected_temp = self._project_dir / ".lecturecast" / "runtime" / (expected_ref + ".tmp")
+        runtime_root = self._project_dir / ".lecturecast" / "runtime"
+        _verify_containment(Path(prepared.temp_path_str), runtime_root)
+        import os as _os_mod
+        if _os_mod.normpath(prepared.temp_path_str) != _os_mod.normpath(str(expected_temp)):
+            raise OperationIntegrityError("temp path is not the deterministic location")
         temp = Path(prepared.temp_path_str)
-        try:
-            if temp.resolve() != expected_temp.resolve():
-                raise OperationIntegrityError("temp path is not the deterministic location")
-        except (OSError, ValueError):
-            raise OperationIntegrityError("temp path resolution failed")
         if temp.is_symlink() or not temp.is_file():
             raise OperationIntegrityError("temp must be a regular file, not a symlink")
         # Recompute digest from the actual file.
@@ -1422,8 +1422,15 @@ class OperationRepository:
         if receipt["status"] == "withdrawn":
             self._cleanup_download_withdrawn(conn, operation_id, lease_owner, fence, now_c)
             derived_temp = self._project_dir / ".lecturecast" / "runtime" / (_output_ref(operation_id) + ".tmp")
-            if derived_temp.exists() and not derived_temp.is_symlink():
-                _os.unlink(str(derived_temp))
+            # Verify containment before unlink — a symlinked intermediate must
+            # not let us delete a file outside runtime.
+            try:
+                _verify_containment(derived_temp, self._project_dir / ".lecturecast" / "runtime")
+            except OperationIntegrityError:
+                pass  # path is unsafe; skip unlink rather than touch an external file
+            else:
+                if derived_temp.exists() and not derived_temp.is_symlink():
+                    _os.unlink(str(derived_temp))
             return DownloadOutcome(operation_id, "consent_withdrawn", fence,
                                    _RECONCILE_WITHDRAWN, None)
         if receipt["status"] != "granted":
@@ -1569,21 +1576,27 @@ def _output_ref(operation_id: str) -> str:
 
 
 def _verify_containment(path: Path, runtime_root: Path) -> None:
-    """Reject if the resolved path escapes runtime_root, or if any directory
-    component in the chain (outputs/, heygen/) is a symlink — a symlinked
-    intermediate can redirect the deterministic leaf outside runtime even when
-    both sides resolve to the same target."""
-    runtime = runtime_root.resolve()
-    resolved = path.resolve()
+    """Two-layer path-safety check:
+    Layer 1 (lexical): path.relative_to(runtime_root) on the NON-resolved paths;
+    then lstat each intermediate directory component — reject any symlink
+    (catches a symlinked outputs/ redirecting the deterministic leaf).
+    Layer 2 (resolved): path.resolve() must still be under
+    runtime_root.resolve() (catches ancestor symlinks like /var → /private/var
+    that are legitimate, while rejecting anything that genuinely escapes)."""
+    # Layer 1: lexical containment.
     try:
-        rel = resolved.relative_to(runtime)
+        rel_parts = path.relative_to(runtime_root).parts
     except ValueError:
-        raise OperationIntegrityError(f"path escapes runtime: {resolved}")
-    current = runtime
-    for part in rel.parts[:-1]:  # intermediate directories only (not the leaf file)
+        raise OperationIntegrityError(f"path escapes runtime (lexical): {path}")
+    # lstat each intermediate directory component (runtime/outputs, runtime/outputs/heygen).
+    current = runtime_root
+    for part in rel_parts[:-1]:
         current = current / part
         if current.is_symlink():
             raise OperationIntegrityError(f"symlink in directory chain: {current}")
+    # Layer 2: resolved containment.
+    if not path.resolve().is_relative_to(runtime_root.resolve()):
+        raise OperationIntegrityError(f"path escapes runtime (resolved): {path.resolve()}")
 
 
 # --- coordinator -------------------------------------------------------
