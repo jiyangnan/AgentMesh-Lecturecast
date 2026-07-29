@@ -195,3 +195,127 @@ def test_download_crash_recovery_finalize(tmp_path):
     final = tmp_path / ".lecturecast" / "runtime" / ref
     assert final.exists()
     assert final.read_bytes() == content
+
+
+# ---- e4a2 Codex fix tests ----
+
+def test_permanent_error_not_reclaimed_second_round(tmp_path):
+    """A download parked with a manual-recovery code must NOT be re-claimable."""
+    prepared_op = _completed(tmp_path)
+    proc = DownloadProcessor(tmp_path)
+    # First call: non-retryable poll error → parks with download_reconciliation_required.
+    proc.download_once(
+        operation_id=prepared_op.operation_id, lease_owner=OWNER,
+        adapter=_StubAdapter(PollAdapterError(code="auth_failed", retryable=False)),
+        downloader=_StubDownloader(), now_iso=NOW, lease_seconds=60)
+    # Second call: must NOT reach the adapter (claim returns not_ready).
+    called = []
+    class _TrackingAdapter(_StubAdapter):
+        def poll_video(self, rid): called.append(rid); return PollResult("completed", "https://x/v.mp4")
+    res = proc.download_once(
+        operation_id=prepared_op.operation_id, lease_owner=OWNER,
+        adapter=_TrackingAdapter(PollAdapterError(code="auth_failed", retryable=False)),
+        downloader=_StubDownloader(), now_iso="2026-07-29T00:10:00Z", lease_seconds=60)
+    assert res.claim.status == "not_ready"
+    assert called == []  # adapter never called
+
+
+def test_stage_rejects_mismatched_ref(tmp_path):
+    """A downloader returning a wrong local_output_ref is rejected at stage."""
+    from lecturecast.operation_repository import OperationRepository, OperationIntegrityError
+    prepared_op = _completed(tmp_path)
+    repo = OperationRepository(tmp_path)
+    with repo.begin_immediate() as conn:
+        claim = repo.claim_download_in_tx(conn, prepared_op.operation_id, OWNER, NOW, 60)
+    # Write a real temp file with correct content/digest but WRONG ref.
+    content = b"x"
+    tmp_file = tmp_path / ".lecturecast" / "runtime" / "outputs/heygen/wrong.mp4.tmp"
+    tmp_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file.write_bytes(content)
+    bad = PreparedDownload(
+        temp_path_str=str(tmp_file), local_output_ref="outputs/heygen/wrong.mp4",
+        digest="sha256:" + hashlib.sha256(content).hexdigest(),
+        size_bytes=1, media=MediaProbeResult(10.0, "h264", 1280, 720))
+    with repo.begin_immediate() as conn:
+        with pytest.raises(OperationIntegrityError, match="local_output_ref"):
+            repo.stage_download_in_tx(conn, prepared_op.operation_id, OWNER, claim.fence, NOW, bad)
+
+
+def test_stage_rejects_digest_mismatch(tmp_path):
+    """A downloader returning a digest that doesn't match the file is rejected."""
+    from lecturecast.operation_repository import OperationRepository, OperationIntegrityError
+    prepared_op = _completed(tmp_path)
+    repo = OperationRepository(tmp_path)
+    with repo.begin_immediate() as conn:
+        claim = repo.claim_download_in_tx(conn, prepared_op.operation_id, OWNER, NOW, 60)
+    ref = f"outputs/heygen/{prepared_op.operation_id}.mp4"
+    tmp_file = tmp_path / ".lecturecast" / "runtime" / (ref + ".tmp")
+    tmp_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file.write_bytes(b"real content")
+    lying = PreparedDownload(
+        temp_path_str=str(tmp_file), local_output_ref=ref,
+        digest="sha256:" + "0" * 64,  # wrong digest
+        size_bytes=len(b"real content"), media=MediaProbeResult(10.0, "h264", 1280, 720))
+    with repo.begin_immediate() as conn:
+        with pytest.raises(OperationIntegrityError, match="digest"):
+            repo.stage_download_in_tx(conn, prepared_op.operation_id, OWNER, claim.fence, NOW, lying)
+
+
+def test_finalize_missing_file_parks_for_manual_recovery(tmp_path):
+    """Neither temp nor final exists → fenced manual-recovery park (not a loop)."""
+    prepared_op = _completed(tmp_path)
+    proc = DownloadProcessor(tmp_path)
+    repo = OperationRepository(tmp_path)
+    # Manually stage without writing any file.
+    with repo.begin_immediate() as conn:
+        claim = repo.claim_download_in_tx(conn, prepared_op.operation_id, OWNER, NOW, 60)
+    ref = f"outputs/heygen/{prepared_op.operation_id}.mp4"
+    content = b"staged"
+    tmp_file = tmp_path / ".lecturecast" / "runtime" / (ref + ".tmp")
+    tmp_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file.write_bytes(content)
+    prepared = PreparedDownload(temp_path_str=str(tmp_file), local_output_ref=ref,
+        digest="sha256:" + hashlib.sha256(content).hexdigest(),
+        size_bytes=len(content), media=MediaProbeResult(10.0, "h264", 1280, 720))
+    with repo.begin_immediate() as conn:
+        repo.stage_download_in_tx(conn, prepared_op.operation_id, OWNER, claim.fence, NOW, prepared)
+    # Delete the temp file so finalize finds nothing.
+    tmp_file.unlink()
+    res = proc.download_once(
+        operation_id=prepared_op.operation_id, lease_owner="maintenance-download-recovery",
+        adapter=_StubAdapter(PollResult(provider_status="completed", video_url="https://x/v.mp4")),
+        downloader=_StubDownloader(), now_iso="2026-07-29T00:05:00Z", lease_seconds=60)
+    assert res.outcome.status == "failed"
+    assert res.outcome.last_error_code == "download_file_missing"
+    # Parked → not re-claimable.
+    res2 = proc.download_once(
+        operation_id=prepared_op.operation_id, lease_owner="maintenance-download-recovery2",
+        adapter=_StubAdapter(PollResult(provider_status="completed", video_url="https://x/v.mp4")),
+        downloader=_StubDownloader(), now_iso="2026-07-29T00:10:00Z", lease_seconds=60)
+    assert res2.claim.status == "not_ready"
+
+
+def test_stale_fence_does_not_publish(tmp_path):
+    """A fence mismatch in finalize writes nothing and does not publish a file."""
+    prepared_op = _completed(tmp_path)
+    repo = OperationRepository(tmp_path)
+    with repo.begin_immediate() as conn:
+        claim = repo.claim_download_in_tx(conn, prepared_op.operation_id, OWNER, NOW, 60)
+    ref = f"outputs/heygen/{prepared_op.operation_id}.mp4"
+    content = b"staged"
+    tmp_file = tmp_path / ".lecturecast" / "runtime" / (ref + ".tmp")
+    tmp_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file.write_bytes(content)
+    prepared = PreparedDownload(temp_path_str=str(tmp_file), local_output_ref=ref,
+        digest="sha256:" + hashlib.sha256(content).hexdigest(),
+        size_bytes=len(content), media=MediaProbeResult(10.0, "h264", 1280, 720))
+    with repo.begin_immediate() as conn:
+        repo.stage_download_in_tx(conn, prepared_op.operation_id, OWNER, claim.fence, NOW, prepared)
+    # Finalize with WRONG fence.
+    with repo.begin_immediate() as conn:
+        outcome = repo.finalize_download_in_tx(
+            conn, prepared_op.operation_id, OWNER, claim.fence + 99, NOW,
+            str(tmp_path))
+    assert outcome.status == "fence_conflict"
+    final = tmp_path / ".lecturecast" / "runtime" / ref
+    assert not final.exists()  # not published

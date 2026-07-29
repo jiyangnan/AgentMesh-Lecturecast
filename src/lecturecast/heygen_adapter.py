@@ -253,5 +253,6 @@ class VideoDownloader(Protocol):
     inject a fake. The URL is NEVER persisted or logged."""
 
     def download_and_verify(self, url: str, runtime_dir: str,
-                            max_bytes: int, probe: MediaProbe) -> "PreparedDownload":
+                            local_output_ref: str, max_bytes: int,
+                            probe: MediaProbe) -> "PreparedDownload":
         ...
