@@ -62,7 +62,7 @@ def test_validate_url_accepts_public_ip(monkeypatch):
     # 1.1.1.1 is a known public IP; monkeypatch DNS to return it for a hostname.
     monkeypatch.setattr("socket.getaddrinfo", lambda *a: [
         (0, 0, 0, 0, ("1.1.1.1", 443))])
-    host = _validate_download_url("https://files.heygen.ai/v.mp4", frozenset({"files.heygen.ai"}))
+    host, ips = _validate_download_url("https://files.heygen.ai/v.mp4", frozenset({"files.heygen.ai"}))
     assert host == "files.heygen.ai"
 
 
@@ -112,7 +112,7 @@ def _make_downloader_for_localhost(monkeypatch):
     """Create a downloader with URL validation patched to accept localhost."""
     dl = StdlibVideoDownloader(allowed_hosts=frozenset({"127.0.0.1"}))
     monkeypatch.setattr("lecturecast.heygen_downloader._validate_download_url",
-                        lambda url, hosts: "127.0.0.1")
+                        lambda url, hosts: ("127.0.0.1", ["127.0.0.1"]))
     return dl
 
 
@@ -189,6 +189,28 @@ def test_downloader_rejects_redirect(tmp_path, monkeypatch):
     server.shutdown()
 
 
+def _make_fake_popen(fake_result):
+    """Create a fake Popen that writes fake_result.stdout to the fd and exits."""
+    class _FakeProc:
+        def __init__(self, *a, **kw): pass
+        @property
+        def returncode(self): return fake_result.returncode
+        def wait(self, timeout=None): return fake_result.returncode
+        def kill(self): pass
+    # We need to intercept stdout being a file: write to it, then the probe reads it.
+    class _FakePopen:
+        def __init__(self, cmd, stdout=None, stderr=None):
+            if stdout is not None:
+                stdout.write(fake_result.stdout.encode() if isinstance(fake_result.stdout, str) else fake_result.stdout)
+                stdout.flush()
+                stdout.seek(0)
+        @property
+        def returncode(self): return fake_result.returncode
+        def wait(self, timeout=None): return fake_result.returncode
+        def kill(self): pass
+    return _FakePopen
+
+
 # --- FfprobeMediaProbe -------------------------------------------------
 
 @pytest.fixture()
@@ -213,7 +235,7 @@ def test_ffprobe_parses_valid_json(monkeypatch, fake_ffprobe, tmp_path):
                          "width": 1920, "height": 1080, "duration": "12.5"}],
             "format": {"duration": "12.5"},
         }), stderr="")
-    monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake_result)
+    monkeypatch.setattr("subprocess.Popen", _make_fake_popen(fake_result))
     result = probe.probe(str(target))
     assert result.video_codec == "h264"
     assert result.width == 1920
@@ -225,7 +247,7 @@ def test_ffprobe_rejects_no_video_stream(monkeypatch, fake_ffprobe, tmp_path):
     probe = FfprobeMediaProbe(ffprobe_path=fake_ffprobe)
     target = tmp_path / "fake.mp4"; target.write_bytes(b"fake")
     fake = MagicMock(returncode=0, stdout=json.dumps({"streams": [{"codec_type": "audio"}]}), stderr="")
-    monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake)
+    monkeypatch.setattr("subprocess.Popen", _make_fake_popen(fake))
     with pytest.raises(ValueError, match="no video stream"):
         probe.probe(str(target))
 
@@ -234,7 +256,7 @@ def test_ffprobe_rejects_malformed_json(monkeypatch, fake_ffprobe, tmp_path):
     probe = FfprobeMediaProbe(ffprobe_path=fake_ffprobe)
     target = tmp_path / "fake.mp4"; target.write_bytes(b"fake")
     fake = MagicMock(returncode=0, stdout="not json at all", stderr="")
-    monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake)
+    monkeypatch.setattr("subprocess.Popen", _make_fake_popen(fake))
     with pytest.raises(ValueError, match="not valid JSON"):
         probe.probe(str(target))
 
@@ -246,7 +268,7 @@ def test_ffprobe_rejects_nan_duration(monkeypatch, fake_ffprobe, tmp_path):
         "streams": [{"codec_type": "video", "codec_name": "h264", "width": 1280, "height": 720}],
         "format": {"duration": "NaN"},
     }), stderr="")
-    monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake)
+    monkeypatch.setattr("subprocess.Popen", _make_fake_popen(fake))
     with pytest.raises(ValueError, match="finite"):
         probe.probe(str(target))
 
@@ -255,7 +277,7 @@ def test_ffprobe_rejects_nonzero_exit(monkeypatch, fake_ffprobe, tmp_path):
     probe = FfprobeMediaProbe(ffprobe_path=fake_ffprobe)
     target = tmp_path / "fake.mp4"; target.write_bytes(b"fake")
     fake = MagicMock(returncode=1, stdout="", stderr="error")
-    monkeypatch.setattr("subprocess.run", lambda *a, **kw: fake)
+    monkeypatch.setattr("subprocess.Popen", _make_fake_popen(fake))
     with pytest.raises(ValueError, match="exit 1"):
         probe.probe(str(target))
 
