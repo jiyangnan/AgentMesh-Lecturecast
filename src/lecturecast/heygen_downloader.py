@@ -188,11 +188,17 @@ class StdlibVideoDownloader:
             if 300 <= resp.status < 400:
                 raise ValueError(
                     f"download redirect refused: {resp.status} -> {resp.getheader('Location', '?')}")
+            if resp.status != 200:
+                raise ValueError(f"download failed: HTTP {resp.status}")
             flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
             try:
                 flags |= os.O_NOFOLLOW  # type: ignore[attr-defined]
             except AttributeError:
                 pass
+            # O_NOFOLLOW on the leaf file prevents the most common swap.
+            # A full dir_fd chain (openat per component) would close the
+            # residual TOCTOU on intermediate directories; the runtime dir
+            # is 0700, limiting swap to local users with project access.
             fd = os.open(str(temp_path), flags, 0o600)
             while True:
                 chunk = resp.read(_DOWNLOAD_CHUNK)
@@ -274,28 +280,15 @@ class FfprobeMediaProbe:
              "-show_streams", "-show_format", path],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         )
-        import select as _select
-        import time as _time
+        import threading as _threading
         chunks: list[bytes] = []
         total_size = 0
         overflowed = False
-        deadline = _time.monotonic() + 30
-        try:
+
+        def _reader():
+            nonlocal total_size, overflowed
             while True:
-                remaining = deadline - _time.monotonic()
-                if remaining <= 0:
-                    proc.kill()
-                    proc.wait()
-                    raise ValueError("ffprobe timed out")
-                ready, _, _ = _select.select([proc.stdout], [], [], remaining)
-                if not ready:
-                    # Timeout expired with no data
-                    if proc.poll() is not None:
-                        break
-                    proc.kill()
-                    proc.wait()
-                    raise ValueError("ffprobe timed out")
-                chunk = proc.stdout.read1(65536) if hasattr(proc.stdout, 'read1') else proc.stdout.read(65536)
+                chunk = proc.stdout.read(65536)
                 if not chunk:
                     break
                 total_size += len(chunk)
@@ -304,11 +297,19 @@ class FfprobeMediaProbe:
                     proc.kill()
                     break
                 chunks.append(chunk)
-            proc.wait(timeout=max(1, deadline - _time.monotonic()))
-        except subprocess.TimeoutExpired:
+
+        reader_thread = _threading.Thread(target=_reader, daemon=True)
+        reader_thread.start()
+        reader_thread.join(timeout=30)
+        if reader_thread.is_alive():
             proc.kill()
             proc.wait()
             raise ValueError("ffprobe timed out")
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
         if overflowed:
             raise ValueError("ffprobe stdout exceeded 1 MiB")
         if proc.returncode != 0:
