@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 _RUNTIME_DIR_NAME = "runtime"
 _DB_NAME = "heygen-operations.db"
 
@@ -152,6 +152,7 @@ _RESOURCES_DDL = """
                 'not_started', 'deletion_pending', 'deleted', 'deletion_failed'
             )),
         deletion_attempts INTEGER NOT NULL DEFAULT 0 CHECK (deletion_attempts >= 0),
+        deletion_next_retry_at TEXT,
         deletion_reason TEXT
             CHECK (deletion_reason IS NULL OR deletion_reason IN (
                 'post_download', 'consent_withdrawal', 'manual_force'
@@ -233,6 +234,17 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
+    """v3 → v4: add heygen_remote_resources.deletion_next_retry_at (nullable)
+    for per-resource deletion backoff, independent of the operation-level
+    next_retry_at shared by poll/reconcile."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(heygen_remote_resources)")}
+    if "deletion_next_retry_at" not in cols:
+        conn.execute(
+            "ALTER TABLE heygen_remote_resources ADD COLUMN deletion_next_retry_at TEXT"
+        )
+
+
 def _migrate(conn: sqlite3.Connection, current_version: int) -> None:
     """Run all version steps < _SCHEMA_VERSION, then bump user_version, in one
     BEGIN IMMEDIATE transaction. All-or-nothing: on any failure the whole
@@ -246,6 +258,8 @@ def _migrate(conn: sqlite3.Connection, current_version: int) -> None:
             _migrate_v1_to_v2(conn)
         if current_version < 3:
             _migrate_v2_to_v3(conn)
+        if current_version < 4:
+            _migrate_v3_to_v4(conn)
         conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         conn.execute("COMMIT")
     except Exception:
