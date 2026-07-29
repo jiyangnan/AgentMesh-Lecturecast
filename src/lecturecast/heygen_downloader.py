@@ -132,6 +132,20 @@ def _verify_lexical_containment(path: Path, root: Path) -> None:
             return
 
 
+
+def _open_pinned_https(hostname: str, pinned_ip: str, port: int):
+    """Open an HTTPS connection to pinned_ip, but use hostname for TLS SNI +
+    certificate verification. No global state pollution — thread-safe."""
+    import http.client
+    import ssl as _ssl
+    ctx = _ssl.create_default_context()
+    raw_sock = socket.create_connection((pinned_ip, port), timeout=30)
+    ssl_sock = ctx.wrap_socket(raw_sock, server_hostname=hostname)
+    conn = http.client.HTTPSConnection(hostname, port)
+    conn.sock = ssl_sock
+    return conn
+
+
 class StdlibVideoDownloader:
     """Downloads a video URL to a deterministic .tmp file."""
 
@@ -142,7 +156,7 @@ class StdlibVideoDownloader:
 
     def download_and_verify(self, url: str, runtime_dir: str,
                             local_output_ref: str, max_bytes: int,
-                            probe: MediaProbe) -> PreparedDownload:
+                            probe: MediaProbe, _connect=None) -> PreparedDownload:
         if type(max_bytes) is not int or max_bytes <= 0:
             raise ValueError("max_bytes must be a positive int")
         host, verified_ips = _validate_download_url(url, self._allowed_hosts)
@@ -152,28 +166,28 @@ class StdlibVideoDownloader:
         temp_path.parent.mkdir(parents=True, exist_ok=True)
         _verify_lexical_containment(temp_path, runtime_root)
 
-        # Pin the verified IP via DNS override to prevent DNS rebinding, while
-        # preserving TLS SNI/certificate verification (the URL and hostname stay
-        # unchanged; only the actual TCP connect uses the verified IP).
+        # Pin the verified IP into a private HTTPS connection (no global state
+        # pollution). TCP connects to the verified IP; TLS SNI + certificate
+        # verification use the original hostname; HTTP Host is the original host.
         pinned_ip = verified_ips[0]
-        import socket as _socket
-        _orig_getaddrinfo = _socket.getaddrinfo
-
-        def _pinned_resolver(hostname, port, *args, **kwargs):
-            if hostname == host:
-                return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "",
-                         (pinned_ip, port))]
-            return _orig_getaddrinfo(hostname, port, *args, **kwargs)
+        parsed = urlparse(url)
+        port = parsed.port or 443
+        path = parsed.path or "/"
+        if parsed.query:
+            path += "?" + parsed.query
 
         h = hashlib.sha256()
         total = 0
         fd = None
         resp = None
+        conn = None
         try:
-            _socket.getaddrinfo = _pinned_resolver
-            req = urllib_request.Request(url, method="GET")
-            opener = urllib_request.build_opener(_NoRedirectHandler)
-            resp = opener.open(req, timeout=30)
+            conn = (_connect or _open_pinned_https)(host, pinned_ip, port)
+            conn.request("GET", path, headers={"Host": host})
+            resp = conn.getresponse()
+            if 300 <= resp.status < 400:
+                raise ValueError(
+                    f"download redirect refused: {resp.status} -> {resp.getheader('Location', '?')}")
             flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
             try:
                 flags |= os.O_NOFOLLOW  # type: ignore[attr-defined]
@@ -226,9 +240,10 @@ class StdlibVideoDownloader:
                     temp_path.unlink()
             raise
         finally:
-            _socket.getaddrinfo = _orig_getaddrinfo
             if resp is not None:
                 resp.close()
+            if conn is not None:
+                conn.close()
 
 
 # --- ffprobe media probe ------------------------------------------------
@@ -259,12 +274,28 @@ class FfprobeMediaProbe:
              "-show_streams", "-show_format", path],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         )
+        import select as _select
+        import time as _time
         chunks: list[bytes] = []
         total_size = 0
         overflowed = False
+        deadline = _time.monotonic() + 30
         try:
             while True:
-                chunk = proc.stdout.read(65536)
+                remaining = deadline - _time.monotonic()
+                if remaining <= 0:
+                    proc.kill()
+                    proc.wait()
+                    raise ValueError("ffprobe timed out")
+                ready, _, _ = _select.select([proc.stdout], [], [], remaining)
+                if not ready:
+                    # Timeout expired with no data
+                    if proc.poll() is not None:
+                        break
+                    proc.kill()
+                    proc.wait()
+                    raise ValueError("ffprobe timed out")
+                chunk = proc.stdout.read1(65536) if hasattr(proc.stdout, 'read1') else proc.stdout.read(65536)
                 if not chunk:
                     break
                 total_size += len(chunk)
@@ -273,7 +304,7 @@ class FfprobeMediaProbe:
                     proc.kill()
                     break
                 chunks.append(chunk)
-            proc.wait(timeout=30)
+            proc.wait(timeout=max(1, deadline - _time.monotonic()))
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
