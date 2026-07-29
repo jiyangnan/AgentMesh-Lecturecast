@@ -414,3 +414,102 @@ def test_ffprobe_hang_timeout():
     assert "proc.kill()" in src
     assert "proc.stdout.close()" in src
     assert "reader_thread.join(timeout=5)" in src
+
+
+# ---- e5a round-8: pinned HTTPS + ffprobe timeout behavioral tests --------
+
+def test_open_pinned_https_binds_ip_sni_host(monkeypatch):
+    """Verify TCP connects to verified IP, TLS uses original hostname, HTTP
+    Connection uses original hostname."""
+    from lecturecast.heygen_downloader import _open_pinned_https
+
+    calls = {}
+
+    class _FakeSock:
+        def close(self): pass
+
+    class _FakeSSL:
+        def wrap_socket(self, sock, server_hostname=None):
+            calls["sni"] = server_hostname
+            return _FakeSock()
+
+    class _FakeConn:
+        def __init__(self, host, port):
+            calls["http_host"] = host
+            calls["http_port"] = port
+            self._sock = None
+        @property
+        def sock(self): return self._sock
+        @sock.setter
+        def sock(self, v):
+            calls["sock_injected"] = True
+            self._sock = v
+        def close(self): pass
+
+    monkeypatch.setattr("socket.create_connection", lambda addr, timeout=None: (calls.__setitem__("tcp_addr", addr) or _FakeSock()))
+    monkeypatch.setattr("ssl.create_default_context", lambda: _FakeSSL())
+    monkeypatch.setattr("http.client.HTTPSConnection", _FakeConn)
+
+    _open_pinned_https("files.heygen.ai", "1.2.3.4", 443)
+
+    assert calls["tcp_addr"] == ("1.2.3.4", 443)
+    assert calls["sni"] == "files.heygen.ai"
+    assert calls["http_host"] == "files.heygen.ai"
+    assert calls["sock_injected"] is True
+
+
+def test_ffprobe_timeout_kills_and_cleans(monkeypatch, fake_ffprobe, tmp_path):
+    """ffprobe with a blocking stdout (no data, no exit) must be killed after
+    timeout. Verify kill called, stdout closed, reader thread exited."""
+    import threading as _threading
+    import lecturecast.heygen_downloader as mod
+
+    probe = mod.FfprobeMediaProbe(ffprobe_path=fake_ffprobe)
+    target = tmp_path / "fake.mp4"
+    target.write_bytes(b"fake")
+
+    killed = _threading.Event()
+    stdout_closed = _threading.Event()
+
+    # Override the timeout constant to make this test fast
+    monkeypatch.setattr(mod, "_PROBE_STDOUT_MAX", 1_048_576)
+
+    r_fd, w_fd = __import__("os").pipe()
+    # Don't close w_fd — the reader thread will block forever on read()
+
+    class _BlockingPopen:
+        def __init__(self, *a, **kw):
+            self._rc = None
+            self._stdout = __import__("os").fdopen(r_fd, "rb")
+            self._orig_close = self._stdout.close
+            self._stdout.close = lambda: (stdout_closed.set(), self._orig_close())
+        @property
+        def stdout(self): return self._stdout
+        @property
+        def returncode(self): return self._rc
+        def wait(self, timeout=None):
+            return self._rc if self._rc is not None else -9
+        def kill(self):
+            self._rc = -9
+            killed.set()
+            # Unblock the reader by closing the write end
+            try: __import__("os").close(w_fd)
+            except OSError: pass
+        def poll(self): return self._rc
+
+    monkeypatch.setattr("subprocess.Popen", _BlockingPopen)
+
+    # Temporarily reduce the deadline from 30s to 2s
+    import time as _time
+    orig_monotonic = _time.monotonic
+    start = orig_monotonic()
+    def fast_monotonic():
+        # Return elapsed * 15 to make 2 real seconds feel like 30 virtual
+        return start + (orig_monotonic() - start) * 15
+    monkeypatch.setattr("time.monotonic", fast_monotonic)
+
+    with pytest.raises(ValueError, match="timed out"):
+        probe.probe(str(target))
+
+    assert killed.is_set()
+    assert stdout_closed.is_set()
