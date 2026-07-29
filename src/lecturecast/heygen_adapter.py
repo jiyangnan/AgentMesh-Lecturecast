@@ -113,12 +113,37 @@ PROVIDER_STATUS = frozenset({
 
 @dataclass(frozen=True)
 class PollResult:
-    """One poll of a known remote_id. `provider_status` is normalized;
-    `video_url` is a transient download locator (never persisted)."""
+    """One poll of a known remote_id. `provider_status` is normalized to the
+    closed PROVIDER_STATUS vocabulary; `video_url` is a transient download
+    locator (never persisted) and is REQUIRED when provider_status is
+    'completed' (a completion without a URL is meaningless)."""
 
     provider_status: str
     video_url: str | None = None
     provider_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.provider_status not in PROVIDER_STATUS:
+            raise ValueError(f"unknown provider_status: {self.provider_status!r}")
+        if self.provider_status == "completed" and not (self.video_url or "").strip():
+            raise ValueError("a completed poll must carry a video_url")
+
+
+class PollAdapterError(Exception):
+    """A structured failure of a GET poll (distinct from a submit, so it carries
+    no submission_certainty). retryable transient errors keep the operation's
+    status and back off; non-retryable ones route to reconciliation."""
+
+    def __init__(self, *, code: str, retryable: bool,
+                 provider_code: str | None = None, message: str = "") -> None:
+        if code not in ADAPTER_ERROR_CODES:
+            raise ValueError(f"unknown adapter error code: {code!r}")
+        if type(retryable) is not bool:
+            raise TypeError("retryable must be a bool")
+        self.code = code
+        self.retryable = retryable
+        self.provider_code = provider_code
+        super().__init__(message or code)
 
 
 @dataclass(frozen=True)

@@ -17,7 +17,7 @@ from lecturecast.consent import (
     ThirdPartyTransferDisclosure,
     prepare_operation,
 )
-from lecturecast.heygen_adapter import HeyGenAdapterError, PollResult, SubmitAccepted
+from lecturecast.heygen_adapter import PollAdapterError, PollResult, SubmitAccepted
 from lecturecast.operation_repository import (
     OperationRepository,
     PollProcessor,
@@ -86,7 +86,7 @@ class _Adapter:
 
     def poll_video(self, remote_id):
         self.polled.append(remote_id)
-        if isinstance(self._result, HeyGenAdapterError):
+        if isinstance(self._result, PollAdapterError):
             raise self._result
         return self._result
 
@@ -137,8 +137,7 @@ def test_poll_claim_retry_wait_during_backoff(tmp_path: Path):
     proc = PollProcessor(tmp_path)
     # A transient poll error sets next_retry_at.
     proc.poll_once(operation_id=prepared.operation_id, lease_owner=OWNER,
-                   adapter=_Adapter(HeyGenAdapterError(code="connection_error", retryable=True,
-                                                       submission_certainty="not_sent")),
+                   adapter=_Adapter(PollAdapterError(code="connection_error", retryable=True)),
                    now_iso=NOW, lease_seconds=60)
     # Re-poll immediately → retry_wait (backoff not elapsed).
     res = proc.poll_once(operation_id=prepared.operation_id, lease_owner=OWNER,
@@ -156,13 +155,15 @@ def test_poll_claim_retry_wait_during_backoff(tmp_path: Path):
     ("completed", "completed"),
     ("failed", "failed"),
     ("not_found", "reconciliation_required"),
-    ("bogus", "reconciliation_required"),
 ])
 def test_poll_outcome_mapping(tmp_path: Path, provider_status: str, expected: str):
     prepared = _submitted(tmp_path)
     proc = PollProcessor(tmp_path)
+    kwargs = {"provider_status": provider_status}
+    if provider_status == "completed":
+        kwargs["video_url"] = "https://heygen/v/m.mp4"
     res = proc.poll_once(operation_id=prepared.operation_id, lease_owner=OWNER,
-                         adapter=_Adapter(PollResult(provider_status=provider_status)),
+                         adapter=_Adapter(PollResult(**kwargs)),
                          now_iso=NOW, lease_seconds=60)
     assert res.outcome.status == expected
     op = _op(tmp_path, prepared.operation_id)
@@ -174,8 +175,7 @@ def test_poll_transient_error_keeps_status_and_sets_retry(tmp_path: Path):
     prepared = _submitted(tmp_path)
     proc = PollProcessor(tmp_path)
     res = proc.poll_once(operation_id=prepared.operation_id, lease_owner=OWNER,
-                         adapter=_Adapter(HeyGenAdapterError(code="connection_error", retryable=True,
-                                                             submission_certainty="not_sent")),
+                         adapter=_Adapter(PollAdapterError(code="connection_error", retryable=True)),
                          now_iso=NOW, lease_seconds=60)
     assert res.outcome.status == "keep"
     op = _op(tmp_path, prepared.operation_id)
@@ -184,12 +184,11 @@ def test_poll_transient_error_keeps_status_and_sets_retry(tmp_path: Path):
     assert op["last_error_code"] == "connection_error"
 
 
-def test_poll_maybe_sent_error_is_reconciliation(tmp_path: Path):
+def test_poll_non_retryable_error_is_reconciliation(tmp_path: Path):
     prepared = _submitted(tmp_path)
     proc = PollProcessor(tmp_path)
     res = proc.poll_once(operation_id=prepared.operation_id, lease_owner=OWNER,
-                         adapter=_Adapter(HeyGenAdapterError(code="network_timeout", retryable=True,
-                                                             submission_certainty="maybe_sent")),
+                         adapter=_Adapter(PollAdapterError(code="auth_failed", retryable=False)),
                          now_iso=NOW, lease_seconds=60)
     assert res.outcome.status == "reconciliation_required"
 
@@ -203,7 +202,7 @@ def test_poll_fence_conflict_writes_nothing(tmp_path: Path):
     with repo.begin_immediate() as conn:
         outcome = repo.apply_poll_outcome_in_tx(
             conn, prepared.operation_id, OWNER, claim.fence + 99, NOW,
-            PollResult(provider_status="completed"),
+            PollResult(provider_status="completed", video_url="https://heygen/v/x.mp4"),
         )
     assert outcome.status == "fence_conflict"
     op = _op(tmp_path, prepared.operation_id)
@@ -216,14 +215,85 @@ def test_poll_completed_clears_retry_fields(tmp_path: Path):
     proc = PollProcessor(tmp_path)
     # First a transient error leaves next_retry_at/last_error_code.
     proc.poll_once(operation_id=prepared.operation_id, lease_owner=OWNER,
-                   adapter=_Adapter(HeyGenAdapterError(code="connection_error", retryable=True,
-                                                       submission_certainty="not_sent")),
+                   adapter=_Adapter(PollAdapterError(code="connection_error", retryable=True)),
                    now_iso=NOW, lease_seconds=60)
     # Wait out the backoff, then completed must clear them.
     proc.poll_once(operation_id=prepared.operation_id, lease_owner=OWNER,
-                   adapter=_Adapter(PollResult(provider_status="completed")),
+                   adapter=_Adapter(PollResult(provider_status="completed", video_url="https://heygen/v/x.mp4")),
                    now_iso="2026-07-29T00:01:00Z", lease_seconds=60)
     op = _op(tmp_path, prepared.operation_id)
     assert op["status"] == "completed"
     assert op["next_retry_at"] is None
     assert op["last_error_code"] is None
+
+
+def test_poll_completed_carries_video_url_for_e4(tmp_path: Path):
+    prepared = _submitted(tmp_path)
+    proc = PollProcessor(tmp_path)
+    res = proc.poll_once(operation_id=prepared.operation_id, lease_owner=OWNER,
+                         adapter=_Adapter(PollResult(provider_status="completed",
+                                                     video_url="https://heygen/v/abc.mp4")),
+                         now_iso=NOW, lease_seconds=60)
+    assert res.outcome.status == "completed"
+    assert res.outcome.video_url == "https://heygen/v/abc.mp4"
+
+
+def test_poll_result_rejects_unknown_status_and_completed_without_url():
+    with pytest.raises(ValueError):
+        PollResult(provider_status="bogus")
+    with pytest.raises(ValueError):
+        PollResult(provider_status="completed")  # no video_url
+
+
+def test_normal_poll_sets_interval_anti_hotloop(tmp_path: Path):
+    """A successful processing poll sets next_retry_at to the poll interval, so an
+    immediate re-poll is retry_wait (no hot-looping)."""
+    prepared = _submitted(tmp_path)
+    proc = PollProcessor(tmp_path)
+    first = proc.poll_once(operation_id=prepared.operation_id, lease_owner=OWNER,
+                           adapter=_Adapter(PollResult(provider_status="processing")),
+                           now_iso=NOW, lease_seconds=60)
+    assert first.outcome.status == "processing"
+    op = _op(tmp_path, prepared.operation_id)
+    assert op["next_retry_at"] is not None  # poll interval set
+    # Immediate re-poll → retry_wait.
+    second = proc.poll_once(operation_id=prepared.operation_id, lease_owner=OWNER,
+                            adapter=_Adapter(PollResult(provider_status="processing")),
+                            now_iso=NOW, lease_seconds=60)
+    assert second.claim.status == "retry_wait"
+
+
+def test_poll_claim_reclaims_expired_lease(tmp_path: Path):
+    """An expired poll lease is reclaimed (not stuck). A new owner claims it,
+    bumping the fence."""
+    prepared = _submitted(tmp_path)
+    repo = OperationRepository(tmp_path)
+    # Seed an expired poll lease.
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.execute("UPDATE heygen_operations SET lease_owner = ?, lease_expires_at = ?, "
+               "lease_fence = 9 WHERE operation_id = ?",
+               ("maintenance-poll-dead", "2026-07-28T00:00:00+00:00", prepared.operation_id))
+    db.commit()
+    db.close()
+    with repo.begin_immediate() as conn:
+        claim = repo.claim_poll_in_tx(conn, prepared.operation_id, OWNER, NOW, 60)
+    assert claim.status == "claimed"
+    assert claim.fence == 10
+    assert claim.remote_id == "hg_vid_1"
+
+
+def test_poll_claim_fail_closed_on_half_lease(tmp_path: Path):
+    from lecturecast.operation_repository import OperationIntegrityError
+    prepared = _submitted(tmp_path)
+    repo = OperationRepository(tmp_path)
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.execute("UPDATE heygen_operations SET lease_owner = ?, lease_expires_at = NULL, "
+               "lease_fence = 9 WHERE operation_id = ?",
+               (OWNER, prepared.operation_id))
+    db.commit()
+    db.close()
+    with repo.begin_immediate() as conn:
+        with pytest.raises(OperationIntegrityError):
+            repo.claim_poll_in_tx(conn, prepared.operation_id, OWNER, NOW, 60)
