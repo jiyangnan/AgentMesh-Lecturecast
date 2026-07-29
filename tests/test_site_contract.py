@@ -298,6 +298,14 @@ def test_current_site_metadata_describes_the_commercial_product() -> None:
         assert all(headline not in head for headline in retired_headlines)
 
 
+def test_current_site_links_every_language_directly_to_pass_purchase() -> None:
+    purchase_url = "https://agentmesh360.com/app/#pricing"
+    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+        page = (ROOT / "site" / relative).read_text(encoding="utf-8")
+        assert page.count("data-purchase-cta") == 1
+        assert f'href="{purchase_url}"' in page
+
+
 def test_current_site_supports_macos_and_windows_without_linux() -> None:
     for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
