@@ -730,3 +730,64 @@ def test_v2_to_v3_rolls_back_if_second_alter_fails(tmp_path: Path, monkeypatch):
     cols = {r[1] for r in check.execute("PRAGMA table_info(heygen_operations)")}
     assert "download_attempts" not in cols
     check.close()
+
+
+# ---- v4 migration: deletion_next_retry_at ----
+
+def test_v3_to_v4_preserves_data_and_adds_retry_column(tmp_path: Path):
+    import lecturecast.heygen_journal as hj
+    db_path = tmp_path / ".lecturecast" / "runtime" / "heygen-operations.db"
+    # Create a v4 DB then strip deletion_next_retry_at + set user_version=3.
+    init_database(tmp_path).close()
+    db = sqlite3.connect(str(db_path))
+    db.execute("PRAGMA foreign_keys = OFF")
+    # Seed a resource row.
+    db.execute(
+        "INSERT INTO heygen_remote_resources (credential_profile_id, resource_kind, "
+        "remote_id, retention_mode, created_at, updated_at) VALUES "
+        "('heygen_env_default','video','rem1','ephemeral','2026-07-29T00:00:00Z','2026-07-29T00:00:00Z')")
+    db.execute("ALTER TABLE heygen_remote_resources DROP COLUMN deletion_next_retry_at")
+    db.execute("PRAGMA user_version = 3")
+    db.commit(); db.close()
+    # Migrate.
+    conn = init_database(tmp_path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == _SCHEMA_VERSION
+    # Data preserved.
+    row = conn.execute("SELECT remote_id FROM heygen_remote_resources WHERE remote_id='rem1'").fetchone()
+    assert row is not None and row[0] == "rem1"
+    # Column added, default NULL.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(heygen_remote_resources)")}
+    assert "deletion_next_retry_at" in cols
+    nr = conn.execute("SELECT deletion_next_retry_at FROM heygen_remote_resources WHERE remote_id='rem1'").fetchone()[0]
+    assert nr is None
+    conn.close()
+
+
+def test_v3_to_v4_rolls_back_on_alter_failure(tmp_path: Path, monkeypatch):
+    import lecturecast.heygen_journal as hj
+    db_path = tmp_path / ".lecturecast" / "runtime" / "heygen-operations.db"
+    init_database(tmp_path).close()
+    db = sqlite3.connect(str(db_path))
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.execute("ALTER TABLE heygen_remote_resources DROP COLUMN deletion_next_retry_at")
+    db.execute("PRAGMA user_version = 3")
+    db.commit(); db.close()
+    real = hj._migrate_v3_to_v4
+    def failing(conn):
+        real(conn); conn.execute("THIS IS INVALID")
+    monkeypatch.setattr(hj, "_migrate_v3_to_v4", failing)
+    with pytest.raises(sqlite3.OperationalError):
+        init_database(tmp_path)
+    check = sqlite3.connect(str(db_path))
+    assert check.execute("PRAGMA user_version").fetchone()[0] == 3
+    cols = {r[1] for r in check.execute("PRAGMA table_info(heygen_remote_resources)")}
+    assert "deletion_next_retry_at" not in cols
+    check.close()
+
+
+def test_delete_result_rejects_unknown_status():
+    from lecturecast.heygen_adapter import DeleteResult
+    DeleteResult(status="deleted")
+    DeleteResult(status="already_absent")
+    with pytest.raises(ValueError):
+        DeleteResult(status="banana")

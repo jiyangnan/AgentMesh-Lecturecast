@@ -41,9 +41,9 @@ from lecturecast.consent import (
     ProductionManifest,
     SubmitConsentResult,
 )
-from lecturecast.heygen_adapter import (HeyGenAdapterError, PollAdapterError, PollResult,
-    SubmitAccepted, SubmitOutcome, TitleCandidate, TitleQuery, TitleQueryAdapterError,
-    TitleQueryResult)
+from lecturecast.heygen_adapter import (DeleteAdapterError, DeleteResult,
+    HeyGenAdapterError, PollAdapterError, PollResult, SubmitAccepted, SubmitOutcome,
+    TitleCandidate, TitleQuery, TitleQueryAdapterError, TitleQueryResult)
 from lecturecast.heygen_journal import _chmod_secure, init_database
 
 _RUNTIME_DB = Path(".lecturecast") / "runtime" / "heygen-operations.db"
@@ -1654,7 +1654,18 @@ class OperationRepository:
             nr = res["deletion_next_retry_at"]
             if nr is not None and _parse_utc(nr) > now:
                 return DeletionClaim(operation_id, resource_id, "retry_wait", op["lease_fence"], None)
-        # deletion_pending: eligible (reclaim if lease expired)
+        elif ds == "deletion_pending":
+            # Gate by deletion_reason — not all pending resources are auto-deletable.
+            reason = res["deletion_reason"]
+            if reason == "consent_withdrawal":
+                pass  # eligible regardless of retention/verified
+            elif reason == "post_download":
+                if res["retention_mode"] != "ephemeral" or op["download_status"] != "verified":
+                    return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
+            elif reason == "manual_force":
+                return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
+            else:
+                raise OperationIntegrityError(f"unknown/null deletion_reason: {reason!r}")
         # Lease classification
         owner = op["lease_owner"]; exp = op["lease_expires_at"]
         if (owner is None) != (exp is None):
@@ -1694,8 +1705,11 @@ class OperationRepository:
         if op is None:
             return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
         res = conn.execute(
-            "SELECT deletion_attempts FROM heygen_remote_resources WHERE resource_id=? "
-            "AND deletion_status='deletion_pending'", (resource_id,)).fetchone()
+            "SELECT r.deletion_attempts FROM heygen_remote_resources r "
+            "WHERE r.resource_id=? AND r.deletion_status='deletion_pending' "
+            "AND r.created_by_operation_id=? "
+            "AND r.credential_profile_id=(SELECT o.credential_profile_id FROM heygen_operations o WHERE o.operation_id=?)",
+            (resource_id, operation_id, operation_id)).fetchone()
         if res is None:
             return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
 
@@ -2022,7 +2036,7 @@ class DeleteProcessor:
             return DeletionOnceResult(claim=claim, outcome=None)
         try:
             result = deleter.delete_video(claim.remote_id)
-        except Exception as exc:
+        except DeleteAdapterError as exc:
             result = exc
         with self._repository.begin_immediate() as conn:
             outcome = self._repository.apply_deletion_outcome_in_tx(
