@@ -396,24 +396,26 @@ def test_ffprobe_overflow_kills(monkeypatch, fake_ffprobe, tmp_path):
     target = tmp_path / "fake.mp4"; target.write_bytes(b"fake")
     big_stdout = b"x" * (2 * 1024 * 1024)
     fake = MagicMock(returncode=0, stdout=big_stdout.decode("ascii"), stderr="")
-    monkeypatch.setattr("subprocess.Popen", _make_fake_popen(fake))
+    fake_popen_cls = _make_fake_popen(fake)
+    killed = []
+    orig_kill = None
+    monkeypatch.setattr("subprocess.Popen", fake_popen_cls)
+    # Track kill calls by patching the instance method after creation
+    original_init = fake_popen_cls.__init__
+    def tracking_init(self, *a, **kw):
+        original_init(self, *a, **kw)
+        self._killed = False
+        orig = self.kill
+        def tracked_kill():
+            self._killed = True
+            orig()
+        self.kill = tracked_kill
+    fake_popen_cls.__init__ = tracking_init
     with pytest.raises(ValueError, match="exceeded 1 MiB"):
         probe.probe(str(target))
 
 
-def test_ffprobe_hang_timeout():
-    """Contract: ffprobe timeout path (kill + join + stdout close) is documented.
-    A real 30s test is impractical for CI; the code path is:
-    reader_thread.join(timeout=30) → if alive → proc.kill() + proc.wait() +
-    proc.stdout.close() + reader_thread.join(timeout=5) + raise."""
-    # Verify the code has the join+kill+close sequence by import inspection.
-    import lecturecast.heygen_downloader as mod
-    import inspect
-    src = inspect.getsource(mod.FfprobeMediaProbe.probe)
-    assert "reader_thread.join(timeout=30)" in src
-    assert "proc.kill()" in src
-    assert "proc.stdout.close()" in src
-    assert "reader_thread.join(timeout=5)" in src
+
 
 
 # ---- e5a round-8: pinned HTTPS + ffprobe timeout behavioral tests --------
@@ -464,7 +466,7 @@ def test_ffprobe_timeout_kills_and_cleans(monkeypatch, fake_ffprobe, tmp_path):
     import threading as _threading
     import lecturecast.heygen_downloader as mod
 
-    probe = mod.FfprobeMediaProbe(ffprobe_path=fake_ffprobe)
+    probe = mod.FfprobeMediaProbe(ffprobe_path=fake_ffprobe, timeout_seconds=1)
     target = tmp_path / "fake.mp4"
     target.write_bytes(b"fake")
 
@@ -499,14 +501,6 @@ def test_ffprobe_timeout_kills_and_cleans(monkeypatch, fake_ffprobe, tmp_path):
 
     monkeypatch.setattr("subprocess.Popen", _BlockingPopen)
 
-    # Temporarily reduce the deadline from 30s to 2s
-    import time as _time
-    orig_monotonic = _time.monotonic
-    start = orig_monotonic()
-    def fast_monotonic():
-        # Return elapsed * 15 to make 2 real seconds feel like 30 virtual
-        return start + (orig_monotonic() - start) * 15
-    monkeypatch.setattr("time.monotonic", fast_monotonic)
 
     with pytest.raises(ValueError, match="timed out"):
         probe.probe(str(target))
