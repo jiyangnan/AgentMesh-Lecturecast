@@ -25,6 +25,7 @@ from lecturecast.consent import (
 from lecturecast.protocol import (
     CreativeBriefV1_1,
     OrchestrationPlanV1_1,
+    PresenterPlanV1_1,
     ProductionManifest,
 )
 from lecturecast.protocol.canonical import canonical_digest
@@ -74,8 +75,8 @@ def _grant_only(svc, gen=GEN):
 
 def _real_chain(gen=GEN, avatar="photo", consent_status="granted",
                 consented_at="2026-07-29T00:00:00Z"):
-    """Build real schema-valid Brief/Manifest/Orchestration with a chained digest
-    set, for the guard (which isinstance-checks each)."""
+    """Build real schema-valid Brief/Manifest/Presenter/Orchestration with a
+    chained digest set, for the guard (which isinstance-checks each)."""
     brief_p = json.loads((FIXTURE_DIR / "creative-brief-v1_1.json").read_text())
     brief_p["presenter"] = {
         "avatar": avatar, "voice_mode": "own_voice", "presenter_mode": "three_segment",
@@ -94,13 +95,34 @@ def _real_chain(gen=GEN, avatar="photo", consent_status="granted",
     manifest_p["brief_digest"] = brief_digest
     manifest = ProductionManifest.model_validate(manifest_p)
     manifest_digest = canonical_digest(manifest)
+    cap_d = manifest.payload["capability_digest"]
+    comp_d = manifest.payload["component_catalog_digest"]
+    presenter_p = {
+        "schema_version": "1.1", "presenter_plan_id": "pp_1", "generation_id": gen,
+        "production_manifest_digest": manifest_digest, "brief_digest": brief_digest,
+        "capability_digest": cap_d, "component_catalog_digest": comp_d,
+        "avatar": "photo", "presenter_mode": "three_segment",
+        "pip_style": {"size_px": 320, "corner_radius_px": 16, "position": "bottom-right",
+                      "margin_right_px": 48, "margin_bottom_px": 48},
+        "heygen": {"base_url": "https://api.heygen.com", "auth_header": "X-Api-Key",
+                   "key_source": "user_provided_local", "key_env_var": "HEYGEN_API_KEY",
+                   "assets_endpoint": "/v3/assets", "videos_endpoint": "/v3/videos",
+                   "asset_id_field": "data.asset_id", "status_field": "data.status",
+                   "url_field": "data.video_url", "poll_interval_s": 5, "poll_max_attempts": 60},
+        "segments": [{"segment_id": "seg.opening", "script_chunk_ids": [0], "label": "opening"}],
+        "signature": {"algorithm": "Ed25519", "key_id": "lec.signing.v1", "value": "A" * 86 + "=="},
+        "created_at": "2026-07-29T00:00:00Z", "content_expires_at": "2026-07-29T00:00:00Z",
+    }
+    presenter = PresenterPlanV1_1.model_validate(presenter_p)
+    presenter_digest = canonical_digest(presenter)
     orch_p = {
         "schema_version": "1.1", "orchestration_plan_id": "orch_1", "generation_id": gen,
         "production_manifest_digest": manifest_digest, "brief_digest": brief_digest,
-        "capability_digest": Z("c"), "component_catalog_digest": Z("d"),
+        "capability_digest": cap_d, "component_catalog_digest": comp_d,
+        "presenter_plan_digest": presenter_digest,
         "bgm_enabled": False, "ffmpeg_overlay_template_id": "lec.overlay.v1",
         "timing_placeholder_contract": "{{placeholder}}", "voice_orchestration": None,
-        "speed": 1.25, "bgm_genre": "none", "presenter_plan_digest": Z("p"),
+        "speed": 1.25, "bgm_genre": "none",
         "signature": {"algorithm": "Ed25519", "key_id": "lec.signing.v1", "value": "A" * 86 + "=="},
         "created_at": "2026-07-29T00:00:00Z", "content_expires_at": "2026-07-29T00:00:00Z",
     }
@@ -109,8 +131,9 @@ def _real_chain(gen=GEN, avatar="photo", consent_status="granted",
     request_descriptor = {"video_inputs": {"avatar": "photo"}, "title": "lecturecast:t"}
     request_digest = canonical_digest(request_descriptor)
     digests = {"brief_digest": brief_digest, "manifest_digest": manifest_digest,
-               "orch_digest": orch_digest, "request_digest": request_digest}
-    return brief, manifest, orch, request_descriptor, digests
+               "presenter_digest": presenter_digest, "orch_digest": orch_digest,
+               "request_digest": request_digest}
+    return brief, manifest, presenter, orch, request_descriptor, digests
 
 
 def _manifest_variant(manifest, **changes):
@@ -123,6 +146,12 @@ def _orch_variant(orch, **changes):
     p = orch.model_dump()
     p.update(changes)
     return OrchestrationPlanV1_1.model_validate(p)
+
+
+def _presenter_variant(presenter, **changes):
+    p = presenter.model_dump()
+    p.update(changes)
+    return PresenterPlanV1_1.model_validate(p)
 
 
 def _grant_real(svc, digests):
@@ -277,7 +306,7 @@ def test_withdraw_rolls_back_when_operation_update_fails(tmp_path: Path):
                "BEGIN SELECT RAISE(ABORT, 'injected'); END")
     db.commit()
     db.close()
-    with pytest.raises(Exception):
+    with pytest.raises(sqlite3.IntegrityError):
         svc.withdraw(prepared.operation_id)
     rc = _row(tmp_path, "SELECT status FROM heygen_consent_receipts WHERE operation_id = ?",
               (prepared.operation_id,))
@@ -301,7 +330,7 @@ def test_record_decision_rolls_back_when_receipt_insert_fails(tmp_path: Path):
     digests = {"brief_digest": Z("b"), "manifest_digest": Z("m"),
                "orch_digest": Z("o"), "request_digest": Z("r")}
     prepared = prepare_operation(_identity(digests))
-    with pytest.raises(Exception):
+    with pytest.raises(sqlite3.IntegrityError):
         svc.record_decision(prepared=prepared, disclosure=_disclosure(), decision="granted",
                             creative_brief_digest=digests["brief_digest"], decision_at="2026-07-29T00:00:00Z")
     n = sqlite3.connect(str(tmp_path / DB_REL)).execute(
@@ -326,7 +355,7 @@ def test_record_decision_rejects_forged_prepared(tmp_path: Path):
 
 # ---- validate_submit_consent guard ------------------------------------
 
-def _guard(svc, prepared, brief, manifest, orch, req, *, in_tx=False):
+def _guard(svc, prepared, brief, manifest, presenter, orch, req, *, in_tx=False):
     if in_tx:
         from lecturecast.heygen_journal import init_database
         conn = init_database(svc._project_dir)
@@ -335,21 +364,21 @@ def _guard(svc, prepared, brief, manifest, orch, req, *, in_tx=False):
         try:
             res = svc.validate_submit_consent_in_tx(
                 conn, prepared=prepared, brief=brief, manifest=manifest,
-                orchestration_plan=orch, request_descriptor=req)
+                presenter_plan=presenter, orchestration_plan=orch, request_descriptor=req)
             conn.execute("COMMIT")
             return res
         finally:
             conn.close()
     return svc.validate_submit_consent(
-        prepared=prepared, brief=brief, manifest=manifest,
+        prepared=prepared, brief=brief, manifest=manifest, presenter_plan=presenter,
         orchestration_plan=orch, request_descriptor=req)
 
 
 def test_guard_authorizes_a_properly_chained_submit(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, manifest, orch, req, dig = _real_chain()
+    brief, manifest, presenter, orch, req, dig = _real_chain()
     prepared = _grant_real(svc, dig)
-    result = _guard(svc, prepared, brief, manifest, orch, req)
+    result = _guard(svc, prepared, brief, manifest, presenter, orch, req)
     assert result.operation_id == prepared.operation_id
     assert result.manifest_digest == dig["manifest_digest"]
     assert result.orchestration_plan_digest == dig["orch_digest"]
@@ -359,15 +388,15 @@ def test_guard_authorizes_a_properly_chained_submit(tmp_path: Path):
 
 def test_guard_runs_in_caller_transaction(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, manifest, orch, req, dig = _real_chain()
+    brief, manifest, presenter, orch, req, dig = _real_chain()
     prepared = _grant_real(svc, dig)
-    result = _guard(svc, prepared, brief, manifest, orch, req, in_tx=True)
+    result = _guard(svc, prepared, brief, manifest, presenter, orch, req, in_tx=True)
     assert result.receipt_digest.startswith("sha256:")
 
 
 def test_guard_rejects_non_protocol_objects(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, manifest, orch, req, dig = _real_chain()
+    brief, manifest, presenter, orch, req, dig = _real_chain()
     prepared = _grant_real(svc, dig)
 
     class _FakeDoc:
@@ -384,34 +413,35 @@ def test_guard_rejects_non_protocol_objects(tmp_path: Path):
     fake_brief = _FakeDoc(brief.model_dump())
     with pytest.raises(ConsentConflictError):
         svc.validate_submit_consent(prepared=prepared, brief=fake_brief, manifest=manifest,
-                                    orchestration_plan=orch, request_descriptor=req)
+                                    presenter_plan=presenter, orchestration_plan=orch, request_descriptor=req)
 
 
 def test_guard_rejects_brief_not_granted(tmp_path: Path):
     svc = ConsentService(tmp_path)
     for status in ("declined", "not_applicable"):
-        brief, manifest, orch, req, dig = _real_chain(consent_status=status)
+        brief, manifest, presenter, orch, req, dig = _real_chain(consent_status=status)
         prepared = _grant_real(svc, dig)
         with pytest.raises(ConsentStateError):
-            _guard(svc, prepared, brief, manifest, orch, req)
+            _guard(svc, prepared, brief, manifest, presenter, orch, req)
 
 
 def test_guard_rejects_brief_avatar_not_photo(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, manifest, orch, req, dig = _real_chain(avatar="none", consent_status="not_applicable")
+    brief, manifest, presenter, orch, req, dig = _real_chain(avatar="none", consent_status="not_applicable")
     prepared = _grant_real(svc, dig)
     with pytest.raises(ConsentStateError):
-        _guard(svc, prepared, brief, manifest, orch, req)
+        _guard(svc, prepared, brief, manifest, presenter, orch, req)
 
 
 @pytest.mark.parametrize("break_", ["brief_digest", "manifest_digest", "orch_digest",
-                                    "request_digest", "manifest_generation", "orch_generation"])
+                                    "request_digest", "manifest_generation", "orch_generation",
+                                    "presenter_digest", "presenter_avatar", "orch_capability"])
 def test_guard_rejects_broken_chain(tmp_path: Path, break_: str):
     svc = ConsentService(tmp_path)
-    brief, manifest, orch, req, dig = _real_chain()
+    brief, manifest, presenter, orch, req, dig = _real_chain()
     prepared = _grant_real(svc, dig)
     if break_ == "brief_digest":
-        manifest = _manifest_variant(manifest, brief_digest=Z("0"))
+        manifest = _manifest_variant(manifest, brief_digest=Z(0))
     elif break_ == "manifest_digest":
         manifest = _manifest_variant(manifest, total_frames=manifest.payload["total_frames"] + 1000)
     elif break_ == "orch_digest":
@@ -422,46 +452,56 @@ def test_guard_rejects_broken_chain(tmp_path: Path, break_: str):
         manifest = _manifest_variant(manifest, generation_id="gen_other")
     elif break_ == "orch_generation":
         orch = _orch_variant(orch, generation_id="gen_other")
+    elif break_ == "presenter_digest":
+        # tamper presenter content so its digest no longer matches orch.presenter_plan_digest
+        presenter = _presenter_variant(presenter, created_at="2026-07-28T00:00:00Z")
+    elif break_ == "presenter_avatar":
+        # avatar is const 'photo' in schema; emulate a non-photo by tampering the
+        # validated payload post-hoc via a one-off subclass instance.
+        presenter = _presenter_variant(presenter)  # keep valid; avatar break tested via brief path
+        object.__setattr__(presenter, "_payload", {**presenter.payload, "avatar": "none"})
+    elif break_ == "orch_capability":
+        orch = _orch_variant(orch, capability_digest=Z(99))
     with pytest.raises(ConsentConflictError):
-        _guard(svc, prepared, brief, manifest, orch, req)
+        _guard(svc, prepared, brief, manifest, presenter, orch, req)
 
 
 def test_guard_rejects_forged_prepared(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, manifest, orch, req, dig = _real_chain()
+    brief, manifest, presenter, orch, req, dig = _real_chain()
     prepared = _grant_real(svc, dig)
     forged = PreparedOperation(
         operation_id="lc_hg_forged", idempotency_key=prepared.idempotency_key,
         heygen_title=prepared.heygen_title, identity=prepared.identity,
     )
     with pytest.raises(ConsentConflictError):
-        _guard(svc, forged, brief, manifest, orch, req)
+        _guard(svc, forged, brief, manifest, presenter, orch, req)
 
 
 def test_guard_rejects_after_withdraw(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, manifest, orch, req, dig = _real_chain()
+    brief, manifest, presenter, orch, req, dig = _real_chain()
     prepared = _grant_real(svc, dig)
     svc.withdraw(prepared.operation_id)
     with pytest.raises(ConsentStateError):
-        _guard(svc, prepared, brief, manifest, orch, req)
+        _guard(svc, prepared, brief, manifest, presenter, orch, req)
 
 
 def test_guard_rejects_unauthorized_operation(tmp_path: Path):
     svc = ConsentService(tmp_path)
-    brief, manifest, orch, req, dig = _real_chain()
+    brief, manifest, presenter, orch, req, dig = _real_chain()
     prepared = prepare_operation(_identity(dig))
     svc.record_decision(prepared=prepared, disclosure=_disclosure(), decision="declined",
                         creative_brief_digest=dig["brief_digest"], decision_at="2026-07-29T00:00:00Z")
     with pytest.raises(ConsentStateError):
-        _guard(svc, prepared, brief, manifest, orch, req)
+        _guard(svc, prepared, brief, manifest, presenter, orch, req)
 
 
 def test_guard_vs_claim_race_is_deterministic(tmp_path: Path):
     """If e3 has already claimed (submit_attempts>0) and committed, a subsequent
     withdraw reports cleanup_required=True (remote engaged)."""
     svc = ConsentService(tmp_path)
-    brief, manifest, orch, req, dig = _real_chain()
+    brief, manifest, presenter, orch, req, dig = _real_chain()
     prepared = _grant_real(svc, dig)
     # Simulate the claim tx having committed an attempt.
     db = _fk_off(tmp_path)
@@ -471,3 +511,22 @@ def test_guard_vs_claim_race_is_deterministic(tmp_path: Path):
     db.close()
     res = svc.withdraw(prepared.operation_id)
     assert res.cleanup_required is True
+
+
+def test_guard_in_tx_requires_active_transaction(tmp_path: Path):
+    """validate_submit_consent_in_tx must refuse a connection with no open
+    transaction, so e3 can't accidentally lose claim/guard linearization."""
+    from lecturecast.heygen_journal import init_database
+    svc = ConsentService(tmp_path)
+    brief, manifest, presenter, orch, req, dig = _real_chain()
+    prepared = _grant_real(svc, dig)
+    conn = init_database(tmp_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        with pytest.raises(ConsentStateError):
+            svc.validate_submit_consent_in_tx(
+                conn, prepared=prepared, brief=brief, manifest=manifest,
+                presenter_plan=presenter, orchestration_plan=orch, request_descriptor=req,
+            )
+    finally:
+        conn.close()

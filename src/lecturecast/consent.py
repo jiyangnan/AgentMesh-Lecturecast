@@ -37,6 +37,7 @@ from lecturecast.heygen_journal import _chmod_secure, _utc_now, init_database
 from lecturecast.protocol import (
     CreativeBriefV1_1,
     OrchestrationPlanV1_1,
+    PresenterPlanV1_1,
     ProductionManifest,
 )
 from lecturecast.protocol.canonical import canonical_digest
@@ -471,6 +472,7 @@ class SubmitConsentResult:
     request_digest: str
     manifest_digest: str
     orchestration_plan_digest: str
+    presenter_plan_digest: str
 
 
 class ConsentService:
@@ -699,13 +701,16 @@ class ConsentService:
         prepared: PreparedOperation,
         brief: CreativeBriefV1_1,
         manifest: ProductionManifest,
+        presenter_plan: PresenterPlanV1_1,
         orchestration_plan: OrchestrationPlanV1_1,
         request_descriptor: Mapping[str, object],
     ) -> SubmitConsentResult:
         """Convenience wrapper: opens its own connection + BEGIN IMMEDIATE and
         runs the guard. CLI/tests use this; e3 uses validate_submit_consent_in_tx
         inside its claim transaction so claim+guard+attempt-mark are one tx."""
-        digests = self._check_artifact_chain(prepared, brief, manifest, orchestration_plan, request_descriptor)
+        digests = self._check_artifact_chain(
+            prepared, brief, manifest, presenter_plan, orchestration_plan, request_descriptor
+        )
         conn = init_database(self._project_dir)
         conn.row_factory = sqlite3.Row
         try:
@@ -727,12 +732,20 @@ class ConsentService:
         prepared: PreparedOperation,
         brief: CreativeBriefV1_1,
         manifest: ProductionManifest,
+        presenter_plan: PresenterPlanV1_1,
         orchestration_plan: OrchestrationPlanV1_1,
         request_descriptor: Mapping[str, object],
     ) -> SubmitConsentResult:
         """Run the guard against an already-open transaction (the caller's claim
-        tx). The caller is responsible for BEGIN/COMMIT."""
-        digests = self._check_artifact_chain(prepared, brief, manifest, orchestration_plan, request_descriptor)
+        tx). The caller is responsible for BEGIN IMMEDIATE/COMMIT — an active
+        transaction is required so claim+guard+attempt-mark linearize."""
+        if not conn.in_transaction:
+            raise ConsentStateError(
+                "validate_submit_consent_in_tx requires an active transaction"
+            )
+        digests = self._check_artifact_chain(
+            prepared, brief, manifest, presenter_plan, orchestration_plan, request_descriptor
+        )
         return self._validate_submit_in_tx(conn, prepared, digests)
 
     def _check_artifact_chain(
@@ -740,21 +753,22 @@ class ConsentService:
         prepared: PreparedOperation,
         brief: CreativeBriefV1_1,
         manifest: ProductionManifest,
+        presenter_plan: PresenterPlanV1_1,
         orchestration_plan: OrchestrationPlanV1_1,
         request_descriptor: Mapping[str, object],
     ) -> dict[str, str]:
         """The last-chance out-machine boundary check before a HeyGen submit.
         Recomputes every digest from the real signed artifacts (never trusts a
-        stored digest string) and verifies the full brief→manifest→orchestration
-        →request chain. e3 must verify manifest + orchestration signatures BEFORE
-        calling, and must construct the outgoing request uniquely from
-        request_descriptor. Returns the recomputed digests."""
-        # Runtime type guard: only real, schema-valid protocol documents are
-        # accepted — not arbitrary quack-alike objects.
+        stored digest string) and verifies the full
+        brief→manifest→presenter→orchestration→request chain. e3 must verify
+        manifest + presenter + orchestration signatures BEFORE calling, and must
+        construct the outgoing request uniquely from request_descriptor."""
         if not isinstance(brief, CreativeBriefV1_1):
             raise ConsentConflictError("brief must be a validated CreativeBriefV1_1")
         if not isinstance(manifest, ProductionManifest):
             raise ConsentConflictError("manifest must be a validated ProductionManifest")
+        if not isinstance(presenter_plan, PresenterPlanV1_1):
+            raise ConsentConflictError("presenter_plan must be a validated PresenterPlanV1_1")
         if not isinstance(orchestration_plan, OrchestrationPlanV1_1):
             raise ConsentConflictError("orchestration_plan must be a validated OrchestrationPlanV1_1")
         self._verify_prepared_derivation(prepared)
@@ -762,23 +776,47 @@ class ConsentService:
 
         brief_digest = canonical_digest(brief)
         manifest_digest = canonical_digest(manifest)
+        presenter_digest = canonical_digest(presenter_plan)
         orchestration_digest = canonical_digest(orchestration_plan)
         request_digest = canonical_digest(request_descriptor)
 
         manifest_p = manifest.payload
+        presenter_p = presenter_plan.payload
         orch_p = orchestration_plan.payload
         ident = prepared.identity
+
+        # manifest ↔ operation
         if manifest_p.get("generation_id") != ident.generation_id:
             raise ConsentConflictError("manifest generation_id does not match the operation")
         if manifest_p.get("brief_digest") != brief_digest:
             raise ConsentConflictError("manifest brief_digest does not match the supplied brief")
         if manifest_digest != ident.manifest_digest:
             raise ConsentConflictError("manifest digest does not match the operation")
+        # presenter ↔ manifest/brief/operation (the HeyGen request is driven by it)
+        if presenter_p.get("avatar") != "photo":
+            raise ConsentConflictError("presenter_plan avatar must be 'photo' for a HeyGen transfer")
+        if presenter_p.get("generation_id") != ident.generation_id:
+            raise ConsentConflictError("presenter_plan generation_id does not match the operation")
+        if presenter_p.get("production_manifest_digest") != manifest_digest:
+            raise ConsentConflictError("presenter_plan production_manifest_digest does not match the manifest")
+        if presenter_p.get("brief_digest") != brief_digest:
+            raise ConsentConflictError("presenter_plan brief_digest does not match the supplied brief")
+        if presenter_digest != orch_p.get("presenter_plan_digest"):
+            raise ConsentConflictError("presenter_plan digest does not match the orchestration plan")
+        # orchestration ↔ manifest/brief/operation + shared digests
         if orch_p.get("generation_id") != ident.generation_id:
             raise ConsentConflictError("orchestration plan generation_id does not match the operation")
         if orch_p.get("production_manifest_digest") != manifest_digest:
             raise ConsentConflictError(
                 "orchestration plan production_manifest_digest does not match the manifest"
+            )
+        if orch_p.get("brief_digest") != brief_digest:
+            raise ConsentConflictError("orchestration plan brief_digest does not match the supplied brief")
+        if orch_p.get("capability_digest") != manifest_p.get("capability_digest"):
+            raise ConsentConflictError("orchestration plan capability_digest does not match the manifest")
+        if orch_p.get("component_catalog_digest") != manifest_p.get("component_catalog_digest"):
+            raise ConsentConflictError(
+                "orchestration plan component_catalog_digest does not match the manifest"
             )
         if orchestration_digest != ident.orchestration_plan_digest:
             raise ConsentConflictError("orchestration plan digest does not match the operation")
@@ -787,6 +825,7 @@ class ConsentService:
         return {
             "brief_digest": brief_digest,
             "manifest_digest": manifest_digest,
+            "presenter_digest": presenter_digest,
             "orchestration_digest": orchestration_digest,
             "request_digest": request_digest,
         }
@@ -834,6 +873,7 @@ class ConsentService:
             request_digest=digests["request_digest"],
             manifest_digest=digests["manifest_digest"],
             orchestration_plan_digest=digests["orchestration_digest"],
+            presenter_plan_digest=digests["presenter_digest"],
         )
 
     @staticmethod
