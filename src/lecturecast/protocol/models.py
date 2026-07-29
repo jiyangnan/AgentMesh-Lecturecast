@@ -388,3 +388,21 @@ def parse_creative_brief(payload: dict[str, Any]) -> ProtocolDocument:
     if payload.get("schema_version") == "1.1":
         return CreativeBriefV1_1.model_validate(payload)
     return CreativeBrief.model_validate(payload)
+
+
+@dataclass(frozen=True)
+class ErrorEnvelopeV1_1(ProtocolDocument):
+    """v1.1 error envelope — validates the server's error response against
+    the vendored v1.1 schema (strict code set, strict retryable bool)."""
+    schema_dir: ClassVar[Path] = _V1_1_SCHEMA_DIR
+    schema_filename: ClassVar[str] = "error-envelope.schema.json"
+
+    @classmethod
+    def _validate_semantics(cls, payload: dict[str, Any]) -> None:
+        # Strict retryable: must be literal bool (schema allows bool; this is
+        # defense-in-depth against a future schema relaxation).
+        retryable = payload.get("retryable")
+        if type(retryable) is not bool:
+            raise ProtocolValidationError(
+                f"retryable must be a literal bool, got {type(retryable).__name__}"
+            )

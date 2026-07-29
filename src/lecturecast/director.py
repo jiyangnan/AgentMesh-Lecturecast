@@ -211,20 +211,49 @@ class DirectorClient:
         self.timeout = timeout
 
     @staticmethod
-    def _error(status: int, document: dict[str, Any]) -> LectureCastError:
+    def _error(status: int, document: dict[str, Any], *, protocol_version: str = "1.0") -> LectureCastError:
         detail = document.get("detail")
-        if not isinstance(detail, dict):
+        # v1.1: non-dict/missing detail → manifest_incompatible (strict).
+        if protocol_version == "1.1":
+            if not isinstance(detail, dict):
+                return LectureCastError(
+                    code="manifest_incompatible",
+                    message="Director Server 返回了不符合 v1.1 协议的错误响应。",
+                    next_action="不要根据未验证字段继续；保留本地状态后联系支持。",
+                    retryable=False,
+                    http_status=status,
+                )
+            from .protocol.models import ProtocolValidationError
+            try:
+                from .protocol import ErrorEnvelopeV1_1
+                ErrorEnvelopeV1_1.model_validate(detail)
+            except ProtocolValidationError:
+                return LectureCastError(
+                    code="manifest_incompatible",
+                    message="Director Server 返回了不符合 v1.1 协议的错误响应。",
+                    next_action="不要根据未验证字段继续；保留本地状态后联系支持。",
+                    retryable=False,
+                    http_status=status,
+                )
+        elif not isinstance(detail, dict):
+            # v1.0: preserve legacy behavior.
             return LectureCastError(
                 code="core_unavailable",
                 message="Director Server 请求失败。",
                 next_action="稍后重试；本地状态会保留稳定 ID。",
                 retryable=status >= 500,
+                http_status=status,
             )
+        # Strict retryable: only accept literal bool.
+        raw_retryable = detail.get("retryable", False)
+        if type(raw_retryable) is not bool:
+            raw_retryable = False
         return LectureCastError(
             code=str(detail.get("code") or "core_unavailable"),
             message=str(detail.get("message") or "Director Server 请求失败。"),
             next_action=str(detail.get("next_action") or "按 Server 提示修复后重试。"),
-            retryable=bool(detail.get("retryable", False)),
+            retryable=raw_retryable,
+            http_status=status,
         )
 
     def request(
@@ -244,7 +273,7 @@ class DirectorClient:
             timeout=self.timeout,
         )
         if status >= 400:
-            raise self._error(status, document)
+            raise self._error(status, document, protocol_version="1.0")
         return document
 
     @staticmethod
@@ -403,10 +432,19 @@ class DirectorClient:
     def resume_generation(self, generation_id: str, *, protocol_version: str = "1.0") -> dict[str, Any]:
         """POST /director/generations/{id}/resume — re-attempt deduct for
         awaiting_credits milestones after the user tops up."""
-        return self._generation(
-            self.request("POST", f"/director/generations/{generation_id}/resume"),
-            protocol_version=protocol_version,
+        status, document = self.transport.request(
+            method="POST",
+            url=f"{self.server_url}/director/generations/{generation_id}/resume",
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Accept": "application/json",
+            },
+            payload=None,
+            timeout=self.timeout,
         )
+        if status >= 400:
+            raise self._error(status, document, protocol_version=protocol_version)
+        return self._generation(document, protocol_version=protocol_version)
 
     def delete_session(self, session_id: str) -> dict[str, Any]:
         document = self.request("DELETE", f"/director/sessions/{session_id}")

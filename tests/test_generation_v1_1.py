@@ -338,3 +338,234 @@ def test_generation_resume_command_v1_0_fails_closed(tmp_path: Path, monkeypatch
     assert result.exit_code == 1  # LectureCastError → SystemExit(1)
     body = json.loads(result.output)
     assert body["code"] == "manifest_incompatible"
+
+
+# ---- d4: resume error mapping (§5.5d4) ----
+
+def _setup_resume_project(tmp_path: Path, monkeypatch, status_code: int, error_body: dict):
+    """Set up a v1.1 project with a generation and a fake transport that returns
+    an error for the resume call."""
+    import json as _json
+    from typer.testing import CliRunner
+    from lecturecast.cli import app
+    from lecturecast.director import DirectorStateStore
+
+    monkeypatch.setattr("lecturecast.commands.project.require_commercial_access", lambda: None)
+    monkeypatch.setattr("lecturecast.commands.director.require_commercial_access", lambda: None)
+    monkeypatch.setattr("lecturecast.commands.director.require_project_host_workflow", lambda *a, **kw: None)
+    monkeypatch.setenv("LECTURECAST_API_KEY", "test_key")
+
+    store = DirectorStateStore(tmp_path)
+    store.project.init(name="T")
+    state = store.create(
+        server_url="https://api.test",
+        session={"session_id": "s1", "status": "confirmed", "brief_version": 1,
+                 "catalog_version": "cv", "updated_at": _NOW},
+        adapter_kind="codex", adapter_version="1.0.0", protocol_version="1.1",
+    )
+    state = store.update(state, generation_id="gen_1", generation_status="queued")
+    state = store.update(state, generation={
+        "generation_id": "gen_1", "status": "queued", "updated_at": _NOW,
+        "billing_state": "awaiting_credits", "resume_available": True,
+    })
+    before_revision = state.revision
+
+    class _ErrorCapture:
+        def request(self, *, method, url, headers, payload, timeout):
+            return status_code, error_body
+
+    import lecturecast.commands.director as d
+    from lecturecast.director import DirectorClient
+    capture = _ErrorCapture()
+    d._make_client = lambda _url: DirectorClient(_url, transport=capture)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["director", "generation-resume", str(tmp_path), "--json"])
+    return result, store, before_revision
+
+
+def test_resume_402_keeps_state_and_returns_top_up_action(tmp_path: Path, monkeypatch):
+    result, store, before_rev = _setup_resume_project(tmp_path, monkeypatch, 402, {
+        "detail": {"code": "insufficient_credits", "message": "余额不足。",
+                   "next_action": "充值后重试。", "retryable": False},
+    })
+    assert result.exit_code == 1  # error → exit 1
+    body = json.loads(result.output)
+    assert body["error"]["code"] == "insufficient_credits"
+    assert body["workflow"]["phase"] == "credit_top_up_required"
+    assert body["workflow"]["next_action"]["id"] == "director.generation.resume"
+    # State unchanged.
+    reloaded = store.load()
+    assert reloaded.revision == before_rev
+
+
+def test_resume_409_in_progress_returns_status(tmp_path: Path, monkeypatch):
+    result, store, _ = _setup_resume_project(tmp_path, monkeypatch, 409, {
+        "detail": {"code": "generation_in_progress", "message": "正在处理中。",
+                   "next_action": "稍后查看状态。", "retryable": True},
+    })
+    assert result.exit_code == 1  # error → exit 1
+    body = json.loads(result.output)
+    assert body["workflow"]["phase"] == "billing_refresh_required"
+    assert body["workflow"]["next_action"]["id"] == "director.status"
+
+
+def test_resume_409_blocked_stops(tmp_path: Path, monkeypatch):
+    result, store, _ = _setup_resume_project(tmp_path, monkeypatch, 409, {
+        "detail": {"code": "idempotency_conflict", "message": "计费冲突。",
+                   "next_action": "联系支持。", "retryable": False},
+    })
+    assert result.exit_code == 1  # error → exit 1
+    body = json.loads(result.output)
+    assert body["workflow"]["phase"] == "generation_blocked"
+    assert body["workflow"]["next_action"]["id"] == "workflow.stop"
+
+
+def test_resume_503_retryable_returns_status(tmp_path: Path, monkeypatch):
+    result, store, _ = _setup_resume_project(tmp_path, monkeypatch, 503, {
+        "detail": {"code": "core_unavailable", "message": "暂时不可用。",
+                   "next_action": "稍后重试。", "retryable": True},
+    })
+    assert result.exit_code == 1  # error → exit 1
+    body = json.loads(result.output)
+    assert body["workflow"]["phase"] == "generation_recovery_required"
+    assert body["workflow"]["next_action"]["id"] == "director.status"
+
+
+def test_resume_503_non_retryable_stops(tmp_path: Path, monkeypatch):
+    result, store, _ = _setup_resume_project(tmp_path, monkeypatch, 503, {
+        "detail": {"code": "core_deduct_mapping_error", "message": "扣费异常。",
+                   "next_action": "联系支持。", "retryable": False},
+    })
+    assert result.exit_code == 1  # error → exit 1
+    body = json.loads(result.output)
+    assert body["workflow"]["phase"] == "generation_blocked"
+    assert body["workflow"]["next_action"]["id"] == "workflow.stop"
+
+
+def test_resume_404_stops_without_guessing(tmp_path: Path, monkeypatch):
+    result, store, _ = _setup_resume_project(tmp_path, monkeypatch, 404, {
+        "detail": {"code": "generation_not_found", "message": "未找到。",
+                   "next_action": "检查 generation_id。", "retryable": False},
+    })
+    assert result.exit_code == 1  # error → exit 1
+    body = json.loads(result.output)
+    assert body["workflow"]["phase"] == "generation_unavailable"
+    assert body["workflow"]["next_action"]["id"] == "workflow.stop"
+
+
+def test_resume_error_retryable_string_false_not_coerced(tmp_path: Path, monkeypatch):
+    """retryable='false' (string) must not be coerced to True."""
+    result, store, _ = _setup_resume_project(tmp_path, monkeypatch, 503, {
+        "detail": {"code": "core_unavailable", "message": "err",
+                   "next_action": "x", "retryable": "false"},
+    })
+    assert result.exit_code == 1  # error → exit 1 (malformed envelope)
+    body = json.loads(result.output)
+    # v1.1 schema rejects retryable="false" (string) → manifest_incompatible via generic fail().
+    assert body["code"] == "manifest_incompatible"
+
+
+def test_full_recovery_chain_status_resume_charged_review(tmp_path: Path, monkeypatch):
+    """Complete recovery chain: status → awaiting_credits → resume → charged →
+    manifest.review. Same project, sequential transport responses, resume called
+    exactly once, state upgrades, Manifest only saved after charged+digest."""
+    from typer.testing import CliRunner
+    from lecturecast.cli import app
+    from lecturecast.director import DirectorStateStore
+    from lecturecast.protocol import ProductionManifest, canonical_digest
+
+    monkeypatch.setattr("lecturecast.commands.project.require_commercial_access", lambda: None)
+    monkeypatch.setattr("lecturecast.commands.director.require_commercial_access", lambda: None)
+    monkeypatch.setattr("lecturecast.commands.director.require_project_host_workflow", lambda *a, **kw: None)
+    monkeypatch.setenv("LECTURECAST_API_KEY", "test_key")
+
+    store = DirectorStateStore(tmp_path)
+    store.project.init(name="T")
+    state = store.create(
+        server_url="https://api.test",
+        session={"session_id": "s1", "status": "confirmed", "brief_version": 1,
+                 "catalog_version": "cv", "updated_at": _NOW},
+        adapter_kind="codex", adapter_version="1.0.0", protocol_version="1.1",
+    )
+    state = store.update(state, generation_id="gen_1", generation_status="queued")
+
+    # Build a real Manifest fixture.
+    manifest_fixture = json.loads(
+        Path(__file__).parent.joinpath("fixtures", "production-manifest-v1.json").read_text()
+    )
+    manifest_obj = ProductionManifest.model_validate(manifest_fixture)
+    manifest_digest = canonical_digest(manifest_obj.model_dump())
+
+    awaiting_gen = _v1_1_generation(billing_state="awaiting_credits", resume_available=True)
+    charged_gen = _v1_1_generation(billing_state="charged")
+    charged_gen["manifest"] = manifest_obj.model_dump()
+    charged_gen["manifest_digest"] = manifest_digest
+    charged_gen["milestone_charges"][0]["artifact_digest"] = manifest_digest
+
+    call_count = {"status": 0, "resume": 0}
+
+    class _ChainCapture:
+        def request(self, *, method, url, headers, payload, timeout):
+            if "/resume" in url:
+                call_count["resume"] += 1
+                return 200, charged_gen
+            # status / get_generation
+            call_count["status"] += 1
+            if call_count["status"] == 1:
+                return 200, awaiting_gen
+            return 200, charged_gen
+
+    import lecturecast.commands.director as d
+    from lecturecast.director import DirectorClient
+    d._make_client = lambda _url: DirectorClient(_url, transport=_ChainCapture())
+
+    runner = CliRunner()
+
+    # Step 1: status → awaiting_credits → workflow offers resume.
+    r1 = runner.invoke(app, ["director", "status", str(tmp_path), "--json"])
+    assert r1.exit_code == 0, r1.output
+    body1 = json.loads(r1.output)
+    assert body1["workflow"]["phase"] == "credit_resume_required"
+    assert body1["workflow"]["next_action"]["id"] == "director.generation.resume"
+
+    # Step 2: generation-resume → charged → Manifest saved → manifest.review.
+    r2 = runner.invoke(app, ["director", "generation-resume", str(tmp_path), "--json"])
+    assert r2.exit_code == 0, r2.output
+    body2 = json.loads(r2.output)
+    assert body2["generation"]["billing_state"] == "charged"
+    assert body2["workflow"]["phase"] == "script_review_required"
+    assert body2["workflow"]["next_action"]["id"] == "manifest.review"
+
+    # Resume called exactly once.
+    assert call_count["resume"] == 1, f"resume called {call_count['resume']} times"
+
+    # State upgraded to 1.2 + charged.
+    reloaded = store.load()
+    assert reloaded.payload["schema_version"] == "1.2"
+    assert reloaded.billing_state == "charged"
+
+    # Manifest saved with matching digest.
+    project = store.project.load()
+    assert project.payload["production_manifest_digest"] == manifest_digest
+
+    # Generation ID never changed.
+    assert reloaded.generation_id == "gen_1"
+
+
+@pytest.mark.parametrize("bad_body", [
+    {},
+    {"detail": None},
+    {"detail": "string error"},
+    {"detail": [1, 2, 3]},
+])
+def test_resume_v1_1_malformed_error_detail_fails_closed(tmp_path: Path, monkeypatch, bad_body):
+    """v1.1: missing/null/string/list detail → manifest_incompatible, no workflow,
+    exit 1, state unchanged."""
+    result, store, before_rev = _setup_resume_project(tmp_path, monkeypatch, 503, bad_body)
+    assert result.exit_code == 1
+    body = json.loads(result.output)
+    assert body["code"] == "manifest_incompatible"
+    assert "workflow" not in body
+    reloaded = store.load()
+    assert reloaded.revision == before_rev
