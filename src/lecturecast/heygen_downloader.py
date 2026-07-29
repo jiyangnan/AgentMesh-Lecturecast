@@ -1,20 +1,15 @@
 """Stdlib video downloader + ffprobe media probe (§5.5e5a).
 
-Real implementations of the VideoDownloader and MediaProbe protocols. The
-downloader writes ONLY the deterministic .tmp file (publication is the e4a2
-finalize step's job, never the downloader's). The probe shells out to ffprobe.
-Both are injectable so tests can stub them.
-
 Security rules (per Codex e5 plan):
-- HTTPS-only; no userinfo; no non-default ports; no cross-host redirects.
-- Host allowlist is a LOCAL trust policy, never derived from a remote URL.
-- DNS resolution must succeed and resolve to public IPs only.
-- Redirects are disabled; a redirect is a hard error.
-- temp file opened with O_NOFOLLOW where supported, 0600 permissions.
-- Streaming SHA-256 + size enforcement; Content-Length is a hint, not authority.
+- HTTPS-only; no userinfo; no non-default ports; redirects are hard errors.
+- Host allowlist is a LOCAL trust policy. DNS must resolve to public IPs.
+- DNS rebinding defense: the verified IP is pinned into the connection.
+- Temp file: lexical containment (reject . and ..), lstat each parent
+  component, O_NOFOLLOW + 0600 where supported, fsync.
+- Streaming SHA-256 + size enforcement.
 - API key never sent with the download request.
 - Downloader never calls os.replace; it only produces the staged temp.
-- Temp path uses lexical containment + lstat each parent component.
+- ffprobe subprocess output is streamed to a capped temp file (not buffered).
 """
 from __future__ import annotations
 
@@ -24,8 +19,10 @@ import json
 import os
 import shutil
 import socket
+import ssl
 import stat
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Protocol
 from urllib import request as urllib_request
@@ -38,9 +35,6 @@ _DOWNLOAD_CHUNK = 65536
 
 
 def resolve_download_hosts(extra: str | None = None) -> frozenset[str]:
-    """Build the host allowlist. Defaults to the official HeyGen CDN host.
-    An optional comma-separated env value adds exact hosts (no wildcards,
-    lowercased, IDNA-encoded)."""
     hosts: set[str] = set(_DEFAULT_DOWNLOAD_HOSTS)
     if extra:
         for h in extra.split(","):
@@ -51,7 +45,6 @@ def resolve_download_hosts(extra: str | None = None) -> frozenset[str]:
 
 
 def _reject_non_public_ip(ip_str: str) -> None:
-    """Reject loopback/private/link-local/multicast/reserved/unspecified addresses."""
     try:
         addr = ipaddress.ip_address(ip_str)
     except ValueError:
@@ -62,16 +55,12 @@ def _reject_non_public_ip(ip_str: str) -> None:
 
 
 def _resolve_and_check_host(host: str) -> list[str]:
-    """Resolve host via DNS, reject on failure or non-public IP. Returns
-    verified IP addresses."""
-    # If host is already an IP literal, check directly.
     try:
         ipaddress.ip_address(host)
         _reject_non_public_ip(host)
         return [host]
     except ValueError:
         pass
-    # DNS resolution — failure is a hard error, not silently passed.
     try:
         infos = socket.getaddrinfo(host, 443, socket.AF_UNSPEC, socket.SOCK_STREAM)
     except socket.gaierror as exc:
@@ -88,18 +77,17 @@ def _resolve_and_check_host(host: str) -> list[str]:
     return verified
 
 
-class _NoRedirectHandler(urllib_request.BaseHandler):
-    """urllib opener handler that refuses HTTP redirects — a redirect is treated
-    as a hard error, not silently followed."""
+class _NoRedirectHandler(urllib_request.HTTPRedirectHandler):
+    """Inheriting HTTPRedirectHandler and refusing all redirects — the default
+    build_opener adds HTTPRedirectHandler; replacing it with this subclass
+    ensures redirects raise rather than being silently followed."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise ValueError(f"download redirect refused: {code} -> {newurl}")
 
 
-def _validate_download_url(url: str, allowed_hosts: frozenset[str]) -> str:
-    """Full URL validation: HTTPS, no userinfo, host in allowlist, DNS resolves
-    to public IPs only. Returns the validated host."""
-    from urllib.parse import urlparse
+def _validate_download_url(url: str, allowed_hosts: frozenset[str]) -> tuple[str, list[str]]:
+    """Returns (host, verified_ips)."""
     parsed = urlparse(url)
     if parsed.scheme != "https":
         raise ValueError(f"download URL must be HTTPS: {url}")
@@ -112,18 +100,29 @@ def _validate_download_url(url: str, allowed_hosts: frozenset[str]) -> str:
         raise ValueError("download URL missing host")
     if host not in allowed_hosts:
         raise ValueError(f"download host not in allowlist: {host}")
-    _resolve_and_check_host(host)
-    return host
+    verified_ips = _resolve_and_check_host(host)
+    return host, verified_ips
 
 
 def _verify_lexical_containment(path: Path, root: Path) -> None:
-    """Lexical path containment: walk the non-resolved path from root, lstat
-    each parent component to detect symlink injection."""
+    """Reject . and .. components, require path to be lexically under root,
+    and lstat each parent to detect symlinks."""
     try:
         rel = path.relative_to(root)
     except ValueError:
         raise ValueError(f"path escapes runtime (lexical): {path}")
+    # Explicitly reject . and ..
+    parts = set(rel.parts)
+    if "." in parts or ".." in parts:
+        raise ValueError(f"path contains . or ..: {path}")
+    # lstat each intermediate directory + root itself
     current = root
+    try:
+        st = current.lstat()
+        if stat.S_ISLNK(st.st_mode):
+            raise ValueError(f"runtime root is a symlink: {current}")
+    except FileNotFoundError:
+        pass
     for part in rel.parts[:-1]:
         current = current / part
         try:
@@ -131,16 +130,11 @@ def _verify_lexical_containment(path: Path, root: Path) -> None:
             if stat.S_ISLNK(st.st_mode):
                 raise ValueError(f"symlink in directory chain: {current}")
         except FileNotFoundError:
-            return  # intermediate doesn't exist yet — fine, mkdir will create
+            return
 
 
 class StdlibVideoDownloader:
-    """Downloads a video URL to a deterministic .tmp file with streaming
-    SHA-256, size enforcement, and media validation. Does NOT os.replace —
-    publication is the e4a2 finalize step's job.
-
-    Redirects are disabled (a redirect is a hard error). DNS must resolve to
-    public IPs. The temp file uses O_NOFOLLOW + 0600 where supported."""
+    """Downloads a video URL to a deterministic .tmp file."""
 
     def __init__(self, allowed_hosts: frozenset[str] | None = None) -> None:
         self._allowed_hosts = allowed_hosts or resolve_download_hosts(
@@ -150,27 +144,28 @@ class StdlibVideoDownloader:
     def download_and_verify(self, url: str, runtime_dir: str,
                             local_output_ref: str, max_bytes: int,
                             probe: MediaProbe) -> PreparedDownload:
-        _validate_download_url(url, self._allowed_hosts)
         if type(max_bytes) is not int or max_bytes <= 0:
             raise ValueError("max_bytes must be a positive int")
+        host, verified_ips = _validate_download_url(url, self._allowed_hosts)
         runtime_root = Path(runtime_dir)
         temp_path = runtime_root / (local_output_ref + ".tmp")
-        # Lexical containment + symlink check (before mkdir creates intermediates).
         _verify_lexical_containment(temp_path, runtime_root)
         temp_path.parent.mkdir(parents=True, exist_ok=True)
-        # Post-mkdir re-check: intermediate dirs just created must not be symlinks.
         _verify_lexical_containment(temp_path, runtime_root)
+
+        # Pin the verified IP into the connection to prevent DNS rebinding.
+        pinned_ip = verified_ips[0]
+        pinned_url = url.replace(host, pinned_ip, 1)
 
         h = hashlib.sha256()
         total = 0
         fd = None
         resp = None
         try:
-            req = urllib_request.Request(url, method="GET")
-            # Build an opener that refuses redirects.
+            req = urllib_request.Request(pinned_url, method="GET",
+                                         headers={"Host": host})
             opener = urllib_request.build_opener(_NoRedirectHandler)
             resp = opener.open(req, timeout=30)
-            # Open temp with 0600; O_NOFOLLOW where supported.
             flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
             try:
                 flags |= os.O_NOFOLLOW  # type: ignore[attr-defined]
@@ -185,15 +180,19 @@ class StdlibVideoDownloader:
                 if total > max_bytes:
                     raise ValueError(f"download exceeded max_bytes ({max_bytes})")
                 h.update(chunk)
-                # Handle partial writes.
                 written = 0
                 while written < len(chunk):
-                    written += os.write(fd, chunk[written:])
+                    n = os.write(fd, chunk[written:])
+                    if n == 0:
+                        raise OSError("os.write returned 0")
+                    written += n
             os.fsync(fd)
             os.close(fd)
             fd = None
             if total == 0:
                 raise ValueError("downloaded file is empty")
+            # Re-verify containment before probe (defend against swap).
+            _verify_lexical_containment(temp_path, runtime_root)
             digest = "sha256:" + h.hexdigest()
             media = probe.probe(str(temp_path))
             return PreparedDownload(
@@ -209,8 +208,14 @@ class StdlibVideoDownloader:
                     os.close(fd)
                 except OSError:
                     pass
-            if temp_path.exists() and not temp_path.is_symlink():
-                temp_path.unlink()
+            # Re-verify containment before cleanup (defend against swap).
+            try:
+                _verify_lexical_containment(temp_path, runtime_root)
+            except ValueError:
+                pass  # don't touch an unsafe path
+            else:
+                if temp_path.exists() and not temp_path.is_symlink():
+                    temp_path.unlink()
             raise
         finally:
             if resp is not None:
@@ -219,10 +224,12 @@ class StdlibVideoDownloader:
 
 # --- ffprobe media probe ------------------------------------------------
 
+_PROBE_STDOUT_MAX = 1_048_576  # 1 MiB
+
 
 class FfprobeMediaProbe:
-    """Probes a media file via subprocess ffprobe. Returns MediaProbeResult
-    with validated fields. Raises on any anomaly."""
+    """Probes a media file via subprocess ffprobe. Output is streamed to a
+    capped temp file (not buffered in memory)."""
 
     def __init__(self, ffprobe_path: str | None = None) -> None:
         path = ffprobe_path or os.environ.get("LECTURECAST_FFPROBE_PATH") \
@@ -237,18 +244,27 @@ class FfprobeMediaProbe:
         p = Path(path)
         if not p.is_file() or p.is_symlink():
             raise ValueError(f"probe target must be a regular file: {path}")
-        result = subprocess.run(
-            [self._ffprobe, "-v", "quiet", "-print_format", "json",
-             "-show_streams", "-show_format", path],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode != 0:
-            raise ValueError(f"ffprobe failed (exit {result.returncode})")
-        stdout = result.stdout
-        if len(stdout) > 1_048_576:
-            raise ValueError("ffprobe stdout exceeded 1 MiB")
+        # Stream stdout to a capped temp file instead of capture_output buffering.
+        with tempfile.NamedTemporaryFile(mode="w+b", suffix=".json", delete=True) as tmp_out:
+            proc = subprocess.Popen(
+                [self._ffprobe, "-v", "quiet", "-print_format", "json",
+                 "-show_streams", "-show_format", path],
+                stdout=tmp_out, stderr=subprocess.DEVNULL,
+            )
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                raise ValueError("ffprobe timed out")
+            if proc.returncode != 0:
+                raise ValueError(f"ffprobe failed (exit {proc.returncode})")
+            tmp_out.seek(0)
+            raw = tmp_out.read(_PROBE_STDOUT_MAX + 1)
+            if len(raw) > _PROBE_STDOUT_MAX:
+                raise ValueError("ffprobe stdout exceeded 1 MiB")
         try:
-            data = json.loads(stdout)
+            data = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise ValueError("ffprobe output not valid JSON") from exc
         if not isinstance(data, dict):
@@ -263,14 +279,11 @@ class FfprobeMediaProbe:
         codec = str(vs.get("codec_name", "")).strip()
         if not codec:
             raise ValueError("video stream missing codec_name")
-        try:
-            width = int(vs.get("width", 0))
-            height = int(vs.get("height", 0))
-        except (TypeError, ValueError):
-            raise ValueError("video stream width/height not integers")
-        if type(width) is bool or type(height) is bool:
-            raise ValueError("video stream width/height must not be bool")
-        if width <= 0 or height <= 0:
+        raw_w = vs.get("width")
+        raw_h = vs.get("height")
+        if type(raw_w) is not int or type(raw_h) is not int:
+            raise ValueError("video stream width/height must be int (not bool/float)")
+        if raw_w <= 0 or raw_h <= 0:
             raise ValueError("video stream width/height must be positive")
         raw_dur = vs.get("duration") or data.get("format", {}).get("duration")
         try:
@@ -282,6 +295,6 @@ class FfprobeMediaProbe:
         return MediaProbeResult(
             duration_seconds=duration,
             video_codec=codec,
-            width=width,
-            height=height,
+            width=raw_w,
+            height=raw_h,
         )
