@@ -34,6 +34,12 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from lecturecast.heygen_journal import _chmod_secure, _utc_now, init_database
+from lecturecast.protocol import (
+    CreativeBriefV1_1,
+    OrchestrationPlanV1_1,
+    ProductionManifest,
+)
+from lecturecast.protocol.canonical import canonical_digest
 
 # --- canonical serialization + digests ---------------------------------
 
@@ -443,6 +449,30 @@ class ConsentDecisionResult:
     idempotent: bool       # True if an identical decision was already on file
 
 
+@dataclass(frozen=True)
+class WithdrawResult:
+    operation_id: str
+    receipt_digest: str     # the original grant digest (withdrawal keeps it)
+    withdrawn_at: str
+    cleanup_required: bool  # True unless the operation was provably pre-submit pristine
+    idempotent: bool        # True if the receipt was already withdrawn
+
+
+@dataclass(frozen=True)
+class SubmitConsentResult:
+    """Audit binding returned by validate_submit_consent. Authorizes one submit;
+    does NOT generate the provider idempotency key (HeyGen keeps using the
+    operation's own idempotency_key/heygen_title — the receipt digest is
+    authorization evidence, never spliced into the remote business identity)."""
+
+    operation_id: str
+    receipt_digest: str
+    generation_id: str
+    request_digest: str
+    manifest_digest: str
+    orchestration_plan_digest: str
+
+
 class ConsentService:
     """Persists HeyGen third-party-transfer consent decisions in the per-project
     journal. Construct with the project directory; each call is self-contained."""
@@ -462,6 +492,7 @@ class ConsentService:
     ) -> ConsentDecisionResult:
         if decision not in ("granted", "declined"):
             raise ValueError(f"unknown decision: {decision!r}")
+        self._verify_prepared_derivation(prepared)
         self._check_cross_object(prepared, disclosure)
         self._check_trusted_text(disclosure)
         payload = disclosure.canonical_payload(
@@ -521,6 +552,235 @@ class ConsentService:
             raise ConsentDisclosureDriftError(
                 "agentmesh_non_processor_disclosure is not the canonical disclosure template"
             )
+
+    @staticmethod
+    def _verify_prepared_derivation(prepared: PreparedOperation) -> None:
+        """A PreparedOperation is a public dataclass; the caller could hand-forge
+        its operation_id / idempotency_key / heygen_title. Re-derive from the
+        identity and reject any mismatch — derived fields are never trusted."""
+        expected = prepare_operation(prepared.identity)
+        if prepared != expected:
+            raise ConsentConflictError(
+                "PreparedOperation is not the deterministic derivation of its identity"
+            )
+
+    # -- withdraw (§5.5e2c) ----------------------------------------------
+
+    def withdraw(self, operation_id: str) -> WithdrawResult:
+        conn = init_database(self._project_dir)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                result = self._withdraw_in_tx(conn, operation_id)
+                conn.execute("COMMIT")
+            except Exception:
+                _rollback(conn)
+                raise
+        finally:
+            _chmod_secure(self._db_path)
+            conn.close()
+        return result
+
+    def _withdraw_in_tx(self, conn, operation_id: str) -> WithdrawResult:
+        op = conn.execute(
+            "SELECT * FROM heygen_operations WHERE operation_id = ?", (operation_id,)
+        ).fetchone()
+        if op is None:
+            raise ConsentStateError(f"no operation {operation_id!r}")
+        rc = conn.execute(
+            "SELECT * FROM heygen_consent_receipts WHERE operation_id = ?", (operation_id,)
+        ).fetchone()
+        if rc is None:
+            raise ConsentStateError(
+                f"no consent receipt for {operation_id!r}; nothing to withdraw"
+            )
+        # Fail-closed integrity check before mutating.
+        self._validate_existing_integrity(rc, op)
+
+        status = rc["status"]
+        now = _utc_now()
+        if status == "withdrawn":
+            return WithdrawResult(
+                operation_id=operation_id, receipt_digest=rc["receipt_digest"],
+                withdrawn_at=rc["withdrawn_at"], cleanup_required=True, idempotent=True,
+            )
+        if status != "granted":
+            raise ConsentStateError(
+                f"cannot withdraw a {status!r} receipt (only an active grant)"
+            )
+
+        # cleanup_required is defined inversely: only a provably pre-submit
+        # pristine operation avoids cleanup. Anything else — submitted/failed,
+        # active/expired lease, a past claim, a remote resource, an unknown
+        # status — must go through the e4 deletion/recovery flow.
+        pristine = self._is_pre_submit_pristine(conn, op)
+        conn.execute(
+            "UPDATE heygen_consent_receipts SET status = 'withdrawn', withdrawn_at = ? "
+            "WHERE operation_id = ?",
+            (now, operation_id),
+        )
+        if pristine:
+            conn.execute(
+                "UPDATE heygen_operations SET status = 'cancelled', "
+                "consent_receipt_digest = NULL, updated_at = ? WHERE operation_id = ?",
+                (now, operation_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE heygen_operations SET consent_receipt_digest = NULL, "
+                "updated_at = ? WHERE operation_id = ?",
+                (now, operation_id),
+            )
+        return WithdrawResult(
+            operation_id=operation_id, receipt_digest=rc["receipt_digest"],
+            withdrawn_at=now, cleanup_required=not pristine, idempotent=False,
+        )
+
+    def _is_pre_submit_pristine(self, conn, row: sqlite3.Row) -> bool:
+        """True only if the operation has provably never touched the remote
+        provider. Unlike attach-pristine, the consent pointer is allowed to be
+        set (a granted receipt's pointer is legitimate and about to be cleared)."""
+        if row["status"] != "submit_pending":
+            return False
+        if row["download_status"] != "not_started":
+            return False
+        for col in _PRISTINE_INT_ZERO:
+            if row[col] != 0:
+                return False
+        for col in _PRISTINE_TEXT_ABSENT:
+            if col == "consent_receipt_digest":
+                continue  # the grant pointer is expected here
+            if row[col] is not None:
+                return False
+        operation_id = row["operation_id"]
+        for query in (
+            "SELECT 1 FROM heygen_remote_resources WHERE created_by_operation_id = ? LIMIT 1",
+            "SELECT 1 FROM heygen_resource_operation_refs WHERE operation_id = ? LIMIT 1",
+        ):
+            if conn.execute(query, (operation_id,)).fetchone() is not None:
+                return False
+        return True
+
+    # -- submit consent guard (§5.5e2c) ----------------------------------
+
+    def validate_submit_consent(
+        self,
+        *,
+        prepared: PreparedOperation,
+        brief: CreativeBriefV1_1,
+        manifest: ProductionManifest,
+        orchestration_plan: OrchestrationPlanV1_1,
+        request_descriptor: Mapping[str, object],
+    ) -> SubmitConsentResult:
+        """The last-chance out-machine boundary check before a HeyGen submit.
+        Recomputes every digest from the real signed artifacts (never trusts a
+        stored digest string) and verifies the full brief→manifest→orchestration
+        →request→receipt→operation chain. Read-only; e3 must run this inside the
+        claim transaction that flips submit_attempts, and must verify the
+        manifest + orchestration plan signatures before calling."""
+        self._verify_prepared_derivation(prepared)
+        brief_digest = canonical_digest(brief)
+        manifest_digest = canonical_digest(manifest)
+        orchestration_digest = canonical_digest(orchestration_plan)
+        request_digest = canonical_digest(request_descriptor)
+
+        self._check_brief_first_gate(brief)
+
+        manifest_p = manifest.payload
+        orch_p = orchestration_plan.payload
+        ident = prepared.identity
+        # Artifact ↔ operation immutable binding.
+        if manifest_p.get("generation_id") != ident.generation_id:
+            raise ConsentConflictError("manifest generation_id does not match the operation")
+        if manifest_p.get("brief_digest") != brief_digest:
+            raise ConsentConflictError("manifest brief_digest does not match the supplied brief")
+        if manifest_digest != ident.manifest_digest:
+            raise ConsentConflictError("manifest digest does not match the operation")
+        if orch_p.get("generation_id") != ident.generation_id:
+            raise ConsentConflictError("orchestration plan generation_id does not match the operation")
+        if orch_p.get("production_manifest_digest") != manifest_digest:
+            raise ConsentConflictError(
+                "orchestration plan production_manifest_digest does not match the manifest"
+            )
+        if orchestration_digest != ident.orchestration_plan_digest:
+            raise ConsentConflictError("orchestration plan digest does not match the operation")
+        if request_digest != ident.request_digest:
+            raise ConsentConflictError("request descriptor digest does not match the operation")
+
+        # Journal state (read-only).
+        conn = init_database(self._project_dir)
+        conn.row_factory = sqlite3.Row
+        try:
+            op = conn.execute(
+                "SELECT * FROM heygen_operations WHERE operation_id = ?",
+                (prepared.operation_id,),
+            ).fetchone()
+            if op is None:
+                raise ConsentStateError(f"no operation {prepared.operation_id!r}")
+            self._verify_immutable(op, prepared)
+            if op["status"] != "submit_pending":
+                raise ConsentStateError(
+                    f"operation status {op['status']!r} is not submit_pending; will not submit"
+                )
+            ptr = op["consent_receipt_digest"]
+            if not ptr:
+                raise ConsentStateError("operation has no consent pointer; consent required before submit")
+            rc = conn.execute(
+                "SELECT * FROM heygen_consent_receipts WHERE operation_id = ?",
+                (prepared.operation_id,),
+            ).fetchone()
+            if rc is None:
+                raise ConsentIntegrityError("consent pointer is set but no receipt row exists")
+            self._validate_existing_integrity(rc, op)
+            if rc["status"] != "granted":
+                raise ConsentStateError(f"receipt status {rc['status']!r} does not authorize submit")
+            if rc["request_digest"] != request_digest:
+                raise ConsentConflictError(
+                    "receipt request_digest does not match the request being submitted"
+                )
+            if rc["generation_id"] != ident.generation_id:
+                raise ConsentConflictError("receipt generation_id does not match the operation")
+            if rc["creative_brief_digest"] != brief_digest:
+                raise ConsentConflictError(
+                    "receipt creative_brief_digest does not match the supplied brief"
+                )
+            return SubmitConsentResult(
+                operation_id=prepared.operation_id,
+                receipt_digest=rc["receipt_digest"],
+                generation_id=ident.generation_id,
+                request_digest=request_digest,
+                manifest_digest=manifest_digest,
+                orchestration_plan_digest=orchestration_digest,
+            )
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _check_brief_first_gate(brief: CreativeBriefV1_1) -> None:
+        """The first-gate DecisionCard consent carried in the v1.1 Brief. This is
+        independent of the JIT receipt: brief.consented_at is the first-gate
+        time, the receipt's consented_at is the second-gate JIT time."""
+        presenter = brief.payload.get("presenter") or {}
+        if presenter.get("avatar") != "photo":
+            raise ConsentStateError(
+                "brief presenter avatar must be 'photo' for a HeyGen transfer"
+            )
+        tpp = presenter.get("third_party_processing")
+        if not tpp:
+            raise ConsentStateError("brief third_party_processing is required for a HeyGen transfer")
+        if tpp.get("provider") != "heygen":
+            raise ConsentStateError("brief third_party_processing.provider must be 'heygen'")
+        if tpp.get("credential_mode") != "byo_local":
+            raise ConsentStateError("brief third_party_processing.credential_mode must be 'byo_local'")
+        if tpp.get("consent_status") != "granted":
+            raise ConsentStateError("brief first-gate consent_status must be 'granted'")
+        if tpp.get("disclosure_version") != "heygen-transfer-2026-07-27":
+            raise ConsentStateError("brief disclosure_version does not match the receipt template")
+        consented_at = tpp.get("consented_at")
+        if not consented_at:
+            raise ConsentStateError("brief first-gate consented_at is required")
+        _canonical_decision_at(consented_at)  # raises if naive / not ISO-8601
 
     def _record_in_tx(self, conn, prepared, disclosure, decision, desired_digest,
                       content_no_time, consented_at, assets_json, categories_json,
