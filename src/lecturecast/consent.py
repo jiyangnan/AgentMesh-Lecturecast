@@ -26,10 +26,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sqlite3
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlparse
+
+from lecturecast.heygen_journal import _chmod_secure, _utc_now, init_database
 
 # --- canonical serialization + digests ---------------------------------
 
@@ -353,3 +357,347 @@ def prepare_operation(identity: HeyGenOperationIdentity) -> PreparedOperation:
         heygen_title=f"lecturecast:{operation_id}",
         identity=identity,
     )
+
+
+# ===========================================================================
+# ConsentService — persists decisions atomically (§5.5e2b)
+# ===========================================================================
+# record_decision opens its own short-lived connection, wraps the operation +
+# receipt + consent pointer in one BEGIN IMMEDIATE transaction, and tightens
+# file permissions afterward. Nothing is held across calls. withdraw and the
+# submit consent guard arrive in §5.5e2c.
+
+# Fixed disclosure template for disclosure_version "heygen-transfer-2026-07-27".
+# record_decision rejects any disclosure whose cost / non-processor text does
+# not equal these — a caller cannot inject arbitrary wording ("x") into a
+# receipt. The asset list is data (what is uploaded); the policy text is frozen.
+CANONICAL_PROVIDER_COST_DISCLOSURE = (
+    "HeyGen is a third-party service you access with your own HeyGen account. "
+    "HeyGen may charge your own account for this transfer. AgentMesh360 does not "
+    "pay, advance, or reimburse any HeyGen cost. AgentMesh milestone credits are "
+    "separate and are never applied to HeyGen charges."
+)
+CANONICAL_AGENTMESH_NON_PROCESSOR_DISCLOSURE = (
+    "AgentMesh360 is a non-processor: it does not proxy, record, host, bill, or "
+    "retain HeyGen media. Your portrait photo and the selected narration are sent "
+    "to HeyGen; the F5 reference is never uploaded. You must hold the portrait "
+    "and voice rights, and complete HeyGen's own consent and biometric flow. "
+    "Provider terms, training, subprocessors, cross-border transfer, and "
+    "deletion are managed in your HeyGen account."
+)
+_RECEIPT_NAMESPACE = "lecturecast.heygen.consent-receipt.v1"
+_RUNTIME_DB = Path(".lecturecast") / "runtime" / "heygen-operations.db"
+
+
+class ConsentError(RuntimeError):
+    """Base for consent persistence errors."""
+
+
+class ConsentConflictError(ConsentError):
+    """An operation with this identity already exists with different immutable
+    fields — the caller is trying to re-key an operation."""
+
+
+class ConsentDisclosureDriftError(ConsentError):
+    """The disclosure for an already-recorded decision changed, or the supplied
+    text is not the trusted canonical template."""
+
+
+class ConsentStateError(ConsentError):
+    """The requested decision transition is not allowed from the current state."""
+
+
+@dataclass(frozen=True)
+class ConsentDecisionResult:
+    operation_id: str
+    receipt_digest: str
+    decision: str          # "granted" | "declined"
+    status: str            # receipt status after the call
+    consented_at: str      # canonical UTC the decision was recorded
+    idempotent: bool       # True if an identical decision was already on file
+
+
+class ConsentService:
+    """Persists HeyGen third-party-transfer consent decisions in the per-project
+    journal. Construct with the project directory; each call is self-contained."""
+
+    def __init__(self, project_dir: str | Path) -> None:
+        self._project_dir = Path(project_dir)
+        self._db_path = self._project_dir / _RUNTIME_DB
+
+    def record_decision(
+        self,
+        *,
+        prepared: PreparedOperation,
+        disclosure: ThirdPartyTransferDisclosure,
+        decision: str,
+        creative_brief_digest: str,
+        decision_at: str,
+    ) -> ConsentDecisionResult:
+        if decision not in ("granted", "declined"):
+            raise ValueError(f"unknown decision: {decision!r}")
+        self._check_cross_object(prepared, disclosure)
+        self._check_trusted_text(disclosure)
+        payload = disclosure.canonical_payload(
+            operation_id=prepared.operation_id,
+            generation_id=prepared.identity.generation_id,
+            request_digest=prepared.identity.request_digest,
+            creative_brief_digest=creative_brief_digest,
+            decision=decision,
+            decision_at=decision_at,
+        )
+        desired_digest = sha256_digest(payload)
+        content_no_time = {k: v for k, v in payload.items() if k != "decision_at"}
+        consented_at = payload["decision_at"]
+        assets_json = json.dumps(payload["disclosed_assets"])
+        categories_json = json.dumps(payload["data_categories"])
+
+        conn = init_database(self._project_dir)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                result = self._record_in_tx(
+                    conn, prepared, disclosure, decision, desired_digest,
+                    content_no_time, consented_at, assets_json, categories_json,
+                    payload,
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                _rollback(conn)
+                raise
+        finally:
+            _chmod_secure(self._db_path)
+            conn.close()
+        return result
+
+    # -- helpers ----------------------------------------------------------
+
+    @staticmethod
+    def _check_cross_object(prepared: PreparedOperation,
+                            disclosure: ThirdPartyTransferDisclosure) -> None:
+        if disclosure.provider != prepared.identity.provider:
+            raise ConsentDisclosureDriftError(
+                "disclosure.provider does not match identity.provider"
+            )
+        if disclosure.operation_kind != prepared.identity.operation_kind:
+            raise ConsentDisclosureDriftError(
+                "disclosure.operation_kind does not match identity.operation_kind"
+            )
+
+    @staticmethod
+    def _check_trusted_text(disclosure: ThirdPartyTransferDisclosure) -> None:
+        if disclosure.provider_cost_disclosure != CANONICAL_PROVIDER_COST_DISCLOSURE:
+            raise ConsentDisclosureDriftError(
+                "provider_cost_disclosure is not the canonical disclosure template"
+            )
+        if disclosure.agentmesh_non_processor_disclosure != CANONICAL_AGENTMESH_NON_PROCESSOR_DISCLOSURE:
+            raise ConsentDisclosureDriftError(
+                "agentmesh_non_processor_disclosure is not the canonical disclosure template"
+            )
+
+    def _record_in_tx(self, conn, prepared, disclosure, decision, desired_digest,
+                      content_no_time, consented_at, assets_json, categories_json,
+                      payload) -> ConsentDecisionResult:
+        now = _utc_now()
+        existing_op = conn.execute(
+            "SELECT * FROM heygen_operations WHERE operation_id = ? OR idempotency_key = ?",
+            (prepared.operation_id, prepared.idempotency_key),
+        ).fetchone()
+        if existing_op is not None:
+            self._verify_immutable(existing_op, prepared)
+
+        existing_rc = conn.execute(
+            "SELECT * FROM heygen_consent_receipts WHERE operation_id = ?",
+            (prepared.operation_id,),
+        ).fetchone()
+
+        if existing_rc is not None:
+            return self._apply_existing(
+                conn, prepared, decision, desired_digest, content_no_time,
+                consented_at, assets_json, categories_json, payload,
+                existing_rc, now,
+            )
+
+        # Fresh decision: insert operation (if absent) + receipt.
+        op_status = "submit_pending" if decision == "granted" else "cancelled"
+        consent_ptr = desired_digest if decision == "granted" else None
+        if existing_op is None:
+            conn.execute(
+                "INSERT INTO heygen_operations (operation_id, kind, endpoint, "
+                "segment_id, generation_id, manifest_digest, "
+                "orchestration_plan_digest, request_digest, idempotency_key, "
+                "heygen_title, credential_profile_id, consent_receipt_digest, "
+                "status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    prepared.operation_id, prepared.identity.operation_kind,
+                    prepared.identity.endpoint, prepared.identity.segment_id,
+                    prepared.identity.generation_id, prepared.identity.manifest_digest,
+                    prepared.identity.orchestration_plan_digest,
+                    prepared.identity.request_digest, prepared.idempotency_key,
+                    prepared.heygen_title, prepared.identity.credential_profile_id,
+                    consent_ptr, op_status, now, now,
+                ),
+            )
+        else:
+            conn.execute(
+                "UPDATE heygen_operations SET status = ?, consent_receipt_digest = ?, "
+                "updated_at = ? WHERE operation_id = ?",
+                (op_status, consent_ptr, now, prepared.operation_id),
+            )
+        self._insert_receipt(
+            conn, desired_digest, prepared, payload, decision, consented_at,
+            assets_json, categories_json, now,
+        )
+        return ConsentDecisionResult(
+            operation_id=prepared.operation_id, receipt_digest=desired_digest,
+            decision=decision, status=decision, consented_at=consented_at,
+            idempotent=False,
+        )
+
+    def _apply_existing(self, conn, prepared, decision, desired_digest,
+                        content_no_time, consented_at, assets_json,
+                        categories_json, payload, existing_rc, now):
+        existing_status = existing_rc["status"]
+        if existing_status == decision:
+            stored = self._stored_content_no_time(existing_rc)
+            if canonical_json(stored) == canonical_json(content_no_time):
+                # Idempotent replay — return the original, do not touch timestamps.
+                return ConsentDecisionResult(
+                    operation_id=prepared.operation_id,
+                    receipt_digest=existing_rc["receipt_digest"],
+                    decision=decision, status=existing_status,
+                    consented_at=existing_rc["consented_at"], idempotent=True,
+                )
+            raise ConsentDisclosureDriftError(
+                "disclosure changed for an already-recorded decision"
+            )
+        if existing_status == "withdrawn":
+            raise ConsentStateError(
+                "cannot record a decision on a withdrawn receipt; start a new operation"
+            )
+        if existing_status == "declined" and decision == "granted":
+            self._require_pristine(conn, prepared.operation_id)
+            self._update_receipt(
+                conn, desired_digest, prepared, payload, "granted", consented_at,
+                assets_json, categories_json, now,
+            )
+            conn.execute(
+                "UPDATE heygen_operations SET status = 'submit_pending', "
+                "consent_receipt_digest = ?, updated_at = ? WHERE operation_id = ?",
+                (desired_digest, now, prepared.operation_id),
+            )
+            return ConsentDecisionResult(
+                operation_id=prepared.operation_id, receipt_digest=desired_digest,
+                decision="granted", status="granted", consented_at=consented_at,
+                idempotent=False,
+            )
+        if existing_status == "granted" and decision == "declined":
+            raise ConsentStateError(
+                "a granted decision cannot be flipped to declined; withdraw it instead"
+            )
+        raise ConsentStateError(
+            f"inconsistent existing receipt status: {existing_status!r}"
+        )
+
+    @staticmethod
+    def _verify_immutable(row: sqlite3.Row, prepared: PreparedOperation) -> None:
+        expected = {
+            "kind": prepared.identity.operation_kind,
+            "endpoint": prepared.identity.endpoint,
+            "segment_id": prepared.identity.segment_id,
+            "generation_id": prepared.identity.generation_id,
+            "manifest_digest": prepared.identity.manifest_digest,
+            "orchestration_plan_digest": prepared.identity.orchestration_plan_digest,
+            "request_digest": prepared.identity.request_digest,
+            "idempotency_key": prepared.idempotency_key,
+            "heygen_title": prepared.heygen_title,
+            "credential_profile_id": prepared.identity.credential_profile_id,
+        }
+        for col, value in expected.items():
+            if row[col] != value:
+                raise ConsentConflictError(
+                    f"immutable field {col!r} differs for operation "
+                    f"{prepared.operation_id}: stored={row[col]!r} new={value!r}"
+                )
+
+    @staticmethod
+    def _require_pristine(conn, operation_id: str) -> None:
+        row = conn.execute(
+            "SELECT submit_attempts, lease_owner FROM heygen_operations WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()
+        if row is None:
+            return
+        if row["submit_attempts"] > 0 or row["lease_owner"] is not None:
+            raise ConsentStateError(
+                "operation is not pristine (already submitted or leased); "
+                "cannot change a declined decision to granted"
+            )
+
+    @staticmethod
+    def _stored_content_no_time(row: sqlite3.Row) -> dict:
+        return {
+            "namespace": _RECEIPT_NAMESPACE,
+            "operation_id": row["operation_id"],
+            "generation_id": row["generation_id"],
+            "request_digest": row["request_digest"],
+            "creative_brief_digest": row["creative_brief_digest"],
+            "provider": row["provider"],
+            "operation_kind": row["operation_kind"],
+            "disclosure_version": row["disclosure_version"],
+            "disclosed_assets": json.loads(row["disclosed_assets_json"]),
+            "data_categories": json.loads(row["data_categories_json"]),
+            "provider_cost_disclosure": row["provider_cost_disclosure"],
+            "agentmesh_non_processor_disclosure": row["agentmesh_non_processor_disclosure"],
+            "decision": row["status"],
+        }
+
+    @staticmethod
+    def _insert_receipt(conn, receipt_digest, prepared, payload, status,
+                        consented_at, assets_json, categories_json, now) -> None:
+        conn.execute(
+            "INSERT INTO heygen_consent_receipts (receipt_digest, operation_id, "
+            "disclosure_version, generation_id, request_digest, "
+            "creative_brief_digest, provider, operation_kind, "
+            "disclosed_assets_json, data_categories_json, "
+            "provider_cost_disclosure, agentmesh_non_processor_disclosure, "
+            "status, consented_at, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                receipt_digest, prepared.operation_id, payload["disclosure_version"],
+                prepared.identity.generation_id, prepared.identity.request_digest,
+                payload["creative_brief_digest"], payload["provider"],
+                payload["operation_kind"], assets_json, categories_json,
+                payload["provider_cost_disclosure"],
+                payload["agentmesh_non_processor_disclosure"], status, consented_at, now,
+            ),
+        )
+
+    @staticmethod
+    def _update_receipt(conn, receipt_digest, prepared, payload, status,
+                        consented_at, assets_json, categories_json, now) -> None:
+        # Update the PK (receipt_digest) plus lifecycle/content columns. Safe
+        # because a declined receipt's digest is referenced nowhere.
+        conn.execute(
+            "UPDATE heygen_consent_receipts SET receipt_digest = ?, "
+            "disclosure_version = ?, request_digest = ?, creative_brief_digest = ?, "
+            "provider = ?, operation_kind = ?, disclosed_assets_json = ?, "
+            "data_categories_json = ?, provider_cost_disclosure = ?, "
+            "agentmesh_non_processor_disclosure = ?, status = ?, consented_at = ?, "
+            "withdrawn_at = NULL WHERE operation_id = ?",
+            (
+                receipt_digest, payload["disclosure_version"],
+                prepared.identity.request_digest, payload["creative_brief_digest"],
+                payload["provider"], payload["operation_kind"], assets_json,
+                categories_json, payload["provider_cost_disclosure"],
+                payload["agentmesh_non_processor_disclosure"], status, consented_at,
+                prepared.operation_id,
+            ),
+        )
+
+
+def _rollback(conn: sqlite3.Connection) -> None:
+    try:
+        conn.execute("ROLLBACK")
+    except sqlite3.Error:
+        pass
