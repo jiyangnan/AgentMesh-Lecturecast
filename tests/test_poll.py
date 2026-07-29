@@ -297,3 +297,32 @@ def test_poll_claim_fail_closed_on_half_lease(tmp_path: Path):
     with repo.begin_immediate() as conn:
         with pytest.raises(OperationIntegrityError):
             repo.claim_poll_in_tx(conn, prepared.operation_id, OWNER, NOW, 60)
+
+
+def test_poll_claim_fail_closed_on_video_owned_by_another(tmp_path: Path):
+    from lecturecast.operation_repository import OperationIntegrityError
+    prepared = _submitted(tmp_path)
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.execute("UPDATE heygen_remote_resources SET created_by_operation_id = 'lc_hg_other' "
+               "WHERE resource_kind = 'video'")
+    db.commit()
+    db.close()
+    repo = OperationRepository(tmp_path)
+    with repo.begin_immediate() as conn:
+        with pytest.raises(OperationIntegrityError):
+            repo.claim_poll_in_tx(conn, prepared.operation_id, OWNER, NOW, 60)
+
+
+def test_poll_claim_not_ready_when_video_deleted(tmp_path: Path):
+    prepared = _submitted(tmp_path)
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.execute("UPDATE heygen_remote_resources SET deletion_status = 'deleted' "
+               "WHERE resource_kind = 'video'")
+    db.commit()
+    db.close()
+    repo = OperationRepository(tmp_path)
+    with repo.begin_immediate() as conn:
+        claim = repo.claim_poll_in_tx(conn, prepared.operation_id, OWNER, NOW, 60)
+    assert claim.status == "not_ready"

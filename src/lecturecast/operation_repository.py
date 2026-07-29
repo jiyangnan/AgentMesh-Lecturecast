@@ -52,6 +52,8 @@ NEXT_RETRY_BACKOFF_SECONDS = 60  # linear submit retry backoff (anti-hotloop is 
 POLL_BACKOFF_SECONDS = 30        # transient poll-error backoff
 POLL_INTERVAL_SECONDS = 30       # minimum gap between successful polls (anti-hotloop)
 POLLABLE_STATUSES = frozenset({"submitted", "processing", "reconciliation_required"})
+# A video in active deletion is not meaningfully pollable.
+_UNPOLLABLE_DELETION = frozenset({"deletion_pending", "deleted"})
 
 
 class OperationError(RuntimeError):
@@ -521,44 +523,54 @@ class OperationRepository:
         expires_iso = _canonical(now + timedelta(seconds=lease_seconds))
 
         row = conn.execute(
-            "SELECT status, lease_owner, lease_expires_at, lease_fence, next_retry_at "
-            "FROM heygen_operations WHERE operation_id = ?",
+            "SELECT status, lease_owner, lease_expires_at, lease_fence, next_retry_at, "
+            "credential_profile_id FROM heygen_operations WHERE operation_id = ?",
             (operation_id,),
         ).fetchone()
+        if row is None:
+            return PollClaim(operation_id, "not_ready", 0, None)
+        if row["status"] not in POLLABLE_STATUSES:
+            return PollClaim(operation_id, "not_ready", row["lease_fence"], None)
+
+        # Exactly one video resource, exclusively owned by this operation.
         resources = conn.execute(
-            "SELECT r.remote_id FROM heygen_remote_resources r "
+            "SELECT r.resource_id, r.remote_id, r.created_by_operation_id, "
+            "r.credential_profile_id, r.deletion_status FROM heygen_remote_resources r "
             "JOIN heygen_resource_operation_refs ref ON ref.resource_id = r.resource_id "
             "WHERE ref.operation_id = ? AND r.resource_kind = 'video'",
             (operation_id,),
         ).fetchall()
-        if row is None or row["status"] not in POLLABLE_STATUSES:
-            return PollClaim(operation_id, "not_ready", 0, None)
         if len(resources) == 0:
-            return PollClaim(operation_id, "not_ready", 0, None)
+            return PollClaim(operation_id, "not_ready", row["lease_fence"], None)
         if len(resources) > 1:
-            # A pollable operation must own exactly one video resource.
             raise OperationIntegrityError(
                 f"operation {operation_id} has {len(resources)} video resources"
             )
-        remote_id = resources[0]["remote_id"]
-
-        owner = row["lease_owner"]
-        exp = row["lease_expires_at"]
-        # Half lease is a corrupt topology — fail-closed.
-        if (owner is None) != (exp is None):
+        res = resources[0]
+        if res["created_by_operation_id"] != operation_id:
             raise OperationIntegrityError(
-                f"operation {operation_id} has a half poll lease state "
-                f"(owner={owner!r}, expires={exp!r})"
+                f"operation {operation_id} polls a video owned by another operation"
             )
-        # Active lease held by anyone → busy (anti-hotloop).
-        if owner is not None and _parse_utc(exp) > now:
-            return PollClaim(operation_id, "busy", row["lease_fence"], None)
-        # Fresh (no lease) or expired lease → eligible to claim/reclaim. The fence
-        # CAS below atomically handles both; a concurrent reclaimer bumps the fence.
-        # Transient backoff gate.
-        nr = row["next_retry_at"]
-        if nr is not None and _parse_utc(nr) > now:
-            return PollClaim(operation_id, "retry_wait", row["lease_fence"], None)
+        if res["credential_profile_id"] != row["credential_profile_id"]:
+            raise OperationIntegrityError(
+                f"operation {operation_id} credential_profile_id mismatch on video resource"
+            )
+        other_ref = conn.execute(
+            "SELECT 1 FROM heygen_resource_operation_refs "
+            "WHERE resource_id = ? AND operation_id <> ?",
+            (res["resource_id"], operation_id),
+        ).fetchone()
+        if other_ref is not None:
+            raise OperationIntegrityError(
+                f"operation {operation_id} polls a video referenced by another operation"
+            )
+        if res["deletion_status"] in _UNPOLLABLE_DELETION:
+            return PollClaim(operation_id, "not_ready", row["lease_fence"], None)
+        remote_id = res["remote_id"]
+
+        verdict = self._classify_poll_row(row, operation_id, now)
+        if verdict is not None:
+            return verdict
 
         new_fence = row["lease_fence"] + 1
         placeholders = ",".join("?" for _ in POLLABLE_STATUSES)
@@ -570,25 +582,43 @@ class OperationRepository:
              operation_id, row["lease_fence"], *POLLABLE_STATUSES),
         )
         if cur.rowcount == 0:
-            # Lost a concurrent claim/reclaim — re-read and classify fully.
+            # Lost a concurrent claim/reclaim — re-read and classify with the
+            # SAME function (real fence, half-lease detection).
             row2 = conn.execute(
-                "SELECT lease_owner, lease_expires_at, next_retry_at, status "
+                "SELECT status, lease_owner, lease_expires_at, lease_fence, next_retry_at "
                 "FROM heygen_operations WHERE operation_id = ?",
                 (operation_id,),
             ).fetchone()
-            if row2 is None or row2["status"] not in POLLABLE_STATUSES:
+            if row2 is None:
                 return PollClaim(operation_id, "not_ready", new_fence, None)
-            o2, e2 = row2["lease_owner"], row2["lease_expires_at"]
-            if o2 is not None and e2 is not None and _parse_utc(e2) > now:
-                return PollClaim(operation_id, "busy", new_fence, None)
-            nr2 = row2["next_retry_at"]
-            if nr2 is not None and _parse_utc(nr2) > now:
-                return PollClaim(operation_id, "retry_wait", new_fence, None)
-            # Eligible again after a lost CAS — concurrent tx must have rolled back.
-            raise OperationStateError(
-                f"operation {operation_id} became eligible again after a lost poll CAS"
-            )
+            v2 = self._classify_poll_row(row2, operation_id, now)
+            if v2 is None:
+                raise OperationStateError(
+                    f"operation {operation_id} became eligible again after a lost poll CAS"
+                )
+            return v2
         return PollClaim(operation_id, "claimed", new_fence, remote_id)
+
+    @staticmethod
+    def _classify_poll_row(row, operation_id: str, now) -> PollClaim | None:
+        """Unified poll classification (used on the fast path and after a lost
+        CAS). Returns a terminal PollClaim (busy/retry_wait/not_ready) or None
+        if the operation is eligible to claim. Half lease → fail-closed."""
+        if row["status"] not in POLLABLE_STATUSES:
+            return PollClaim(operation_id, "not_ready", row["lease_fence"], None)
+        owner = row["lease_owner"]
+        exp = row["lease_expires_at"]
+        if (owner is None) != (exp is None):
+            raise OperationIntegrityError(
+                f"operation {operation_id} has a half poll lease state "
+                f"(owner={owner!r}, expires={exp!r})"
+            )
+        if owner is not None and _parse_utc(exp) > now:
+            return PollClaim(operation_id, "busy", row["lease_fence"], None)
+        nr = row["next_retry_at"]
+        if nr is not None and _parse_utc(nr) > now:
+            return PollClaim(operation_id, "retry_wait", row["lease_fence"], None)
+        return None
 
     def apply_poll_outcome_in_tx(
         self,
