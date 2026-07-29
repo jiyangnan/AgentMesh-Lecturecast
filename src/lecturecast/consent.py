@@ -407,6 +407,25 @@ class ConsentStateError(ConsentError):
     """The requested decision transition is not allowed from the current state."""
 
 
+class ConsentIntegrityError(ConsentError):
+    """A stored receipt/operation is internally inconsistent (tampered digest,
+    broken pointer, status drift). Fail-closed rather than trusting the row."""
+
+
+# Operation statuses that may legally receive a fresh consent receipt. Anything
+# else means the operation already progressed past the consent gate.
+_ATTACHABLE_OPERATION_STATUSES = frozenset({"submit_pending", "cancelled"})
+# Columns that must be zero/absent for an existing operation to be safe to attach
+# a receipt to (no remote side effect has happened yet).
+_PRISTINE_INT_ZERO = ("submit_attempts", "reconcile_attempts", "lease_fence")
+_PRISTINE_TEXT_ABSENT = (
+    "lease_owner", "lease_expires_at", "attempt_started_at", "submitted_at",
+    "completed_at", "provider_status", "local_output_ref", "local_output_digest",
+    "download_verified_at", "next_retry_at", "last_error_code",
+    "consent_receipt_digest",
+)
+
+
 @dataclass(frozen=True)
 class ConsentDecisionResult:
     operation_id: str
@@ -500,9 +519,12 @@ class ConsentService:
                       content_no_time, consented_at, assets_json, categories_json,
                       payload) -> ConsentDecisionResult:
         now = _utc_now()
+        # Cover ALL three business unique keys so a collision on any of them is
+        # resolved into a domain conflict, never a raw IntegrityError leak.
         existing_op = conn.execute(
-            "SELECT * FROM heygen_operations WHERE operation_id = ? OR idempotency_key = ?",
-            (prepared.operation_id, prepared.idempotency_key),
+            "SELECT * FROM heygen_operations "
+            "WHERE operation_id = ? OR idempotency_key = ? OR heygen_title = ?",
+            (prepared.operation_id, prepared.idempotency_key, prepared.heygen_title),
         ).fetchone()
         if existing_op is not None:
             self._verify_immutable(existing_op, prepared)
@@ -513,11 +535,19 @@ class ConsentService:
         ).fetchone()
 
         if existing_rc is not None:
+            # Fail-closed integrity check BEFORE trusting an idempotent replay.
+            self._validate_existing_integrity(existing_rc, existing_op)
             return self._apply_existing(
                 conn, prepared, decision, desired_digest, content_no_time,
                 consented_at, assets_json, categories_json, payload,
                 existing_rc, now,
             )
+
+        # No receipt yet. If an operation row already exists it must be fully
+        # pristine — otherwise we would clobber a state that already touched the
+        # remote provider.
+        if existing_op is not None:
+            self._require_pristine_for_attach(conn, existing_op)
 
         # Fresh decision: insert operation (if absent) + receipt.
         op_status = "submit_pending" if decision == "granted" else "cancelled"
@@ -620,6 +650,82 @@ class ConsentService:
                     f"immutable field {col!r} differs for operation "
                     f"{prepared.operation_id}: stored={row[col]!r} new={value!r}"
                 )
+
+    @staticmethod
+    def _validate_existing_integrity(existing_rc: sqlite3.Row,
+                                     existing_op: sqlite3.Row | None) -> None:
+        """Fail-closed integrity check on a stored receipt BEFORE trusting it for
+        an idempotent replay or a transition. Catches a tampered digest, a broken
+        consent pointer, or receipt↔operation status drift."""
+        if existing_op is None:
+            raise ConsentIntegrityError(
+                f"receipt {existing_rc['receipt_digest']} exists without an operation row"
+            )
+        # 1. Recompute the digest from stored content + stored consented_at.
+        stored = ConsentService._stored_content_no_time(existing_rc)
+        stored["decision_at"] = existing_rc["consented_at"] or ""
+        if sha256_digest(stored) != existing_rc["receipt_digest"]:
+            raise ConsentIntegrityError(
+                f"receipt digest does not match stored content for {existing_rc['receipt_digest']}"
+            )
+        # 2. Receipt binding must match the operation's immutable fields.
+        for col in ("generation_id", "request_digest"):
+            if existing_rc[col] != existing_op[col]:
+                raise ConsentIntegrityError(
+                    f"receipt {col} does not match operation for {existing_rc['receipt_digest']}"
+                )
+        # 3. Status topology: receipt status ↔ operation status + consent pointer.
+        status = existing_rc["status"]
+        ptr = existing_op["consent_receipt_digest"]
+        if status == "granted":
+            if ptr != existing_rc["receipt_digest"]:
+                raise ConsentIntegrityError("granted receipt consent pointer mismatch")
+            if existing_op["status"] != "submit_pending":
+                raise ConsentIntegrityError("granted receipt paired with non-submit_pending operation")
+        elif status == "declined":
+            if ptr is not None:
+                raise ConsentIntegrityError("declined receipt must have a NULL consent pointer")
+            if existing_op["status"] != "cancelled":
+                raise ConsentIntegrityError("declined receipt paired with non-cancelled operation")
+        elif status == "withdrawn":
+            if ptr is not None:
+                raise ConsentIntegrityError("withdrawn receipt must have a NULL consent pointer")
+        else:
+            raise ConsentIntegrityError(f"unknown receipt status: {status!r}")
+
+    @staticmethod
+    def _require_pristine_for_attach(conn, row: sqlite3.Row) -> None:
+        """An existing operation may receive a fresh receipt ONLY if nothing has
+        touched the remote provider yet — otherwise attaching would silently
+        rewind a submitted/processing/completed operation."""
+        operation_id = row["operation_id"]
+        if row["status"] not in _ATTACHABLE_OPERATION_STATUSES:
+            raise ConsentStateError(
+                f"existing operation {operation_id} status {row['status']!r} is not "
+                f"attachable (already progressed past the consent gate)"
+            )
+        if row["download_status"] != "not_started":
+            raise ConsentStateError(
+                f"existing operation {operation_id} download_status={row['download_status']!r}"
+            )
+        for col in _PRISTINE_INT_ZERO:
+            if row[col] != 0:
+                raise ConsentStateError(
+                    f"existing operation {operation_id} has {col}={row[col]}"
+                )
+        for col in _PRISTINE_TEXT_ABSENT:
+            if row[col] is not None:
+                raise ConsentStateError(
+                    f"existing operation {operation_id} has {col} set"
+                )
+        linked = conn.execute(
+            "SELECT 1 FROM heygen_remote_resources WHERE created_by_operation_id = ? LIMIT 1",
+            (operation_id,),
+        ).fetchone()
+        if linked is not None:
+            raise ConsentStateError(
+                f"existing operation {operation_id} already produced a remote resource"
+            )
 
     @staticmethod
     def _require_pristine(conn, operation_id: str) -> None:
