@@ -1612,6 +1612,8 @@ class OperationRepository:
         self._require_tx(conn)
         conn.row_factory = sqlite3.Row
         _require_lease_owner(lease_owner)
+        if type(max_attempts) is not int or not (1 <= max_attempts <= 10):
+            raise ValueError("max_attempts must be an int in [1, 10]")
         now = _parse_utc(now_iso)
         _check_lease_seconds(lease_seconds)
         expires_iso = _canonical(now + timedelta(seconds=lease_seconds))
