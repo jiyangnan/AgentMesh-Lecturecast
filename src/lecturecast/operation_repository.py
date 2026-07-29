@@ -1142,20 +1142,9 @@ class OperationRepository:
             return DownloadClaim(operation_id, "not_ready", row["lease_fence"], None, None)
         ConsentService._validate_existing_integrity(receipt, op_full, conn)
 
-        # Withdrawn after completion → no delivery; route the resource to cleanup.
-        if receipt["status"] == "withdrawn":
-            conn.execute(
-                "UPDATE heygen_remote_resources SET deletion_status = 'deletion_pending', "
-                "deletion_reason = 'consent_withdrawal', updated_at = ? "
-                "WHERE created_by_operation_id = ? AND resource_kind = 'video' "
-                "AND deletion_status = 'not_started'",
-                (_canonical(now), operation_id),
-            )
-            return DownloadClaim(operation_id, "consent_withdrawn", row["lease_fence"], None, None)
-        if receipt["status"] != "granted":
-            return DownloadClaim(operation_id, "not_ready", row["lease_fence"], None, None)
-
-        # Exactly one exclusive, non-deleted video resource.
+        # Exactly one exclusive, non-deleted video resource — verified BEFORE any
+        # deletion mutation, so a corrupt/shared topology can never send another
+        # operation's resource into cleanup.
         resources = conn.execute(
             "SELECT r.resource_id, r.remote_id, r.created_by_operation_id, "
             "r.credential_profile_id, r.deletion_status FROM heygen_remote_resources r "
@@ -1181,20 +1170,22 @@ class OperationRepository:
         if res["deletion_status"] in ("deletion_pending", "deleted"):
             return DownloadClaim(operation_id, "not_ready", row["lease_fence"], None, None)
 
-        ds = row["download_status"]
-        if ds == "verified":
+        # Withdrawn after completion → no delivery. Now that the resource is
+        # verified exclusive, flip THIS resource_id (not a broad created_by scan)
+        # into consent-cleanup for e4b.
+        if receipt["status"] == "withdrawn":
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_status = 'deletion_pending', "
+                "deletion_reason = 'consent_withdrawal', updated_at = ? WHERE resource_id = ?",
+                (_canonical(now), res["resource_id"]),
+            )
+            return DownloadClaim(operation_id, "consent_withdrawn", row["lease_fence"], None, None)
+        if receipt["status"] != "granted":
             return DownloadClaim(operation_id, "not_ready", row["lease_fence"], None, None)
-        # Lease classification (half lease → fail-closed).
-        owner = row["lease_owner"]
-        exp = row["lease_expires_at"]
-        if (owner is None) != (exp is None):
-            raise OperationIntegrityError(f"operation {operation_id} half download lease")
-        if owner is not None and _parse_utc(exp) > now:
-            return DownloadClaim(operation_id, "busy", row["lease_fence"], None, None)
-        # Backoff gate (a failed download sets next_retry_at).
-        nr = row["next_retry_at"]
-        if ds == "failed" and nr is not None and _parse_utc(nr) > now:
-            return DownloadClaim(operation_id, "retry_wait", row["lease_fence"], None, None)
+
+        verdict = self._classify_download_row(row, operation_id, now)
+        if verdict is not None:
+            return verdict
 
         new_fence = row["lease_fence"] + 1
         cur = conn.execute(
@@ -1207,24 +1198,43 @@ class OperationRepository:
              operation_id, row["lease_fence"]),
         )
         if cur.rowcount == 0:
-            # Lost a concurrent claim/reclaim — re-classify.
+            # Lost a concurrent claim/reclaim — re-read and classify with the
+            # SAME function (real fence, half-lease detection, full status set).
             row2 = conn.execute(
-                "SELECT lease_owner, lease_expires_at, download_status, next_retry_at "
-                "FROM heygen_operations WHERE operation_id = ?",
+                "SELECT status, download_status, lease_owner, lease_expires_at, "
+                "lease_fence, next_retry_at FROM heygen_operations WHERE operation_id = ?",
                 (operation_id,),
             ).fetchone()
-            if row2 is None:
+            if row2 is None or row2["status"] != "completed":
                 return DownloadClaim(operation_id, "not_ready", new_fence, None, None)
-            o2, e2 = row2["lease_owner"], row2["lease_expires_at"]
-            if o2 is not None and e2 is not None and _parse_utc(e2) > now:
-                return DownloadClaim(operation_id, "busy", new_fence, None, None)
-            if row2["download_status"] == "failed" and row2["next_retry_at"] is not None \
-                    and _parse_utc(row2["next_retry_at"]) > now:
-                return DownloadClaim(operation_id, "retry_wait", new_fence, None, None)
-            raise OperationStateError(
-                f"operation {operation_id} became eligible again after a lost download CAS"
-            )
+            v2 = self._classify_download_row(row2, operation_id, now)
+            if v2 is None:
+                raise OperationStateError(
+                    f"operation {operation_id} became eligible again after a lost download CAS"
+                )
+            return v2
         return DownloadClaim(operation_id, "claimed", new_fence, res["remote_id"], res["resource_id"])
+
+    @staticmethod
+    def _classify_download_row(row, operation_id: str, now) -> DownloadClaim | None:
+        """Unified download classification (fast path + lost CAS). Returns a
+        terminal DownloadClaim (busy/retry_wait/not_ready) or None if eligible.
+        downloaded/verified → not_ready; half lease → fail-closed; returns the
+        REAL database fence."""
+        ds = row["download_status"]
+        if ds in ("downloaded", "verified"):
+            return DownloadClaim(operation_id, "not_ready", row["lease_fence"], None, None)
+        owner = row["lease_owner"]
+        exp = row["lease_expires_at"]
+        if (owner is None) != (exp is None):
+            raise OperationIntegrityError(f"operation {operation_id} half download lease")
+        if owner is not None and _parse_utc(exp) > now:
+            return DownloadClaim(operation_id, "busy", row["lease_fence"], None, None)
+        if ds == "failed":
+            nr = row["next_retry_at"]
+            if nr is not None and _parse_utc(nr) > now:
+                return DownloadClaim(operation_id, "retry_wait", row["lease_fence"], None, None)
+        return None  # eligible: not_started, failed+backoff-elapsed, or downloading+expired
 
 
 # --- coordinator -------------------------------------------------------
