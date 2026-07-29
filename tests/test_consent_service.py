@@ -365,3 +365,92 @@ def test_declined_receipt_with_non_null_pointer_fail_closed(tmp_path: Path):
     with pytest.raises(ConsentIntegrityError):
         svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="declined",
                             creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+
+
+# ---- §5.5e2b round-3: post-submit lifecycle, withdrawn digest, refs guard ---
+
+
+T = "2026-07-29T00:00:00Z"
+
+
+def _fk_off(db_path):
+    db = sqlite3.connect(str(db_path))
+    db.execute("PRAGMA foreign_keys = OFF")
+    return db
+
+
+def test_granted_replay_allowed_across_post_submit_lifecycle(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    first = svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+                                creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+    # The operation has legitimately progressed past submit_pending; the grant
+    # must still stand and replays must be idempotent.
+    db = _fk_off(tmp_path / DB_REL)
+    db.execute("UPDATE heygen_operations SET status = 'processing' WHERE operation_id = ?",
+               (first.operation_id,))
+    db.commit()
+    db.close()
+    second = svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+                                 creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:30Z")
+    assert second.idempotent is True
+    assert second.receipt_digest == first.receipt_digest
+
+
+def test_withdrawn_receipt_validates_against_original_grant_digest(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    first = svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+                                creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+    # Simulate the e2c withdraw lifecycle: receipt withdrawn, pointer cleared.
+    db = _fk_off(tmp_path / DB_REL)
+    db.execute("UPDATE heygen_consent_receipts SET status = 'withdrawn', withdrawn_at = ? "
+               "WHERE operation_id = ?", (T, first.operation_id))
+    db.execute("UPDATE heygen_operations SET consent_receipt_digest = NULL WHERE operation_id = ?",
+               (first.operation_id,))
+    db.commit()
+    db.close()
+    # Validation must recompute against decision="granted" (withdrawal is a
+    # lifecycle state, not a new decision) — no IntegrityError; the call fails
+    # later with the "cannot record on withdrawn" state error.
+    with pytest.raises(ConsentStateError, match="withdrawn"):
+        svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+                            creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:30Z")
+
+
+def test_declined_to_granted_blocked_by_lease_fence(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="declined",
+                        creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+    db = _fk_off(tmp_path / DB_REL)
+    db.execute("UPDATE heygen_operations SET lease_fence = 1 WHERE operation_id = ?",
+               (_prepared().operation_id,))
+    db.commit()
+    db.close()
+    with pytest.raises(ConsentStateError):
+        svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+                            creative_brief_digest=BRIEF, decision_at="2026-07-29T00:01:00Z")
+
+
+def test_resource_operation_ref_blocks_attach(tmp_path: Path):
+    from lecturecast.heygen_journal import init_database
+    init_database(tmp_path).close()
+    pre = _prepared()
+    db = _db(tmp_path)
+    _seed_operation(db, pre, status="cancelled")  # pristine otherwise
+    db.execute(
+        "INSERT INTO heygen_remote_resources (credential_profile_id, resource_kind, "
+        "remote_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        ("heygen_env_default", "video", "rem_1", T, T),
+    )
+    rid = db.execute("SELECT resource_id FROM heygen_remote_resources").fetchone()[0]
+    db.execute(
+        "INSERT INTO heygen_resource_operation_refs (resource_id, operation_id, created_at) "
+        "VALUES (?, ?, ?)",
+        (rid, pre.operation_id, T),
+    )
+    db.commit()
+    db.close()
+    svc = ConsentService(tmp_path)
+    # The ref-only association path must block attaching a fresh receipt.
+    with pytest.raises(ConsentStateError):
+        svc.record_decision(prepared=pre, disclosure=_disclosure(), decision="granted",
+                            creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
