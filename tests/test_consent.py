@@ -162,8 +162,12 @@ def test_disclosure_synthetic_audio_requires_its_category():
 
 
 def test_disclosure_rejects_duplicate_categories():
-    with pytest.raises(ValueError):
-        _disclosure(data_categories=["portrait_image", "portrait_image"])
+    # Use the full asset-determined set WITH a duplicate so this fails on the
+    # uniqueness guard specifically — without it, the cross-field set==allowed
+    # check would still pass and the regression would slip through.
+    with pytest.raises(ValueError, match="unique"):
+        _disclosure(data_categories=["portrait_image", "portrait_image",
+                                     "facial_biometric_template"])
 
 
 def test_disclosure_requires_cost_and_non_processor_text():
