@@ -108,6 +108,12 @@ def _start_local_http(content: bytes):
     return server
 
 
+def _connect_http(hostname, ip, port):
+    """Simple HTTP (not HTTPS) connection for local tests."""
+    import http.client
+    return http.client.HTTPConnection(ip, port)
+
+
 def _make_downloader_for_localhost(monkeypatch):
     """Create a downloader with URL validation patched to accept localhost."""
     dl = StdlibVideoDownloader(allowed_hosts=frozenset({"127.0.0.1"}))
@@ -125,7 +131,8 @@ def test_downloader_writes_temp_and_returns_prepared(tmp_path, monkeypatch):
     ref = "outputs/heygen/test_op.mp4"
     dl = _make_downloader_for_localhost(monkeypatch)
     prepared = dl.download_and_verify(
-        f"http://127.0.0.1:{port}/v.mp4", str(runtime), ref, 1_048_576, _StubProbe())
+        f"http://127.0.0.1:{port}/v.mp4", str(runtime), ref, 1_048_576, _StubProbe(),
+        _connect=_connect_http)
     server.shutdown()
     assert prepared.local_output_ref == ref
     assert prepared.size_bytes == len(content)
@@ -147,7 +154,8 @@ def test_downloader_rejects_size_exceed(tmp_path, monkeypatch):
     ref = "outputs/heygen/big.mp4"
     dl = _make_downloader_for_localhost(monkeypatch)
     with pytest.raises(ValueError, match="max_bytes"):
-        dl.download_and_verify(f"http://127.0.0.1:{port}/v.mp4", str(runtime), ref, 100, _StubProbe())
+        dl.download_and_verify(f"http://127.0.0.1:{port}/v.mp4", str(runtime), ref, 100, _StubProbe(),
+        _connect=_connect_http)
     server.shutdown()
     assert not (runtime / (ref + ".tmp")).exists()
 
@@ -164,41 +172,51 @@ def test_downloader_cleans_up_temp_on_probe_failure(tmp_path, monkeypatch):
         def probe(self, path):
             raise ValueError("no video stream")
     with pytest.raises(ValueError, match="no video stream"):
-        dl.download_and_verify(f"http://127.0.0.1:{port}/v.mp4", str(runtime), ref, 1_048_576, _BadProbe())
+        dl.download_and_verify(f"http://127.0.0.1:{port}/v.mp4", str(runtime), ref, 1_048_576, _BadProbe(),
+        _connect=_connect_http)
     server.shutdown()
     assert not (runtime / (ref + ".tmp")).exists()
 
 
 def test_downloader_rejects_redirect(tmp_path, monkeypatch):
-    server = _start_local_http(b"x")
-    port = server.server_address[1]
+    """Verify the downloader refuses a 3xx redirect response."""
     runtime = tmp_path / ".lecturecast" / "runtime"
     runtime.mkdir(parents=True)
     ref = "outputs/heygen/redir.mp4"
     dl = _make_downloader_for_localhost(monkeypatch)
-    # Monkey-patch the opener to return a redirect response.
-    import lecturecast.heygen_downloader as mod
-    import urllib.request
-    class _RedirectOpener:
-        def open(self, req, timeout=None):
-            raise urllib.error.HTTPError(
-                req.full_url, 301, "Moved", {"Location": "http://evil.com/v.mp4"}, None)
-    monkeypatch.setattr(urllib.request, "build_opener", lambda *a: _RedirectOpener())
-    with pytest.raises(Exception):
-        dl.download_and_verify(f"http://127.0.0.1:{port}/v.mp4", str(runtime), ref, 1_048_576, _StubProbe())
-    server.shutdown()
+    import http.client as _hc
 
+    class _RedirectConn:
+        def request(self, method, path, headers=None):
+            pass
+        def getresponse(self):
+            class _Resp:
+                status = 301
+                def getheader(self, name, default=""):
+                    return {"Location": "http://evil.com/v.mp4"}.get(name, default)
+                def read(self, n=-1): return b""
+                def close(self): pass
+            return _Resp()
+        def close(self): pass
 
-import io as _io
+    with pytest.raises(ValueError, match="redirect"):
+        dl.download_and_verify("http://127.0.0.1:9999/v.mp4", str(runtime), ref, 1_048_576,
+                               _StubProbe(), _connect=lambda h, i, p: _RedirectConn())
+
 
 def _make_fake_popen(fake_result):
-    """Create a fake Popen compatible with PIPE-based stdout reading."""
+    """Create a fake Popen with a real os.pipe for select() compatibility."""
     stdout_bytes = fake_result.stdout.encode() if isinstance(fake_result.stdout, str) else fake_result.stdout
 
     class _FakePopen:
         def __init__(self, cmd, stdout=None, stderr=None):
-            self._stdout = _io.BytesIO(stdout_bytes)
-            self._returncode = fake_result.returncode
+            r, w = __import__("os").pipe()
+            if stdout_bytes:
+                __import__("os").write(w, stdout_bytes)
+            __import__("os").close(w)
+            self._stdout = __import__("os").fdopen(r, "rb")
+            self._rc = fake_result.returncode
+            self._poll_count = 0
 
         @property
         def stdout(self):
@@ -206,13 +224,16 @@ def _make_fake_popen(fake_result):
 
         @property
         def returncode(self):
-            return self._returncode
+            return self._rc
 
         def wait(self, timeout=None):
-            return self._returncode
+            return self._rc
 
         def kill(self):
             pass
+
+        def poll(self):
+            return self._rc
 
     return _FakePopen
 
