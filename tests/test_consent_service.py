@@ -268,3 +268,100 @@ def test_write_tightens_db_permissions(tmp_path: Path):
     import stat
     mode = stat.S_IMODE(os.stat(tmp_path / DB_REL).st_mode)
     assert mode == 0o600
+
+
+# ---- §5.5e2b round-2: heygen_title conflict, pristine-attach, integrity ---
+
+
+def _seed_operation(db, prepared, *, status="submit_pending", consent_ptr=None):
+    db.execute(
+        "INSERT INTO heygen_operations (operation_id, kind, endpoint, segment_id, "
+        "generation_id, manifest_digest, orchestration_plan_digest, request_digest, "
+        "idempotency_key, heygen_title, credential_profile_id, consent_receipt_digest, "
+        "status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (prepared.operation_id, prepared.identity.operation_kind, prepared.identity.endpoint,
+         prepared.identity.segment_id, prepared.identity.generation_id,
+         prepared.identity.manifest_digest, prepared.identity.orchestration_plan_digest,
+         prepared.identity.request_digest, prepared.idempotency_key, prepared.heygen_title,
+         prepared.identity.credential_profile_id, consent_ptr, status,
+         "2026-07-29T00:00:00Z", "2026-07-29T00:00:00Z"),
+    )
+    db.commit()
+
+
+def test_heygen_title_collision_raises_conflict(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    other = _prepared(request_digest="sha256:" + "9" * 64)
+    svc.record_decision(prepared=other, disclosure=_disclosure(), decision="granted",
+                        creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+    # Force the existing row to collide on heygen_title with the new prepared.
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.execute("UPDATE heygen_operations SET heygen_title = ? WHERE operation_id = ?",
+               (_prepared().heygen_title, other.operation_id))
+    db.commit()
+    db.close()
+    with pytest.raises(ConsentConflictError):
+        svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+                            creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+
+
+def test_attach_receipt_to_progressed_operation_rejected(tmp_path: Path):
+    from lecturecast.consent import ConsentIntegrityError  # noqa: F401
+    from lecturecast.heygen_journal import init_database
+    init_database(tmp_path).close()
+    db = _db(tmp_path)
+    _seed_operation(db, _prepared(), status="submitted")  # progressed past consent gate
+    db.close()
+    svc = ConsentService(tmp_path)
+    with pytest.raises(ConsentStateError):
+        svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+                            creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+
+
+def test_tampered_receipt_digest_fail_closed(tmp_path: Path):
+    from lecturecast.consent import ConsentIntegrityError
+    svc = ConsentService(tmp_path)
+    res = svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+                              creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.execute("UPDATE heygen_consent_receipts SET receipt_digest = ? WHERE operation_id = ?",
+               ("sha256:" + "0" * 64, res.operation_id))
+    db.commit()
+    db.close()
+    with pytest.raises(ConsentIntegrityError):
+        svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+                            creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+
+
+def test_granted_receipt_with_cancelled_operation_fail_closed(tmp_path: Path):
+    from lecturecast.consent import ConsentIntegrityError
+    svc = ConsentService(tmp_path)
+    res = svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+                              creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.execute("UPDATE heygen_operations SET status = 'cancelled' WHERE operation_id = ?",
+               (res.operation_id,))
+    db.commit()
+    db.close()
+    with pytest.raises(ConsentIntegrityError):
+        svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+                            creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+
+
+def test_declined_receipt_with_non_null_pointer_fail_closed(tmp_path: Path):
+    from lecturecast.consent import ConsentIntegrityError
+    svc = ConsentService(tmp_path)
+    res = svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="declined",
+                              creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.execute("UPDATE heygen_operations SET consent_receipt_digest = ? WHERE operation_id = ?",
+               ("sha256:" + "f" * 64, res.operation_id))
+    db.commit()
+    db.close()
+    with pytest.raises(ConsentIntegrityError):
+        svc.record_decision(prepared=_prepared(), disclosure=_disclosure(), decision="declined",
+                            creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
