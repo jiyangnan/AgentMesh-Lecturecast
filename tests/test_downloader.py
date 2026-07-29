@@ -396,11 +396,8 @@ def test_ffprobe_overflow_kills(monkeypatch, fake_ffprobe, tmp_path):
     target = tmp_path / "fake.mp4"; target.write_bytes(b"fake")
     big_stdout = b"x" * (2 * 1024 * 1024)
     fake = MagicMock(returncode=0, stdout=big_stdout.decode("ascii"), stderr="")
+    captured_instance = []
     fake_popen_cls = _make_fake_popen(fake)
-    killed = []
-    orig_kill = None
-    monkeypatch.setattr("subprocess.Popen", fake_popen_cls)
-    # Track kill calls by patching the instance method after creation
     original_init = fake_popen_cls.__init__
     def tracking_init(self, *a, **kw):
         original_init(self, *a, **kw)
@@ -410,9 +407,12 @@ def test_ffprobe_overflow_kills(monkeypatch, fake_ffprobe, tmp_path):
             self._killed = True
             orig()
         self.kill = tracked_kill
+        captured_instance.append(self)
     fake_popen_cls.__init__ = tracking_init
+    monkeypatch.setattr("subprocess.Popen", fake_popen_cls)
     with pytest.raises(ValueError, match="exceeded 1 MiB"):
         probe.probe(str(target))
+    assert captured_instance and captured_instance[0]._killed is True
 
 
 
@@ -507,3 +507,4 @@ def test_ffprobe_timeout_kills_and_cleans(monkeypatch, fake_ffprobe, tmp_path):
 
     assert killed.is_set()
     assert stdout_closed.is_set()
+    # Reader thread must have exited (no daemon leak).
