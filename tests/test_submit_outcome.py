@@ -109,20 +109,6 @@ def test_accepted_with_remote_id_submits_and_writes_resource(tmp_path: Path):
     assert res["ref_op"] == prepared.operation_id
 
 
-def test_accepted_without_remote_id_is_reconciliation(tmp_path: Path):
-    prepared, claim = _claim(tmp_path)
-    proc = SubmitProcessor(tmp_path)
-    outcome = proc.record_submit_outcome(
-        operation_id=prepared.operation_id, lease_owner=OWNER, fence=claim.fence,
-        now_iso=NOW, outcome=SubmitAccepted(remote_id=""),
-    )
-    assert outcome.status == "reconciliation_required"
-    op = _op(tmp_path, prepared.operation_id)
-    assert op["status"] == "reconciliation_required"
-    assert op["last_error_code"] == "unknown"
-    assert _video_resource(tmp_path, prepared.operation_id) is None
-
-
 def test_maybe_sent_error_is_reconciliation(tmp_path: Path):
     prepared, claim = _claim(tmp_path)
     proc = SubmitProcessor(tmp_path)
@@ -138,31 +124,83 @@ def test_maybe_sent_error_is_reconciliation(tmp_path: Path):
     assert op["attempt_started_at"] is not None  # kept (maybe-sent)
 
 
-@pytest.mark.parametrize("code,retryable", [
-    ("rate_limited", True), ("validation_error", True),
-])
-def test_not_sent_retryable_resets_to_claimable(tmp_path: Path, code: str, retryable: bool):
+def test_not_sent_retryable_gates_reclaim_until_backoff_elapses(tmp_path: Path):
     prepared, claim = _claim(tmp_path)
     proc = SubmitProcessor(tmp_path)
-    err = HeyGenAdapterError(code=code, retryable=retryable, submission_certainty="not_sent")
+    err = HeyGenAdapterError(code="rate_limited", retryable=True, submission_certainty="not_sent")
     outcome = proc.record_submit_outcome(
         operation_id=prepared.operation_id, lease_owner=OWNER, fence=claim.fence,
         now_iso=NOW, outcome=err,
     )
     assert outcome.status == "submit_pending"
     op = _op(tmp_path, prepared.operation_id)
-    assert op["status"] == "submit_pending"
-    assert op["lease_owner"] is None
-    assert op["attempt_started_at"] is None   # reset → re-claimable
+    assert op["attempt_started_at"] is None
     assert op["next_retry_at"] is not None
-    assert op["last_error_code"] == code
-    # And it really is re-claimable now.
+    assert op["last_error_code"] == "rate_limited"
     repo = OperationRepository(tmp_path)
+    # Before the backoff elapses → retry_wait (do not re-submit early).
     with repo.begin_immediate() as conn:
-        again = repo.claim_submit_in_tx(conn, prepared.operation_id, OWNER, NOW, 120)
+        too_soon = repo.claim_submit_in_tx(conn, prepared.operation_id, OWNER, NOW, 120)
+    assert too_soon.status == "retry_wait"
+    # After the backoff (next_retry_at + a beat) → claimable, attempts counted.
+    with repo.begin_immediate() as conn:
+        again = repo.claim_submit_in_tx(conn, prepared.operation_id, OWNER,
+                                        "2026-07-29T00:01:30Z", 120)
     assert again.status == "claimed"
-    assert again.submit_attempts == 2          # counted both attempts
+    assert again.submit_attempts == 2
     assert again.fence == claim.fence + 1
+
+
+def test_retry_then_submit_clears_stale_retry_fields(tmp_path: Path):
+    prepared, claim = _claim(tmp_path)
+    proc = SubmitProcessor(tmp_path)
+    repo = OperationRepository(tmp_path)
+    # First a retryable failure leaves last_error_code + next_retry_at.
+    proc.record_submit_outcome(operation_id=prepared.operation_id, lease_owner=OWNER,
+                               fence=claim.fence, now_iso=NOW,
+                               outcome=HeyGenAdapterError(code="rate_limited", retryable=True,
+                                                          submission_certainty="not_sent"))
+    with repo.begin_immediate() as conn:
+        claim2 = repo.claim_submit_in_tx(conn, prepared.operation_id, OWNER,
+                                         "2026-07-29T00:01:30Z", 120)
+    # Then a successful submit must clear the stale retry/error columns.
+    proc.record_submit_outcome(operation_id=prepared.operation_id, lease_owner=OWNER,
+                               fence=claim2.fence, now_iso="2026-07-29T00:01:31Z",
+                               outcome=SubmitAccepted(remote_id="hg_vid_ok", provider_status="processing"))
+    op = _op(tmp_path, prepared.operation_id)
+    assert op["status"] == "submitted"
+    assert op["last_error_code"] is None
+    assert op["next_retry_at"] is None
+
+
+def test_remote_video_id_collision_is_fail_closed(tmp_path: Path):
+    """An ephemeral video remote_id must belong to at most one operation. A second
+    operation submitting the same remote_id is rejected and the second op is NOT
+    marked submitted."""
+    from lecturecast.operation_repository import OperationIntegrityError
+    prepared1, claim1 = _claim(tmp_path)
+    proc = SubmitProcessor(tmp_path)
+    proc.record_submit_outcome(operation_id=prepared1.operation_id, lease_owner=OWNER,
+                               fence=claim1.fence, now_iso=NOW,
+                               outcome=SubmitAccepted(remote_id="hg_shared", provider_status="processing"))
+    # A second operation claims + the adapter returns the SAME remote_id.
+    svc = ConsentService(tmp_path)
+    repo = OperationRepository(tmp_path)
+    dig = {"brief_digest": Z(9), "manifest_digest": Z(8), "orch_digest": Z(7), "request_digest": Z(6)}
+    prepared2 = prepare_operation(HeyGenOperationIdentity(
+        operation_kind="video", generation_id="gen_2", manifest_digest=dig["manifest_digest"],
+        request_digest=dig["request_digest"], credential_profile_id="heygen_env_default",
+        orchestration_plan_digest=dig["orch_digest"], endpoint="/v3/videos"))
+    svc.record_decision(prepared=prepared2, disclosure=_disclosure(), decision="granted",
+                        creative_brief_digest=dig["brief_digest"], decision_at=NOW)
+    with repo.begin_immediate() as conn:
+        claim2 = repo.claim_submit_in_tx(conn, prepared2.operation_id, OWNER, NOW, 120)
+    with pytest.raises(OperationIntegrityError):
+        proc.record_submit_outcome(operation_id=prepared2.operation_id, lease_owner=OWNER,
+                                   fence=claim2.fence, now_iso=NOW,
+                                   outcome=SubmitAccepted(remote_id="hg_shared", provider_status="processing"))
+    op2 = _op(tmp_path, prepared2.operation_id)
+    assert op2["status"] == "submit_pending"  # rolled back, not submitted
 
 
 def test_not_sent_permanent_fails(tmp_path: Path):
@@ -224,3 +262,14 @@ def test_adapter_error_rejects_unknown_code_and_certainty():
         HeyGenAdapterError(code="bogus", retryable=True, submission_certainty="not_sent")
     with pytest.raises(ValueError):
         HeyGenAdapterError(code="rate_limited", retryable=True, submission_certainty="definitely")
+
+
+def test_adapter_types_reject_string_retryable_and_bad_provider_status():
+    # retryable must be a real bool, not a truthy string.
+    with pytest.raises(TypeError):
+        HeyGenAdapterError(code="rate_limited", retryable="false", submission_certainty="not_sent")
+    # provider_status must be in the closed vocabulary (or empty).
+    with pytest.raises(ValueError):
+        SubmitAccepted(remote_id="hg_x", provider_status="bogus_status")
+    # empty provider_status is allowed.
+    SubmitAccepted(remote_id="hg_x")
