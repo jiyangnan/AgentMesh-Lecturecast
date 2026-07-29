@@ -926,9 +926,78 @@ def generation_resume(
             message=f"Generation resume 完成：billing_state={generation.get('billing_state', 'N/A')}。",
         )
     except LectureCastError as error:
-        fail(error, json_output=json_output)
+        # Build a command-specific workflow for resume errors (don't use the
+        # generic fail() — the user needs structured next_action guidance).
+        root = str(directory.expanduser().resolve())
+        workflow = _resume_error_workflow(error, root)
+        if workflow is not None:
+            emit(
+                {"director": state.to_dict(), "error": error.to_dict(), "workflow": workflow},
+                json_output=json_output,
+                message=error.message,
+            )
+            raise typer.Exit(code=1)
+        else:
+            fail(error, json_output=json_output)
     except Exception as exc:
         _unexpected(exc, json_output=json_output)
+
+
+def _resume_error_workflow(error: LectureCastError, root: str) -> dict[str, Any] | None:
+    """Build a command-specific workflow for generation-resume errors.
+    Returns None if the error has no structured workflow (use generic fail())."""
+    code = error.code
+    http_status = error.http_status
+    # Malformed v1.1 envelope → fail-closed, no structured workflow.
+    if code == "manifest_incompatible":
+        return None
+    if code == "insufficient_credits" and http_status == 402:
+        return {
+            "phase": "credit_top_up_required",
+            "policy": "execute_only_returned_next_action",
+            "next_action": _command_action(
+                "director.generation.resume",
+                ["lecturecast", "director", "generation-resume", root, "--json"],
+                approval=True,
+            ),
+        }
+    if code == "generation_in_progress" and http_status == 409:
+        return {
+            "phase": "billing_refresh_required",
+            "policy": "execute_only_returned_next_action",
+            "next_action": _command_action(
+                "director.status",
+                ["lecturecast", "director", "status", root, "--json"],
+            ),
+        }
+    if http_status is not None and http_status == 409:
+        return {
+            "phase": "generation_blocked",
+            "policy": "execute_only_returned_next_action",
+            "next_action": {"id": "workflow.stop", "kind": "stop", "mutates": False},
+        }
+    if http_status is not None and http_status == 404:
+        return {
+            "phase": "generation_unavailable",
+            "policy": "execute_only_returned_next_action",
+            "next_action": {"id": "workflow.stop", "kind": "stop", "mutates": False},
+        }
+    if http_status is not None and http_status >= 500:
+        if error.retryable:
+            return {
+                "phase": "generation_recovery_required",
+                "policy": "execute_only_returned_next_action",
+                "next_action": _command_action(
+                    "director.status",
+                    ["lecturecast", "director", "status", root, "--json"],
+                ),
+            }
+        return {
+            "phase": "generation_blocked",
+            "policy": "execute_only_returned_next_action",
+            "next_action": {"id": "workflow.stop", "kind": "stop", "mutates": False},
+        }
+    return None  # generic fail()
 
 
 @app.command("delete")
