@@ -1652,12 +1652,7 @@ class OperationRepository:
             if res["retention_mode"] != "ephemeral" or op["download_status"] != "verified":
                 return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
             # Normal post-download: exactly one deliverable video per operation.
-            video_count = conn.execute(
-                "SELECT COUNT(*) FROM heygen_remote_resources r "
-                "JOIN heygen_resource_operation_refs ref ON ref.resource_id=r.resource_id "
-                "WHERE ref.operation_id=? AND r.resource_kind='video'",
-                (operation_id,)).fetchone()[0]
-            if video_count != 1:
+            if not self._single_video(conn, operation_id):
                 return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
         elif ds == "deletion_failed":
             lec = res["last_deletion_error"]
@@ -1676,6 +1671,8 @@ class OperationRepository:
             elif freason == "post_download":
                 if res["retention_mode"] != "ephemeral" or op["download_status"] != "verified":
                     return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
+                if not self._single_video(conn, operation_id):
+                    return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
             elif freason == "manual_force":
                 return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
             else:
@@ -1687,6 +1684,8 @@ class OperationRepository:
                 pass  # eligible regardless of retention/verified
             elif reason == "post_download":
                 if res["retention_mode"] != "ephemeral" or op["download_status"] != "verified":
+                    return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
+                if not self._single_video(conn, operation_id):
                     return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
             elif reason == "manual_force":
                 return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
@@ -1747,6 +1746,12 @@ class OperationRepository:
             (resource_id, operation_id, operation_id, operation_id, operation_id)).fetchone()
         if res is None:
             return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
+        # If the resource's deletion_reason is post_download, re-check single-video.
+        reason_row = conn.execute(
+            "SELECT deletion_reason FROM heygen_remote_resources WHERE resource_id=?",
+            (resource_id,)).fetchone()
+        if reason_row and reason_row["deletion_reason"] == "post_download"                 and not self._single_video(conn, operation_id):
+            return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
         # Gated UPDATE condition shared by all outcomes.
         gate = ("resource_kind='video' AND created_by_operation_id=? "
                 "AND deletion_status='deletion_pending'")
@@ -1785,6 +1790,15 @@ class OperationRepository:
             return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
         self._clear_operation_lease(conn, operation_id, now_c)
         return DeletionOutcome(operation_id, resource_id, "failed", fence, code, None)
+
+    @staticmethod
+    def _single_video(conn, operation_id):
+        count = conn.execute(
+            "SELECT COUNT(*) FROM heygen_remote_resources r "
+            "JOIN heygen_resource_operation_refs ref ON ref.resource_id=r.resource_id "
+            "WHERE ref.operation_id=? AND r.resource_kind='video'",
+            (operation_id,)).fetchone()[0]
+        return count == 1
 
     @staticmethod
     def _clear_operation_lease(conn, operation_id, now_c):
