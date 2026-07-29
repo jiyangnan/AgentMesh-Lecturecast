@@ -59,6 +59,25 @@ def test_validate_site_accepts_offline_static_structure(tmp_path: Path) -> None:
     assert result["errors"] == []
 
 
+def test_production_site_links_and_indexes_course_video_guides() -> None:
+    routes = (
+        "/guides/ai-course-video-generator/",
+        "/guides/course-video-for-bilibili-xiaohongshu/",
+    )
+    landing = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    sitemap = (ROOT / "site" / "sitemap.xml").read_text(encoding="utf-8")
+
+    for route in routes:
+        source = (
+            ROOT / "site" / route.strip("/") / "index.html"
+        ).read_text(encoding="utf-8")
+        canonical = f"https://lecturecast.agentmesh360.com{route}"
+        assert f'href="{route}"' in landing
+        assert f'rel="canonical" href="{canonical}"' in source
+        assert 'type="application/ld+json"' in source
+        assert f"<loc>{canonical}</loc>" in sitemap
+
+
 def test_validate_site_rejects_invalid_jsonld_duplicate_ids_and_missing_targets(
     tmp_path: Path,
 ) -> None:
