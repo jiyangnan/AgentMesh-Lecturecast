@@ -1,0 +1,270 @@
+"""ConsentService.record_decision contract tests (§5.5e2b)."""
+
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+from lecturecast.consent import (
+    CANONICAL_AGENTMESH_NON_PROCESSOR_DISCLOSURE,
+    CANONICAL_PROVIDER_COST_DISCLOSURE,
+    ConsentConflictError,
+    ConsentDisclosureDriftError,
+    ConsentService,
+    ConsentStateError,
+    DisclosedAsset,
+    HeyGenOperationIdentity,
+    ThirdPartyTransferDisclosure,
+    prepare_operation,
+)
+
+D = "sha256:" + "a" * 64
+BRIEF = "sha256:" + "b" * 64
+REQ = "sha256:" + "c" * 64
+DB_REL = Path(".lecturecast") / "runtime" / "heygen-operations.db"
+
+
+def _db(project: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(str(project / DB_REL))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def _prepared(**over) -> object:
+    base = dict(
+        operation_kind="video", generation_id="gen_1", manifest_digest=D,
+        request_digest=REQ, credential_profile_id="heygen_env_default",
+        orchestration_plan_digest=BRIEF, endpoint="/v3/videos",
+    )
+    base.update(over)
+    return prepare_operation(HeyGenOperationIdentity(**base))
+
+
+def _disclosure(**over) -> ThirdPartyTransferDisclosure:
+    base = dict(
+        provider="heygen", operation_kind="video",
+        disclosure_version="heygen-transfer-2026-07-27",
+        disclosed_assets=[DisclosedAsset("portrait_photo", "face.png", D)],
+        data_categories=["portrait_image", "facial_biometric_template"],
+        provider_cost_disclosure=CANONICAL_PROVIDER_COST_DISCLOSURE,
+        agentmesh_non_processor_disclosure=CANONICAL_AGENTMESH_NON_PROCESSOR_DISCLOSURE,
+    )
+    base.update(over)
+    return ThirdPartyTransferDisclosure(**base)
+
+
+def test_fresh_grant_records_operation_receipt_and_pointer(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    res = svc.record_decision(
+        prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+        creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z",
+    )
+    assert res.decision == "granted" and res.status == "granted"
+    assert res.idempotent is False
+    assert res.consented_at == "2026-07-29T00:00:00Z"
+    assert res.receipt_digest.startswith("sha256:")
+
+    db = _db(tmp_path)
+    op = db.execute("SELECT * FROM heygen_operations WHERE operation_id = ?",
+                    (res.operation_id,)).fetchone()
+    assert op["status"] == "submit_pending"
+    assert op["consent_receipt_digest"] == res.receipt_digest
+    rc = db.execute("SELECT * FROM heygen_consent_receipts WHERE operation_id = ?",
+                    (res.operation_id,)).fetchone()
+    assert rc["status"] == "granted"
+    assert rc["consented_at"] == "2026-07-29T00:00:00Z"
+    assert rc["withdrawn_at"] is None
+    db.close()
+
+
+def test_fresh_decline_cancels_operation_and_leaves_pointer_null(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    res = svc.record_decision(
+        prepared=_prepared(), disclosure=_disclosure(), decision="declined",
+        creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z",
+    )
+    assert res.decision == "declined" and res.status == "declined"
+    db = _db(tmp_path)
+    op = db.execute("SELECT status, consent_receipt_digest FROM heygen_operations WHERE operation_id = ?",
+                    (res.operation_id,)).fetchone()
+    assert op["status"] == "cancelled"
+    assert op["consent_receipt_digest"] is None
+    rc = db.execute("SELECT status FROM heygen_consent_receipts WHERE operation_id = ?",
+                    (res.operation_id,)).fetchone()
+    assert rc["status"] == "declined"
+    db.close()
+
+
+def test_grant_replay_is_idempotent_and_keeps_original_timestamp(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    first = svc.record_decision(
+        prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+        creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z",
+    )
+    # Same decision + disclosure, different decision_at → replay.
+    second = svc.record_decision(
+        prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+        creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:30Z",
+    )
+    assert second.idempotent is True
+    assert second.receipt_digest == first.receipt_digest
+    assert second.consented_at == "2026-07-29T00:00:00Z"  # original kept
+    db = _db(tmp_path)
+    n = db.execute("SELECT COUNT(*) FROM heygen_consent_receipts WHERE operation_id = ?",
+                   (first.operation_id,)).fetchone()[0]
+    assert n == 1
+    db.close()
+
+
+def test_decline_replay_is_idempotent(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    first = svc.record_decision(
+        prepared=_prepared(), disclosure=_disclosure(), decision="declined",
+        creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z",
+    )
+    second = svc.record_decision(
+        prepared=_prepared(), disclosure=_disclosure(), decision="declined",
+        creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:30Z",
+    )
+    assert second.idempotent is True
+    assert second.receipt_digest == first.receipt_digest
+
+
+def test_replay_with_changed_disclosure_is_drift_and_rolls_back(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    first = svc.record_decision(
+        prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+        creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z",
+    )
+    # A different asset digest → different disclosure content.
+    drifted = _disclosure(disclosed_assets=[
+        DisclosedAsset("portrait_photo", "face.png", "sha256:" + "e" * 64)])
+    with pytest.raises(ConsentDisclosureDriftError):
+        svc.record_decision(
+            prepared=_prepared(), disclosure=drifted, decision="granted",
+            creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z",
+        )
+    # Original receipt untouched.
+    db = _db(tmp_path)
+    rc = db.execute("SELECT receipt_digest, consented_at FROM heygen_consent_receipts WHERE operation_id = ?",
+                    (first.operation_id,)).fetchone()
+    assert rc["receipt_digest"] == first.receipt_digest
+    assert rc["consented_at"] == "2026-07-29T00:00:00Z"
+    db.close()
+
+
+def test_untrusted_disclosure_text_rejected(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    bad = _disclosure(provider_cost_disclosure="x")
+    with pytest.raises(ConsentDisclosureDriftError):
+        svc.record_decision(
+            prepared=_prepared(), disclosure=bad, decision="granted",
+            creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z",
+        )
+    # Rejected before any DB write — no journal exists.
+    assert not (tmp_path / DB_REL).exists()
+
+
+def test_cross_object_kind_mismatch_rejected(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    pre = _prepared()           # identity operation_kind == "video"
+    disc = _disclosure()        # disclosure operation_kind == "video"
+    # Both kinds are "video" by construction (closed vocab). Force a divergence
+    # to prove the cross-object guard fires before any DB write.
+    object.__setattr__(disc, "operation_kind", "video_other")
+    with pytest.raises(ConsentDisclosureDriftError):
+        svc.record_decision(prepared=pre, disclosure=disc, decision="granted",
+                            creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+    # Rejected before any DB write.
+    assert not (tmp_path / DB_REL).exists()
+
+
+def test_declined_to_granted_when_pristine(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    svc.record_decision(
+        prepared=_prepared(), disclosure=_disclosure(), decision="declined",
+        creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z",
+    )
+    res = svc.record_decision(
+        prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+        creative_brief_digest=BRIEF, decision_at="2026-07-29T00:01:00Z",
+    )
+    assert res.decision == "granted" and res.idempotent is False
+    db = _db(tmp_path)
+    op = db.execute("SELECT status, consent_receipt_digest FROM heygen_operations WHERE operation_id = ?",
+                    (res.operation_id,)).fetchone()
+    assert op["status"] == "submit_pending"
+    assert op["consent_receipt_digest"] == res.receipt_digest
+    rc = db.execute("SELECT status, receipt_digest FROM heygen_consent_receipts WHERE operation_id = ?",
+                    (res.operation_id,)).fetchone()
+    assert rc["status"] == "granted"
+    assert rc["receipt_digest"] == res.receipt_digest
+    db.close()
+
+
+def test_declined_to_granted_blocked_when_not_pristine(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    svc.record_decision(
+        prepared=_prepared(), disclosure=_disclosure(), decision="declined",
+        creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z",
+    )
+    db = _db(tmp_path)
+    db.execute("UPDATE heygen_operations SET submit_attempts = 1 WHERE operation_id = ?",
+               (_prepared().operation_id,))
+    db.commit()
+    db.close()
+    with pytest.raises(ConsentStateError):
+        svc.record_decision(
+            prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+            creative_brief_digest=BRIEF, decision_at="2026-07-29T00:01:00Z",
+        )
+
+
+def test_granted_to_declined_not_allowed(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    svc.record_decision(
+        prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+        creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z",
+    )
+    with pytest.raises(ConsentStateError):
+        svc.record_decision(
+            prepared=_prepared(), disclosure=_disclosure(), decision="declined",
+            creative_brief_digest=BRIEF, decision_at="2026-07-29T00:01:00Z",
+        )
+
+
+def test_immutable_field_conflict_detected(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    other = _prepared(request_digest="sha256:" + "9" * 64)  # different identity
+    real_pre = _prepared()
+    svc.record_decision(prepared=other, disclosure=_disclosure(), decision="granted",
+                        creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+    # Force the existing row to collide on operation_id with real_pre while its
+    # request_digest differs — emulates a re-keyed operation. FK must be off for
+    # the re-key (both rows reference each other).
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.execute("UPDATE heygen_operations SET operation_id = ? WHERE operation_id = ?",
+               (real_pre.operation_id, other.operation_id))
+    db.execute("UPDATE heygen_consent_receipts SET operation_id = ? WHERE operation_id = ?",
+               (real_pre.operation_id, other.operation_id))
+    db.commit()
+    db.close()
+    with pytest.raises(ConsentConflictError):
+        svc.record_decision(prepared=real_pre, disclosure=_disclosure(), decision="granted",
+                            creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z")
+
+
+def test_write_tightens_db_permissions(tmp_path: Path):
+    svc = ConsentService(tmp_path)
+    svc.record_decision(
+        prepared=_prepared(), disclosure=_disclosure(), decision="granted",
+        creative_brief_digest=BRIEF, decision_at="2026-07-29T00:00:00Z",
+    )
+    import os
+    import stat
+    mode = stat.S_IMODE(os.stat(tmp_path / DB_REL).st_mode)
+    assert mode == 0o600
