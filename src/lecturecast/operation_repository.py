@@ -789,7 +789,8 @@ class OperationRepository:
                 "  SELECT 1 FROM heygen_resource_operation_refs ref "
                 "  JOIN heygen_remote_resources r ON r.resource_id = ref.resource_id "
                 "  WHERE ref.operation_id = heygen_operations.operation_id "
-                "  AND r.resource_kind = 'video')",
+                "  AND r.resource_kind = 'video' "
+                "  AND r.deletion_status NOT IN ('deletion_pending', 'deleted'))",
                 (_canonical(now), _canonical(now), _MANUAL_RECONCILE_CODE),
             ).fetchall()
             return [
@@ -840,10 +841,15 @@ class OperationRepository:
             return ReconcileClaim(operation_id, "not_ready", row["lease_fence"],
                                   row["heygen_title"], row["attempt_started_at"])
         # Consent topology: a reconciliation candidate must have a coherent
-        # receipt — granted (pointer == receipt digest) or withdrawn (pointer
-        # NULL). missing/declined/broken-link is fail-closed: no query, no delivery.
+        # receipt. Reuse the full in-transaction integrity validator (recomputes
+        # the receipt digest + checks the receipt↔operation binding), not just a
+        # pointer comparison. Tampered receipt content → fail-closed (no query).
         receipt = conn.execute(
-            "SELECT status, receipt_digest FROM heygen_consent_receipts WHERE operation_id = ?",
+            "SELECT * FROM heygen_consent_receipts WHERE operation_id = ?",
+            (operation_id,),
+        ).fetchone()
+        op_full = conn.execute(
+            "SELECT * FROM heygen_operations WHERE operation_id = ?",
             (operation_id,),
         ).fetchone()
         if receipt is None:
@@ -852,24 +858,20 @@ class OperationRepository:
         if receipt["status"] not in ("granted", "withdrawn"):
             return ReconcileClaim(operation_id, "not_ready", row["lease_fence"],
                                   row["heygen_title"], row["attempt_started_at"])
-        if receipt["status"] == "granted":
-            if row["consent_receipt_digest"] != receipt["receipt_digest"]:
-                raise OperationIntegrityError(
-                    f"operation {operation_id} granted receipt pointer mismatch"
-                )
-        else:  # withdrawn
-            if row["consent_receipt_digest"] is not None:
-                raise OperationIntegrityError(
-                    f"operation {operation_id} withdrawn receipt must have NULL pointer"
-                )
-        # Must have NO known video resource (unknown-id path; known-id uses poll).
-        has_video = conn.execute(
+        ConsentService._validate_existing_integrity(receipt, op_full, conn)
+        receipt_is_withdrawn = receipt["status"] == "withdrawn"
+        # Video resources: a granted candidate must have NONE (unknown-id path;
+        # known-id uses poll). A withdrawn candidate may carry its own cleanup
+        # resources (deletion_pending/deleted) so it can keep reconciling for
+        # more copies — but no ACTIVE (not_started/failed-deletion) resource.
+        active_video = conn.execute(
             "SELECT 1 FROM heygen_remote_resources r "
             "JOIN heygen_resource_operation_refs ref ON ref.resource_id = r.resource_id "
-            "WHERE ref.operation_id = ? AND r.resource_kind = 'video' LIMIT 1",
+            "WHERE ref.operation_id = ? AND r.resource_kind = 'video' "
+            "AND r.deletion_status NOT IN ('deletion_pending', 'deleted') LIMIT 1",
             (operation_id,),
         ).fetchone()
-        if has_video is not None:
+        if active_video is not None or (not receipt_is_withdrawn and _has_any_video(conn, operation_id)):
             return ReconcileClaim(operation_id, "not_ready", row["lease_fence"],
                                   row["heygen_title"], row["attempt_started_at"])
 
@@ -1228,6 +1230,16 @@ class SubmitCoordinator:
                     f"operation {prepared.operation_id} not claimable: {claim.status}"
                 )
         return SubmitClaim(consent=consent, claim=claim)
+
+
+def _has_any_video(conn: sqlite3.Connection, operation_id: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM heygen_remote_resources r "
+        "JOIN heygen_resource_operation_refs ref ON ref.resource_id = r.resource_id "
+        "WHERE ref.operation_id = ? AND r.resource_kind = 'video' LIMIT 1",
+        (operation_id,),
+    ).fetchone()
+    return row is not None
 
 
 def _rollback(conn: sqlite3.Connection) -> None:
