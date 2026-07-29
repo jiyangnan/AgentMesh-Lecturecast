@@ -429,6 +429,13 @@ _GRANTED_OPERATION_STATUSES = frozenset({
     "submit_pending", "submitted", "processing", "completed",
     "failed", "reconciliation_required",
 })
+# The single carve-out: a granted receipt may be paired with a CANCELLED
+# operation whose consent pointer is NULL only when the cancellation was a
+# definitive title no-match during crash recovery. The granted receipt is kept
+# as historical evidence; it must never be re-attached or re-submitted.
+_RECONCILE_NO_MATCH = "reconciliation_no_match"
+_RECONCILE_WITHDRAWN = "consent_withdrawn_cleanup_required"
+_TERMINAL_CANCEL_CODES = frozenset({_RECONCILE_NO_MATCH, _RECONCILE_WITHDRAWN})
 # Columns that must be zero/absent for an existing operation to be safe to attach
 # a receipt to (no remote side effect has happened yet).
 _PRISTINE_INT_ZERO = ("submit_attempts", "reconcile_attempts", "lease_fence")
@@ -599,6 +606,13 @@ class ConsentService:
             )
         # Fail-closed integrity check before mutating.
         self._validate_existing_integrity(rc, op)
+        # A reconciliation-cancelled operation is terminal — there is no active
+        # grant to withdraw.
+        if op["status"] == "cancelled" and op["last_error_code"] in _TERMINAL_CANCEL_CODES:
+            raise ConsentStateError(
+                f"operation {operation_id} was cancelled by reconciliation "
+                f"({op['last_error_code']!r}); nothing to withdraw"
+            )
 
         status = rc["status"]
         now = _utc_now()
@@ -924,6 +938,17 @@ class ConsentService:
         if existing_rc is not None:
             # Fail-closed integrity check BEFORE trusting an idempotent replay.
             self._validate_existing_integrity(existing_rc, existing_op)
+            # A reconciliation-cancelled operation is terminal history — never
+            # re-attach the consent pointer or re-submit.
+            if (
+                existing_op["status"] == "cancelled"
+                and existing_op["last_error_code"] in _TERMINAL_CANCEL_CODES
+            ):
+                raise ConsentStateError(
+                    f"operation {prepared.operation_id} was cancelled by "
+                    f"reconciliation ({existing_op['last_error_code']!r}); "
+                    f"cannot record a new decision"
+                )
             return self._apply_existing(
                 conn, prepared, decision, desired_digest, content_no_time,
                 consented_at, assets_json, categories_json, payload,
@@ -1067,6 +1092,16 @@ class ConsentService:
         status = existing_rc["status"]
         ptr = existing_op["consent_receipt_digest"]
         if status == "granted":
+            # Single carve-out: a definitive title no-match cancels the operation
+            # and clears the consent pointer while the granted receipt is kept as
+            # history. This is the ONLY granted+cancelled+NULL-pointer topology
+            # accepted; anything else with a NULL/mismatched pointer fails closed.
+            if (
+                existing_op["status"] == "cancelled"
+                and ptr is None
+                and existing_op["last_error_code"] == _RECONCILE_NO_MATCH
+            ):
+                return
             if ptr != existing_rc["receipt_digest"]:
                 raise ConsentIntegrityError("granted receipt consent pointer mismatch")
             # The grant survives the post-submit lifecycle; fail-closed on any
