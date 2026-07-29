@@ -304,6 +304,8 @@ class FfprobeMediaProbe:
         if reader_thread.is_alive():
             proc.kill()
             proc.wait()
+            proc.stdout.close()
+            reader_thread.join(timeout=5)
             raise ValueError("ffprobe timed out")
         try:
             proc.wait(timeout=5)
