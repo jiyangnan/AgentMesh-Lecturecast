@@ -256,3 +256,35 @@ class VideoDownloader(Protocol):
                             local_output_ref: str, max_bytes: int,
                             probe: MediaProbe) -> "PreparedDownload":
         ...
+
+
+# --- deletion (e4b) ----------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DeleteResult:
+    """Result of deleting a remote video. The adapter normalizes a provider 404
+    to already_absent (idempotent success); the processor never parses HTTP."""
+    status: str  # "deleted" | "already_absent"
+
+
+class DeleteAdapterError(Exception):
+    """A structured deletion failure (same closed code vocabulary as the rest)."""
+    def __init__(self, *, code: str, retryable: bool,
+                 provider_code: str | None = None, message: str = "") -> None:
+        if code not in ADAPTER_ERROR_CODES:
+            raise ValueError(f"unknown adapter error code: {code!r}")
+        if type(retryable) is not bool:
+            raise TypeError("retryable must be a bool")
+        self.code = code
+        self.retryable = retryable
+        self.provider_code = provider_code
+        super().__init__(message or code)
+
+
+class DeleteVideoAdapter(Protocol):
+    def delete_video(self, remote_id: str) -> DeleteResult:
+        """Delete one remote video. Return DeleteResult on success; raise
+        DeleteAdapterError on failure. A provider 404 MUST be normalized to
+        DeleteResult(status='already_absent')."""
+        ...
