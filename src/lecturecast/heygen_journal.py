@@ -1,4 +1,4 @@
-"""HeyGen operation journal — SQLite migration + four tables (§5.5e1).
+"""HeyGen operation journal — SQLite versioned migration + four tables (§5.5e1/e2a).
 
 A per-project local database at <project>/.lecturecast/runtime/heygen-operations.db
 that provides idempotent third-party operation tracking. It NEVER touches the
@@ -7,13 +7,15 @@ media content, or absolute paths.
 
 Four tables:
 - heygen_operations: deterministic operation lifecycle (submit → reconcile → complete/cancel)
-- heygen_consent_receipts: JIT consent proof (granted/declined/withdrawn)
+- heygen_consent_receipts: JIT consent proof (granted/declined/withdrawn). v2 binds each
+  receipt directly to the request it authorizes (request_digest) and to the first-gate
+  CreativeBrief consent (creative_brief_digest).
 - heygen_remote_resources: remote HeyGen assets with retention + deletion tracking
 - heygen_resource_operation_refs: many-to-many resource↔operation links
 
 All timestamps are ISO-8601 UTC strings. All status fields use CHECK constraints.
-The migration is atomic: tables + user_version commit in one transaction, or
-nothing does.
+Migrations are versioned and atomic: each user_version step (and the user_version bump)
+commit in one BEGIN IMMEDIATE transaction, or nothing does.
 """
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _RUNTIME_DIR_NAME = "runtime"
 _DB_NAME = "heygen-operations.db"
 
@@ -50,11 +52,12 @@ def _reject_symlink_components(components, *, context: str) -> None:
             raise ValueError(f"{context} must not be a symlink: {p}")
 
 
-# DDL is a list of individual statements (not one script) so they execute
-# inside a single explicit BEGIN/COMMIT. sqlite3.executescript() issues an
-# implicit COMMIT that would break transactional migration.
-_DDL_STATEMENTS = [
-    """
+# --- DDL (v0 → v1) -----------------------------------------------------
+# Individual statements (not one script) so they execute inside one explicit
+# BEGIN/COMMIT. sqlite3.executescript() issues an implicit COMMIT that would
+# break transactional migration.
+
+_OPERATIONS_DDL = """
     CREATE TABLE IF NOT EXISTS heygen_operations (
         operation_id TEXT PRIMARY KEY NOT NULL,
         kind TEXT NOT NULL,
@@ -94,13 +97,19 @@ _DDL_STATEMENTS = [
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     )
-    """,
     """
+
+# v2: receipts bind directly to the authorized request (request_digest) and to the
+# first-gate CreativeBrief consent (creative_brief_digest). Both NOT NULL — a receipt
+# must independently prove which request it authorizes, not just via the operation.
+_RECEIPTS_DDL = """
     CREATE TABLE IF NOT EXISTS heygen_consent_receipts (
         receipt_digest TEXT PRIMARY KEY NOT NULL,
         operation_id TEXT NOT NULL UNIQUE,
         disclosure_version TEXT NOT NULL,
         generation_id TEXT NOT NULL,
+        request_digest TEXT NOT NULL,
+        creative_brief_digest TEXT NOT NULL,
         provider TEXT NOT NULL,
         operation_kind TEXT NOT NULL,
         disclosed_assets_json TEXT NOT NULL
@@ -109,8 +118,8 @@ _DDL_STATEMENTS = [
         data_categories_json TEXT NOT NULL
             CHECK (json_valid(data_categories_json)
                    AND json_type(data_categories_json) = 'array'),
-        provider_cost_disclosure TEXT,
-        agentmesh_non_processor_disclosure TEXT,
+        provider_cost_disclosure TEXT NOT NULL,
+        agentmesh_non_processor_disclosure TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'granted'
             CHECK (status IN ('granted', 'declined', 'withdrawn')),
         consented_at TEXT,
@@ -120,8 +129,9 @@ _DDL_STATEMENTS = [
             REFERENCES heygen_operations(operation_id)
             ON DELETE RESTRICT
     )
-    """,
     """
+
+_RESOURCES_DDL = """
     CREATE TABLE IF NOT EXISTS heygen_remote_resources (
         resource_id INTEGER PRIMARY KEY,
         credential_profile_id TEXT NOT NULL,
@@ -148,8 +158,9 @@ _DDL_STATEMENTS = [
             REFERENCES heygen_operations(operation_id)
             ON DELETE SET NULL
     )
-    """,
     """
+
+_REFS_DDL = """
     CREATE TABLE IF NOT EXISTS heygen_resource_operation_refs (
         resource_id INTEGER NOT NULL,
         operation_id TEXT NOT NULL,
@@ -162,21 +173,51 @@ _DDL_STATEMENTS = [
             REFERENCES heygen_operations(operation_id)
             ON DELETE CASCADE
     )
-    """,
+    """
+
+_DDL_STATEMENTS = [
+    _OPERATIONS_DDL,
+    _RECEIPTS_DDL,
+    _RESOURCES_DDL,
+    _REFS_DDL,
     "CREATE INDEX IF NOT EXISTS idx_operations_generation ON heygen_operations(generation_id)",
     "CREATE INDEX IF NOT EXISTS idx_operations_status ON heygen_operations(status)",
     "CREATE INDEX IF NOT EXISTS idx_remote_resources_created_by_op ON heygen_remote_resources(created_by_operation_id)",
 ]
 
 
-def _migrate(conn: sqlite3.Connection) -> None:
-    """Atomically create all four tables + indexes and bump user_version.
-    All-or-nothing: on any failure the transaction rolls back, leaving no
-    partial schema and user_version unchanged."""
-    conn.execute("BEGIN")
+def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    """v1 → v2: add request_digest + creative_brief_digest (NOT NULL) to
+    heygen_consent_receipts. SQLite cannot ADD COLUMN NOT NULL without a
+    default, so we rebuild the (empty) table. Fail-closed if rows exist —
+    a populated v1 receipts table cannot be auto-migrated and must be handled
+    deliberately. On a fresh DB the columns already exist and this is a no-op."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(heygen_consent_receipts)")}
+    if {"request_digest", "creative_brief_digest"}.issubset(cols):
+        return  # already v2-shaped
+    existing = conn.execute(
+        "SELECT COUNT(*) FROM heygen_consent_receipts"
+    ).fetchone()[0]
+    if existing:
+        raise RuntimeError(
+            f"heygen_consent_receipts has {existing} row(s) lacking request_digest/"
+            f"creative_brief_digest; v2 migration is fail-closed on non-empty tables"
+        )
+    conn.execute("DROP TABLE heygen_consent_receipts")
+    conn.execute(_RECEIPTS_DDL)
+
+
+def _migrate(conn: sqlite3.Connection, current_version: int) -> None:
+    """Run all version steps < _SCHEMA_VERSION, then bump user_version, in one
+    BEGIN IMMEDIATE transaction. All-or-nothing: on any failure the whole
+    migration rolls back, leaving the prior schema and user_version intact."""
+    conn.execute("BEGIN IMMEDIATE")
     try:
-        for stmt in _DDL_STATEMENTS:
-            conn.execute(stmt)
+        if current_version < 1:
+            for stmt in _DDL_STATEMENTS:
+                conn.execute(stmt)
+        if current_version < 2:
+            _migrate_v1_to_v2(conn)
         conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         conn.execute("COMMIT")
     except Exception:
@@ -189,8 +230,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 def _chmod_secure(db_path: Path) -> None:
     """Tighten the DB file and its WAL/SHM sidecars to 0600 when present.
-    Sidecars only exist while a WAL connection is open, so this is called
-    before the connection is returned to the caller."""
+    Sidecars only exist while a WAL connection is open, so callers re-invoke
+    this after any write that may have created them."""
     for name in (db_path.name, db_path.name + "-wal", db_path.name + "-shm"):
         sidecar = db_path.with_name(name)
         try:
@@ -238,7 +279,7 @@ def init_database(project_dir: Path | str) -> sqlite3.Connection:
         raise ValueError("heygen DB is a symlink — refusing to open")
 
     # isolation_level=None → autocommit; we drive multi-statement atomicity
-    # ourselves via explicit BEGIN/COMMIT/ROLLBACK in _migrate.
+    # ourselves via explicit BEGIN IMMEDIATE/COMMIT/ROLLBACK.
     conn = sqlite3.connect(str(db_path), timeout=10.0, isolation_level=None)
     try:
         conn.execute("PRAGMA journal_mode = WAL")
@@ -256,7 +297,7 @@ def init_database(project_dir: Path | str) -> sqlite3.Connection:
                 f"{_SCHEMA_VERSION}; refusing to downgrade"
             )
         if current_version < _SCHEMA_VERSION:
-            _migrate(conn)
+            _migrate(conn, current_version)
     except Exception:
         conn.close()
         raise

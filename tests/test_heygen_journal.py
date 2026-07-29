@@ -36,11 +36,15 @@ def _insert_op(conn, op_id="op_1", idem="idem_1", title="lecturecast:op_1") -> N
 
 
 def _insert_receipt(conn, *, receipt_id="rd_1", op_id="op_1", assets="[]",
-                    cats="[]", status=None) -> None:
+                    cats="[]", status=None,
+                    request_digest="sha256:req", brief_digest="sha256:brief") -> None:
     cols = ["receipt_digest", "operation_id", "disclosure_version", "generation_id",
-            "provider", "operation_kind", "disclosed_assets_json",
-            "data_categories_json", "created_at"]
-    vals = [receipt_id, op_id, "v1", "gen_1", "heygen", "video", assets, cats, T]
+            "request_digest", "creative_brief_digest", "provider", "operation_kind",
+            "disclosed_assets_json", "data_categories_json",
+            "provider_cost_disclosure", "agentmesh_non_processor_disclosure", "created_at"]
+    vals = [receipt_id, op_id, "heygen-transfer-2026-07-27", "gen_1",
+            request_digest, brief_digest, "heygen", "video", assets, cats,
+            "HeyGen BYO cost independence", "AgentMesh360 is a non-processor", T]
     if status is not None:
         cols.append("status")
         vals.append(status)
@@ -121,6 +125,119 @@ def test_init_rejects_future_user_version(project: Path):
     conn.close()
     with pytest.raises(RuntimeError, match="refusing to downgrade"):
         _open(project)
+
+
+# ---- v2 migration: receipts bind request + brief digest ----
+
+def test_v2_receipts_have_request_and_brief_digest_columns(project: Path):
+    conn = _open(project)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(heygen_consent_receipts)")}
+    assert "request_digest" in cols
+    assert "creative_brief_digest" in cols
+    conn.close()
+
+
+def test_v2_receipts_request_and_brief_digest_are_not_null(project: Path):
+    conn = _open(project)
+    _insert_op(conn)
+    # Omitting request_digest → NOT NULL violation.
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO heygen_consent_receipts (receipt_digest, operation_id, "
+            "disclosure_version, generation_id, creative_brief_digest, provider, "
+            "operation_kind, disclosed_assets_json, data_categories_json, "
+            "provider_cost_disclosure, agentmesh_non_processor_disclosure, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("rd_1", "op_1", "heygen-transfer-2026-07-27", "gen_1", "sha256:b",
+             "heygen", "video", "[]", "[]", "c", "np", T),
+        )
+    conn.close()
+
+
+# Pre-v2 receipts schema (no request_digest / creative_brief_digest), used to
+# simulate an existing v1 database for the rebuild tests below.
+_V1_RECEIPTS_DDL = """
+    CREATE TABLE heygen_consent_receipts (
+        receipt_digest TEXT PRIMARY KEY NOT NULL,
+        operation_id TEXT NOT NULL UNIQUE,
+        disclosure_version TEXT NOT NULL,
+        generation_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        operation_kind TEXT NOT NULL,
+        disclosed_assets_json TEXT NOT NULL,
+        data_categories_json TEXT NOT NULL,
+        provider_cost_disclosure TEXT,
+        agentmesh_non_processor_disclosure TEXT,
+        status TEXT NOT NULL DEFAULT 'granted',
+        consented_at TEXT,
+        withdrawn_at TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (operation_id) REFERENCES heygen_operations(operation_id) ON DELETE RESTRICT
+    )
+    """
+
+
+def _bootstrap_v1_db(db_path: Path) -> None:
+    """Create a v1-shaped journal (user_version=1, receipts without v2 columns)."""
+    import lecturecast.heygen_journal as hj
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    raw = sqlite3.connect(str(db_path))
+    raw.execute(hj._OPERATIONS_DDL)
+    raw.execute(hj._RESOURCES_DDL)
+    raw.execute(hj._REFS_DDL)
+    raw.execute(_V1_RECEIPTS_DDL)
+    raw.execute("PRAGMA user_version = 1")
+    raw.close()
+
+
+def test_v1_to_v2_rebuilds_empty_receipts(tmp_path: Path):
+    db_path = tmp_path / ".lecturecast" / "runtime" / "heygen-operations.db"
+    _bootstrap_v1_db(db_path)
+
+    # Migrate via init.
+    conn = init_database(tmp_path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == _SCHEMA_VERSION
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(heygen_consent_receipts)")}
+    assert {"request_digest", "creative_brief_digest"}.issubset(cols)
+    conn.close()
+
+
+def test_v1_to_v2_fail_closed_on_populated_receipts(tmp_path: Path):
+    db_path = tmp_path / ".lecturecast" / "runtime" / "heygen-operations.db"
+    _bootstrap_v1_db(db_path)
+    # Seed a v1 receipts row that lacks the v2 columns.
+    raw = sqlite3.connect(str(db_path))
+    raw.execute(hj_operations_seed())
+    raw.execute(
+        "INSERT INTO heygen_consent_receipts (receipt_digest, operation_id, "
+        "disclosure_version, generation_id, provider, operation_kind, "
+        "disclosed_assets_json, data_categories_json, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        ("rd_1", "op_1", "heygen-transfer-2026-07-27", "gen_1", "heygen", "video",
+         "[]", "[]", T),
+    )
+    raw.execute("PRAGMA foreign_keys = ON")
+    raw.commit()
+    raw.close()
+
+    with pytest.raises(RuntimeError, match="fail-closed"):
+        init_database(tmp_path)
+
+    # user_version untouched, v2 columns still absent.
+    check = sqlite3.connect(str(db_path))
+    assert check.execute("PRAGMA user_version").fetchone()[0] == 1
+    cols = {row[1] for row in check.execute("PRAGMA table_info(heygen_consent_receipts)")}
+    assert "request_digest" not in cols
+    check.close()
+
+
+def hj_operations_seed() -> str:
+    return (
+        "INSERT INTO heygen_operations (operation_id, kind, endpoint, generation_id, "
+        "manifest_digest, request_digest, idempotency_key, heygen_title, created_at, "
+        "updated_at) VALUES ('op_1','video','/v3/videos','gen_1','sha256:m','sha256:r',"
+        "'idem_1','lecturecast:op_1','2026-07-29T00:00:00Z','2026-07-29T00:00:00Z')"
+    )
 
 
 # ---- file permissions ----
