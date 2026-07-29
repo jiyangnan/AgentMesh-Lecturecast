@@ -54,12 +54,13 @@ def _seed_reconcile(tmp_path: Path, *, receipt_status="granted", attempt_age_sec
     db.execute("PRAGMA foreign_keys = OFF")
     db.execute("UPDATE heygen_operations SET status='reconciliation_required', "
                "attempt_started_at=?, lease_owner='maintenance-submit-dead', "
-               "lease_expires_at='2026-07-28T00:01:00+00:00', lease_fence=1, "
-               "consent_receipt_digest=NULL WHERE operation_id=?",
-               (attempt, prepared.operation_id))
+               "lease_expires_at='2026-07-28T00:01:00+00:00', lease_fence=1 "
+               "WHERE operation_id=?", (attempt, prepared.operation_id))
     if receipt_status == "withdrawn":
         db.execute("UPDATE heygen_consent_receipts SET status='withdrawn', withdrawn_at=? "
                    "WHERE operation_id=?", (NOW, prepared.operation_id))
+        db.execute("UPDATE heygen_operations SET consent_receipt_digest=NULL WHERE operation_id=?",
+                   (prepared.operation_id,))
     db.commit()
     db.close()
     return prepared, attempt
@@ -265,3 +266,83 @@ def test_reconcile_fence_conflict_writes_nothing(tmp_path: Path):
     assert outcome.verdict == "fence_conflict"
     op = _op(tmp_path, prepared.operation_id)
     assert op["status"] == "reconciliation_required"  # unchanged
+
+
+def test_claim_refuses_declined_or_missing_receipt(tmp_path: Path):
+    """A reconciliation candidate must have a coherent receipt (granted or
+    withdrawn). declined/missing → not_ready (no query, no delivery)."""
+    from lecturecast.operation_repository import OperationRepository
+    prepared, _ = _seed_reconcile(tmp_path, attempt_age_seconds=3600)
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("PRAGMA foreign_keys = OFF")
+    # flip receipt to declined — not a valid reconcile candidate
+    db.execute("UPDATE heygen_consent_receipts SET status='declined' WHERE operation_id=?",
+               (prepared.operation_id,))
+    db.commit()
+    db.close()
+    repo = OperationRepository(tmp_path)
+    with repo.begin_immediate() as conn:
+        claim = repo.claim_reconcile_in_tx(conn, prepared.operation_id, OWNER, NOW, 60)
+    assert claim.status == "not_ready"
+
+
+def test_claim_fail_closed_on_granted_pointer_mismatch(tmp_path: Path):
+    from lecturecast.operation_repository import OperationIntegrityError, OperationRepository
+    prepared, _ = _seed_reconcile(tmp_path, attempt_age_seconds=3600)  # granted, pointer==digest
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.execute("UPDATE heygen_operations SET consent_receipt_digest=? WHERE operation_id=?",
+               ("sha256:" + "f" * 64, prepared.operation_id))
+    db.commit()
+    db.close()
+    repo = OperationRepository(tmp_path)
+    with repo.begin_immediate() as conn:
+        with pytest.raises(OperationIntegrityError):
+            repo.claim_reconcile_in_tx(conn, prepared.operation_id, OWNER, NOW, 60)
+
+
+def test_withdrawn_incomplete_query_registers_found_resources(tmp_path: Path):
+    """withdrawn + incomplete query: register discovered precise candidates as
+    deletion_pending now, keep reconciling for more (do not wait for completeness)."""
+    prepared, attempt = _seed_reconcile(tmp_path, attempt_age_seconds=3600, receipt_status="withdrawn")
+    title = f"lecturecast:{prepared.operation_id}"
+    proc = ReconcileProcessor(tmp_path)
+    res = proc.reconcile_once(operation_id=prepared.operation_id, lease_owner=OWNER,
+        adapter=_Adapter(TitleQueryResult(query_complete=False, candidates=(
+            TitleCandidate(remote_id="hg_w1", title=title, created_at=attempt, provider_status="processing"),))),
+        now_iso=NOW, lease_seconds=60)
+    assert res.outcome.verdict == "indeterminate"  # keep reconciling
+    assert res.outcome.written_remote_ids == ("hg_w1",)  # but registered now
+    rows = _video_resources(tmp_path, prepared.operation_id)
+    assert len(rows) == 1 and rows[0]["deletion_status"] == "deletion_pending"
+
+
+def test_permanent_title_error_parks_for_manual_recovery(tmp_path: Path):
+    prepared, _ = _seed_reconcile(tmp_path, attempt_age_seconds=3600)
+    proc = ReconcileProcessor(tmp_path)
+    proc.reconcile_once(operation_id=prepared.operation_id, lease_owner=OWNER,
+        adapter=_Adapter(TitleQueryAdapterError(code="auth_failed", retryable=False)),
+        now_iso=NOW, lease_seconds=60)
+    op = _op(tmp_path, prepared.operation_id)
+    assert op["status"] == "reconciliation_required"
+    assert op["last_error_code"] == "manual_reconciliation_required"
+    # find + claim now exclude it (no hot-loop).
+    from lecturecast.operation_repository import OperationRepository
+    repo = OperationRepository(tmp_path)
+    assert prepared.operation_id not in [c.operation_id for c in repo.find_reconciliation_candidates(NOW)]
+    with repo.begin_immediate() as conn:
+        claim = repo.claim_reconcile_in_tx(conn, prepared.operation_id, OWNER, NOW, 60)
+    assert claim.status == "not_ready"
+
+
+def test_not_found_candidate_is_not_a_match(tmp_path: Path):
+    """A candidate with a remote id but provider_status 'not_found' is contradictory
+    and must not count as a precise match."""
+    prepared, attempt = _seed_reconcile(tmp_path, attempt_age_seconds=25 * 3600)
+    title = f"lecturecast:{prepared.operation_id}"
+    proc = ReconcileProcessor(tmp_path)
+    res = proc.reconcile_once(operation_id=prepared.operation_id, lease_owner=OWNER,
+        adapter=_Adapter(TitleQueryResult(query_complete=True, candidates=(
+            TitleCandidate(remote_id="hg_nf", title=title, created_at=attempt, provider_status="not_found"),))),
+        now_iso=NOW, lease_seconds=60)
+    assert res.outcome.verdict == "definitive_no_match"  # not_found candidate ignored
