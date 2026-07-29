@@ -621,3 +621,112 @@ def test_symlink_lecturecast_dir_rejected_and_target_untouched(tmp_path: Path):
     assert (real_target / "sentinel").read_text() == "keep-me"
     assert stat.S_IMODE(os.stat(real_target).st_mode) == 0o755
     assert not (real_target / "runtime").exists()
+
+
+# ---- v3 migration: download_attempts + deletion_reason ----
+
+def _bootstrap_v2_db(db_path: Path) -> None:
+    """Create a v2-shaped journal (user_version=2) with populated operations +
+    resources rows (no download_attempts / deletion_reason)."""
+    import lecturecast.heygen_journal as hj
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    raw = sqlite3.connect(str(db_path))
+    raw.execute(hj._OPERATIONS_DDL)
+    # v2 operations DDL lacks download_attempts; remove it if the fresh DDL added it
+    cols = {r[1] for r in raw.execute("PRAGMA table_info(heygen_operations)")}
+    if "download_attempts" in cols:
+        raw.execute("ALTER TABLE heygen_operations DROP COLUMN download_attempts")
+    raw.execute(hj._RESOURCES_DDL)
+    rcols = {r[1] for r in raw.execute("PRAGMA table_info(heygen_remote_resources)")}
+    if "deletion_reason" in rcols:
+        raw.execute("ALTER TABLE heygen_remote_resources DROP COLUMN deletion_reason")
+    # seed a row
+    raw.execute(
+        "INSERT INTO heygen_operations (operation_id, kind, endpoint, generation_id, "
+        "manifest_digest, request_digest, idempotency_key, heygen_title, created_at, "
+        "updated_at) VALUES ('op_v2','video','/v3/videos','gen','sha256:m','sha256:r',"
+        "'idem','lecturecast:op_v2','2026-07-29T00:00:00Z','2026-07-29T00:00:00Z')"
+    )
+    raw.execute(
+        "INSERT INTO heygen_remote_resources (credential_profile_id, resource_kind, "
+        "remote_id, created_at, updated_at) VALUES ('heygen_env_default','video','rem1',"
+        "'2026-07-29T00:00:00Z','2026-07-29T00:00:00Z')"
+    )
+    raw.execute("PRAGMA user_version = 2")
+    raw.commit()
+    raw.close()
+
+
+def test_v2_to_v3_preserves_data_and_adds_columns(tmp_path: Path):
+    db_path = tmp_path / ".lecturecast" / "runtime" / "heygen-operations.db"
+    _bootstrap_v2_db(db_path)
+    conn = init_database(tmp_path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == _SCHEMA_VERSION
+    # data preserved
+    op = conn.execute("SELECT operation_id FROM heygen_operations WHERE operation_id='op_v2'").fetchone()
+    assert op is not None and op[0] == "op_v2"
+    # download_attempts added, default 0
+    da = conn.execute("SELECT download_attempts FROM heygen_operations WHERE operation_id='op_v2'").fetchone()[0]
+    assert da == 0
+    # deletion_reason added, NULL
+    dr = conn.execute("SELECT deletion_reason FROM heygen_remote_resources WHERE remote_id='rem1'").fetchone()[0]
+    assert dr is None
+    conn.close()
+
+
+def test_v3_download_attempts_not_null_and_check(tmp_path: Path):
+    conn = init_database(tmp_path)
+    conn.execute(
+        "INSERT INTO heygen_operations (operation_id, kind, endpoint, generation_id, "
+        "manifest_digest, request_digest, idempotency_key, heygen_title, created_at, "
+        "updated_at) VALUES ('op1','video','/v3/videos','gen','sha256:m','sha256:r',"
+        "'idem','t','2026-07-29T00:00:00Z','2026-07-29T00:00:00Z')"
+    )
+    # NOT NULL: omitting download_attempts yields the default 0 (already). Setting
+    # it to a negative violates CHECK.
+    conn.commit()
+    conn.close()
+    db = sqlite3.connect(str(tmp_path / ".lecturecast" / "runtime" / "heygen-operations.db"))
+    db.execute("PRAGMA ignore_check_constraints = OFF")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("UPDATE heygen_operations SET download_attempts = -1 WHERE operation_id='op1'")
+    db.close()
+
+
+def test_v3_deletion_reason_closed_vocabulary(tmp_path: Path):
+    conn = init_database(tmp_path)
+    conn.execute(
+        "INSERT INTO heygen_remote_resources (credential_profile_id, resource_kind, "
+        "remote_id, deletion_reason, created_at, updated_at) VALUES "
+        "('heygen_env_default','video','rem1','post_download','2026-07-29T00:00:00Z','2026-07-29T00:00:00Z')"
+    )
+    conn.commit()
+    conn.close()
+    db = sqlite3.connect(str(tmp_path / ".lecturecast" / "runtime" / "heygen-operations.db"))
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("UPDATE heygen_remote_resources SET deletion_reason='bogus' WHERE remote_id='rem1'")
+    db.close()
+
+
+def test_v2_to_v3_rolls_back_if_second_alter_fails(tmp_path: Path, monkeypatch):
+    import lecturecast.heygen_journal as hj
+    db_path = tmp_path / ".lecturecast" / "runtime" / "heygen-operations.db"
+    _bootstrap_v2_db(db_path)
+    # Make the resources ALTER (the second one) fail.
+    real = hj._migrate_v2_to_v3
+
+    def failing(conn):
+        real(conn)
+        # force a failure AFTER the first real migration ran inside the tx by
+        # issuing an invalid statement
+        conn.execute("THIS IS INVALID SQL")
+
+    monkeypatch.setattr(hj, "_migrate_v2_to_v3", failing)
+    with pytest.raises(sqlite3.OperationalError):
+        init_database(tmp_path)
+    # user_version unchanged, download_attempts NOT added (rollback)
+    check = sqlite3.connect(str(db_path))
+    assert check.execute("PRAGMA user_version").fetchone()[0] == 2
+    cols = {r[1] for r in check.execute("PRAGMA table_info(heygen_operations)")}
+    assert "download_attempts" not in cols
+    check.close()
