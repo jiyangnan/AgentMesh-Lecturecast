@@ -214,14 +214,25 @@ class OperationRepository:
                     "consent pointer does not match the receipt digest"
                 )
             if row["attempt_started_at"] is not None:
-                active = (
-                    row["lease_owner"] is not None
-                    and row["lease_expires_at"] is not None
-                    and _parse_utc(row["lease_expires_at"]) > now
-                )
-                return ClaimResult(
-                    operation_id, "busy" if active else "ambiguous", 0, 0, None
-                )
+                owner = row["lease_owner"]
+                exp = row["lease_expires_at"]
+                # A half lease (one of owner/expires set, the other NULL) is a
+                # corrupt topology — fail-closed, never silently classify.
+                if (owner is None) != (exp is None):
+                    raise OperationIntegrityError(
+                        f"operation {operation_id} has a half lease state "
+                        f"(owner={owner!r}, expires={exp!r})"
+                    )
+                if owner is None and exp is None:
+                    # Attempt with no lease at all — a maybe-sent attempt with
+                    # no active holder. Ambiguous; route to reconciliation.
+                    return ClaimResult(operation_id, "ambiguous",
+                                       row["lease_fence"], row["submit_attempts"], None)
+                # Both set — busy if still valid, ambiguous if expired.
+                active = _parse_utc(exp) > now
+                status = "busy" if active else "ambiguous"
+                return ClaimResult(operation_id, status,
+                                   row["lease_fence"], row["submit_attempts"], exp)
             # No attempt — a lease without an attempt is an anomalous state we
             # refuse to silently overwrite.
             if row["lease_owner"] is not None or row["lease_expires_at"] is not None:
@@ -249,7 +260,13 @@ class OperationRepository:
             # Lost a concurrent claim — re-read and classify the new state.
             row2, receipt2 = _fetch()
             v2 = _classify(row2, receipt2)
-            return v2 if v2 is not None else ClaimResult(operation_id, "ambiguous", 0, 0, None)
+            if v2 is None:
+                # Eligible again after a lost CAS means a concurrent tx rolled
+                # back its claim — a state we cannot explain; refuse to guess.
+                raise OperationStateError(
+                    f"operation {operation_id} became eligible again after a lost CAS"
+                )
+            return v2
         return ClaimResult(operation_id, "claimed", new_fence,
                            row["submit_attempts"] + 1, expires_iso)
 
