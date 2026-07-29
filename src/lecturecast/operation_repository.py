@@ -194,10 +194,46 @@ class ReconcileOnceResult:
 @dataclass(frozen=True)
 class DownloadClaim:
     operation_id: str
-    status: str          # "claimed" | "busy" | "retry_wait" | "not_ready" | "consent_withdrawn"
+    status: str          # "claimed" | "finalize" | "busy" | "retry_wait" | "not_ready" | "consent_withdrawn"
     fence: int
     remote_id: str | None
     resource_id: int | None
+
+
+@dataclass(frozen=True)
+class MediaProbeResult:
+    duration_seconds: float
+    video_codec: str
+    width: int
+    height: int
+
+
+@dataclass(frozen=True)
+class PreparedDownload:
+    """A downloaded, hashed, ffprobe-verified temp file staged for atomic
+    publication. local_output_ref is a fixed runtime-root-relative path
+    (outputs/heygen/<operation_id>.mp4); the caller cannot choose it."""
+
+    temp_path_str: str
+    local_output_ref: str
+    digest: str
+    size_bytes: int
+    media: MediaProbeResult
+
+
+@dataclass(frozen=True)
+class DownloadOutcome:
+    operation_id: str
+    status: str          # verified | failed | reconcile | consent_withdrawn | fence_conflict
+    fence: int
+    last_error_code: str | None
+    next_retry_at: str | None
+
+
+@dataclass(frozen=True)
+class DownloadOnceResult:
+    claim: DownloadClaim
+    outcome: DownloadOutcome | None
 
 
 # --- repository --------------------------------------------------------
@@ -1188,6 +1224,34 @@ class OperationRepository:
             return verdict
 
         new_fence = row["lease_fence"] + 1
+        if row["download_status"] == "downloaded":
+            # Finalize-recovery: a staged-but-unpublished download. Claim without
+            # re-downloading; the processor goes straight to the finalize pass.
+            cur = conn.execute(
+                "UPDATE heygen_operations SET lease_owner = ?, lease_expires_at = ?, "
+                "lease_fence = ?, updated_at = ? WHERE operation_id = ? "
+                "AND lease_fence = ? AND status = 'completed' "
+                "AND download_status = 'downloaded'",
+                (lease_owner, expires_iso, new_fence, _canonical(now),
+                 operation_id, row["lease_fence"]),
+            )
+            if cur.rowcount == 0:
+                row2 = conn.execute(
+                    "SELECT status, download_status, lease_owner, lease_expires_at, "
+                    "lease_fence, next_retry_at FROM heygen_operations WHERE operation_id = ?",
+                    (operation_id,),
+                ).fetchone()
+                if row2 is None or row2["status"] != "completed":
+                    return DownloadClaim(operation_id, "not_ready", new_fence, None, None)
+                v2 = self._classify_download_row(row2, operation_id, now)
+                if v2 is None:
+                    raise OperationStateError(
+                        f"operation {operation_id} became eligible again after a lost finalize CAS"
+                    )
+                return v2
+            return DownloadClaim(operation_id, "finalize", new_fence,
+                                 res["remote_id"], res["resource_id"])
+
         cur = conn.execute(
             "UPDATE heygen_operations SET lease_owner = ?, lease_expires_at = ?, "
             "lease_fence = ?, download_status = 'downloading', "
@@ -1222,8 +1286,10 @@ class OperationRepository:
         downloaded/verified → not_ready; half lease → fail-closed; returns the
         REAL database fence."""
         ds = row["download_status"]
-        if ds in ("downloaded", "verified"):
+        if ds == "verified":
             return DownloadClaim(operation_id, "not_ready", row["lease_fence"], None, None)
+        # downloaded = staged but not yet published → eligible to claim a
+        # finalize pass (lease classification still applies: active → busy).
         owner = row["lease_owner"]
         exp = row["lease_expires_at"]
         if (owner is None) != (exp is None):
