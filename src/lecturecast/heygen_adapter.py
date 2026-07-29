@@ -20,8 +20,18 @@ Hard rules (per Codex e3 plan):
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Mapping, Protocol
+
+
+def _require_tz_iso(value: str) -> None:
+    try:
+        dt = datetime.fromisoformat((value or "").replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"not ISO-8601: {value!r}") from exc
+    if dt.tzinfo is None:
+        raise ValueError(f"timestamp must be timezone-aware: {value!r}")
 
 
 # Closed, stable adapter error codes. The journal stores these in
@@ -163,15 +173,50 @@ class TitleCandidate:
     created_at: str
     provider_status: str
 
+    def __post_init__(self) -> None:
+        if not (self.remote_id or "").strip():
+            raise ValueError("TitleCandidate.remote_id is required")
+        if not (self.title or "").strip():
+            raise ValueError("TitleCandidate.title is required")
+        if self.provider_status not in PROVIDER_STATUS:
+            raise ValueError(f"unknown provider_status: {self.provider_status!r}")
+        _require_tz_iso(self.created_at)
+
 
 @dataclass(frozen=True)
 class TitleQueryResult:
-    """query_complete=False means the search itself was inconclusive (paging
-    incomplete, provider error). The coordinator never treats an incomplete
-    query as a definitive no-match."""
+    """query_complete must be a real bool; candidates is a frozen tuple with
+    unique remote_ids. query_complete=False means the search itself was
+    inconclusive (paging incomplete, provider error) — the coordinator never
+    treats an incomplete query as a definitive no-match."""
 
     query_complete: bool
-    candidates: tuple[TitleCandidate, ...]
+    candidates: tuple[TitleCandidate, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.query_complete) is not bool:
+            raise TypeError("query_complete must be a bool")
+        object.__setattr__(self, "candidates", tuple(self.candidates))
+        rids = [c.remote_id for c in self.candidates]
+        if len(set(rids)) != len(rids):
+            raise ValueError("duplicate remote_id in candidates")
+
+
+class TitleQueryAdapterError(Exception):
+    """A structured failure of a title search. retryable → reconciliation
+    backoff; a permanent error keeps reconciliation_required with a fixed code
+    (never guesses a no-match)."""
+
+    def __init__(self, *, code: str, retryable: bool,
+                 provider_code: str | None = None, message: str = "") -> None:
+        if code not in ADAPTER_ERROR_CODES:
+            raise ValueError(f"unknown adapter error code: {code!r}")
+        if type(retryable) is not bool:
+            raise TypeError("retryable must be a bool")
+        self.code = code
+        self.retryable = retryable
+        self.provider_code = provider_code
+        super().__init__(message or code)
 
 
 # --- submit outcome (what the processor records) -----------------------
