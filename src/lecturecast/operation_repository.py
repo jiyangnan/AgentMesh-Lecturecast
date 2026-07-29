@@ -1442,6 +1442,7 @@ class OperationRepository:
             if p.is_symlink():
                 raise OperationIntegrityError(f"path is a symlink: {p}")
         if _os.path.exists(str(final)):
+            _verify_containment(final, runtime)
             if not final.is_file():
                 raise OperationIntegrityError("final is not a regular file")
             h = _h.sha256()
@@ -1451,6 +1452,16 @@ class OperationRepository:
             if h.hexdigest() != staged_digest.split(":")[-1]:
                 raise OperationIntegrityError(f"final digest mismatch for {operation_id}")
         elif temp.exists() and not temp.is_symlink() and temp.is_file():
+            _verify_containment(temp, runtime)
+            _verify_containment(final, runtime)
+            # Recompute temp digest BEFORE replace — a temp swapped between stage
+            # and recovery must not be published as verified.
+            h = _h.sha256()
+            with open(str(temp), "rb") as f:
+                for chunk in iter(lambda: f.read(65536), b""):
+                    h.update(chunk)
+            if "sha256:" + h.hexdigest() != staged_digest:
+                raise OperationIntegrityError("temp digest mismatch before replace")
             final.parent.mkdir(parents=True, exist_ok=True)
             _os.replace(str(temp), str(final))
         else:
@@ -1477,21 +1488,17 @@ class OperationRepository:
     def _cleanup_download_withdrawn(self, conn, operation_id, lease_owner,
                                     fence, now_c):
         """Fenced atomic cleanup: flip to a stable terminal 'failed' state,
-        clear the lease, and route the video resource to deletion_pending —
-        but ONLY after a full exclusive-ownership check (exactly one resource,
-        owned by this operation, no other ref, credential match, not_started).
-        A corrupt/shared topology raises rather than blindly deleting."""
-        conn.execute(
-            "UPDATE heygen_operations SET download_status='failed', "
-            "last_error_code='consent_withdrawn_cleanup_required', next_retry_at=NULL, "
-            "lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
-            "WHERE operation_id=? AND lease_owner=? AND lease_fence=?",
-            (now_c, operation_id, lease_owner, fence))
+        clear the lease, and route the video resource to deletion_pending. The
+        full exclusive-ownership check runs FIRST; ANY anomaly (wrong count,
+        wrong owner, credential mismatch, shared ref, wrong deletion_status)
+        raises OperationIntegrityError so the whole tx rolls back — no
+        half-completed state reaches the journal."""
+        # --- Validate topology BEFORE mutating ---
         op_row = conn.execute(
             "SELECT credential_profile_id FROM heygen_operations WHERE operation_id=?",
             (operation_id,)).fetchone()
         if op_row is None:
-            return
+            raise OperationIntegrityError(f"operation {operation_id} vanished during cleanup")
         resources = conn.execute(
             "SELECT r.resource_id, r.created_by_operation_id, "
             "r.credential_profile_id, r.deletion_status FROM heygen_remote_resources r "
@@ -1499,12 +1506,16 @@ class OperationRepository:
             "WHERE ref.operation_id=? AND r.resource_kind='video'",
             (operation_id,)).fetchall()
         if len(resources) != 1:
-            return  # ambiguous topology — do not delete
+            raise OperationIntegrityError(
+                f"expected exactly 1 video resource for {operation_id}, found {len(resources)}")
         res = resources[0]
-        if (res["created_by_operation_id"] != operation_id
-                or res["credential_profile_id"] != op_row["credential_profile_id"]
-                or res["deletion_status"] != "not_started"):
-            return  # topology changed between claim and cleanup — do not delete
+        if res["created_by_operation_id"] != operation_id:
+            raise OperationIntegrityError("cleanup resource owned by another operation")
+        if res["credential_profile_id"] != op_row["credential_profile_id"]:
+            raise OperationIntegrityError("cleanup resource credential mismatch")
+        if res["deletion_status"] != "not_started":
+            raise OperationIntegrityError(
+                f"cleanup resource already in deletion state: {res['deletion_status']!r}")
         other_ref = conn.execute(
             "SELECT 1 FROM heygen_resource_operation_refs "
             "WHERE resource_id=? AND operation_id<>?",
@@ -1512,6 +1523,13 @@ class OperationRepository:
         if other_ref is not None:
             raise OperationIntegrityError(
                 f"resource {res['resource_id']} referenced by another operation during cleanup")
+        # --- All checks pass: atomic update operation + resource ---
+        conn.execute(
+            "UPDATE heygen_operations SET download_status='failed', "
+            "last_error_code='consent_withdrawn_cleanup_required', next_retry_at=NULL, "
+            "lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
+            "WHERE operation_id=? AND lease_owner=? AND lease_fence=?",
+            (now_c, operation_id, lease_owner, fence))
         conn.execute(
             "UPDATE heygen_remote_resources SET deletion_status='deletion_pending', "
             "deletion_reason='consent_withdrawal', updated_at=? WHERE resource_id=?",
@@ -1548,6 +1566,24 @@ class OperationRepository:
 
 def _output_ref(operation_id: str) -> str:
     return f"outputs/heygen/{operation_id}.mp4"
+
+
+def _verify_containment(path: Path, runtime_root: Path) -> None:
+    """Reject if the resolved path escapes runtime_root, or if any directory
+    component in the chain (outputs/, heygen/) is a symlink — a symlinked
+    intermediate can redirect the deterministic leaf outside runtime even when
+    both sides resolve to the same target."""
+    runtime = runtime_root.resolve()
+    resolved = path.resolve()
+    try:
+        rel = resolved.relative_to(runtime)
+    except ValueError:
+        raise OperationIntegrityError(f"path escapes runtime: {resolved}")
+    current = runtime
+    for part in rel.parts[:-1]:  # intermediate directories only (not the leaf file)
+        current = current / part
+        if current.is_symlink():
+            raise OperationIntegrityError(f"symlink in directory chain: {current}")
 
 
 # --- coordinator -------------------------------------------------------
