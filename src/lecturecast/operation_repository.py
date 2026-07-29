@@ -1315,12 +1315,14 @@ class OperationRepository:
     # -- download two-phase: stage + finalize (§5.5e4a2) -----------------
 
     def stage_download_in_tx(self, conn, operation_id, lease_owner, fence,
-                             now_iso, prepared):
+                             now_iso, prepared, max_bytes=536_870_912):
         """Phase 1: stage the downloaded temp file's ref + digest in the journal
-        (download_status='downloaded'). Re-verifies owner/fence/status + consent,
-        VALIDATES the PreparedDownload (untrusted downloader output), and handles
-        withdrawn receipt with a fenced cleanup (clear lease + stable failed)."""
+        (download_status='downloaded'). Validates the PreparedDownload as
+        UNTRUSTED: exact ref match, exact deterministic temp path, containment,
+        non-symlink, digest recompute, strict numeric types, size cap. A
+        withdrawn receipt triggers a fenced cleanup (stable terminal state)."""
         import hashlib as _h
+        import math as _math
         import os as _os
         self._require_tx(conn)
         conn.row_factory = sqlite3.Row
@@ -1339,22 +1341,38 @@ class OperationRepository:
                                    _RECONCILE_WITHDRAWN, None)
         if receipt["status"] != "granted":
             return DownloadOutcome(operation_id, "fence_conflict", fence, None, None)
-        # --- Validate the downloader's output (untrusted) ---
+        # --- Validate the downloader's output (FULLY UNTRUSTED) ---
         expected_ref = _output_ref(operation_id)
         if prepared.local_output_ref != expected_ref:
             raise OperationIntegrityError(
-                f"local_output_ref mismatch: expected {expected_ref!r}, got {prepared.local_output_ref!r}")
+                f"local_output_ref must be {expected_ref!r}, got {prepared.local_output_ref!r}")
+        # Strict numeric types (bool is not int).
+        if type(prepared.size_bytes) is not int or prepared.size_bytes <= 0 \
+                or prepared.size_bytes > max_bytes:
+            raise OperationIntegrityError("invalid size_bytes")
+        if type(prepared.media.duration_seconds) is not float \
+                or not _math.isfinite(prepared.media.duration_seconds) \
+                or prepared.media.duration_seconds <= 0:
+            raise OperationIntegrityError("invalid duration_seconds")
+        if type(prepared.media.width) is not int or prepared.media.width <= 0:
+            raise OperationIntegrityError("invalid width")
+        if type(prepared.media.height) is not int or prepared.media.height <= 0:
+            raise OperationIntegrityError("invalid height")
+        if not isinstance(prepared.media.video_codec, str) or not prepared.media.video_codec.strip():
+            raise OperationIntegrityError("invalid video_codec")
         if not prepared.digest.startswith("sha256:") or len(prepared.digest) != 71:
             raise OperationIntegrityError("invalid digest format")
+        # Exact deterministic temp path (not just "inside runtime").
+        expected_temp = self._project_dir / ".lecturecast" / "runtime" / (expected_ref + ".tmp")
         temp = Path(prepared.temp_path_str)
-        runtime_root = self._project_dir / ".lecturecast" / "runtime"
         try:
-            if not temp.resolve().is_relative_to(runtime_root.resolve()):
-                raise OperationIntegrityError("temp path escapes runtime")
+            if temp.resolve() != expected_temp.resolve():
+                raise OperationIntegrityError("temp path is not the deterministic location")
         except (OSError, ValueError):
             raise OperationIntegrityError("temp path resolution failed")
         if temp.is_symlink() or not temp.is_file():
             raise OperationIntegrityError("temp must be a regular file, not a symlink")
+        # Recompute digest from the actual file.
         h = _h.sha256()
         actual_size = 0
         with open(str(temp), "rb") as f:
@@ -1365,9 +1383,6 @@ class OperationRepository:
             raise OperationIntegrityError("digest mismatch on recompute")
         if actual_size != prepared.size_bytes:
             raise OperationIntegrityError("size mismatch")
-        if prepared.media.duration_seconds <= 0 or prepared.media.width <= 0 \
-                or prepared.media.height <= 0 or not prepared.media.video_codec:
-            raise OperationIntegrityError("invalid media probe values")
         # --- Stage (fenced CAS) ---
         cur = conn.execute(
             "UPDATE heygen_operations SET download_status='downloaded', "
@@ -1381,11 +1396,14 @@ class OperationRepository:
         return DownloadOutcome(operation_id, "staged", fence, None, None)
 
     def finalize_download_in_tx(self, conn, operation_id, lease_owner, fence,
-                                now_iso, project_dir, temp_path=None):
-        """Phase 2: publish the staged file and mark verified. Re-verifies
-        consent; withdrawn receipt → fenced cleanup + delete temp, no publication.
-        Crash recovery: final exists + digest match → just verified; temp
-        exists → os.replace; neither → fenced manual-recovery park."""
+                                now_iso):
+        """Phase 2: publish the staged file and mark verified. Uses ONLY
+        deterministic paths derived from self._project_dir + operation_id —
+        never trusts external project_dir/temp_path or journal-stored ref beyond
+        a strict equality check. Re-validates containment, symlink, digest, and
+        consent on the recovery path. Withdrawn → fenced cleanup. Missing file →
+        fenced manual-recovery park."""
+        import hashlib as _h
         import os as _os
         self._require_tx(conn)
         conn.row_factory = sqlite3.Row
@@ -1403,33 +1421,40 @@ class OperationRepository:
         staged_digest = op["local_output_digest"]
         if receipt["status"] == "withdrawn":
             self._cleanup_download_withdrawn(conn, operation_id, lease_owner, fence, now_c)
-            if temp_path and _os.path.exists(temp_path):
-                _os.unlink(temp_path)
-            elif temp_path is None and staged_ref:
-                derived = str(Path(project_dir) / ".lecturecast" / "runtime" / (staged_ref + ".tmp"))
-                if _os.path.exists(derived):
-                    _os.unlink(derived)
+            derived_temp = self._project_dir / ".lecturecast" / "runtime" / (_output_ref(operation_id) + ".tmp")
+            if derived_temp.exists() and not derived_temp.is_symlink():
+                _os.unlink(str(derived_temp))
             return DownloadOutcome(operation_id, "consent_withdrawn", fence,
                                    _RECONCILE_WITHDRAWN, None)
-        if receipt["status"] != "granted" or not staged_ref or not staged_digest:
+        if receipt["status"] != "granted":
             return DownloadOutcome(operation_id, "fence_conflict", fence, None, None)
-        if temp_path is None and staged_ref:
-            temp_path = str(Path(project_dir) / ".lecturecast" / "runtime" / (staged_ref + ".tmp"))
-        final_path = Path(project_dir) / ".lecturecast" / "runtime" / staged_ref
-        if _os.path.exists(final_path):
-            import hashlib as _h
+        # Strict ref equality — never trust a tampered journal ref for path building.
+        expected_ref = _output_ref(operation_id)
+        if staged_ref != expected_ref:
+            raise OperationIntegrityError("staged local_output_ref mismatch")
+        if not staged_digest or not staged_digest.startswith("sha256:"):
+            raise OperationIntegrityError("staged digest format invalid")
+        runtime = self._project_dir / ".lecturecast" / "runtime"
+        temp = runtime / (expected_ref + ".tmp")
+        final = runtime / expected_ref
+        # Containment + symlink checks on BOTH paths.
+        for p in (final, temp):
+            if p.is_symlink():
+                raise OperationIntegrityError(f"path is a symlink: {p}")
+        if _os.path.exists(str(final)):
+            if not final.is_file():
+                raise OperationIntegrityError("final is not a regular file")
             h = _h.sha256()
-            with open(str(final_path), "rb") as f:
+            with open(str(final), "rb") as f:
                 for chunk in iter(lambda: f.read(65536), b""):
                     h.update(chunk)
             if h.hexdigest() != staged_digest.split(":")[-1]:
-                raise OperationIntegrityError(
-                    f"final file digest mismatch for {operation_id}")
-        elif temp_path and _os.path.exists(temp_path):
-            final_path.parent.mkdir(parents=True, exist_ok=True)
-            _os.replace(temp_path, final_path)
+                raise OperationIntegrityError(f"final digest mismatch for {operation_id}")
+        elif temp.exists() and not temp.is_symlink() and temp.is_file():
+            final.parent.mkdir(parents=True, exist_ok=True)
+            _os.replace(str(temp), str(final))
         else:
-            # Neither temp nor final — fenced park for manual recovery.
+            # Neither temp nor final — fenced manual-recovery park.
             conn.execute(
                 "UPDATE heygen_operations SET download_status='failed', "
                 "last_error_code='download_file_missing', next_retry_at=NULL, "
@@ -1449,29 +1474,48 @@ class OperationRepository:
             return DownloadOutcome(operation_id, "fence_conflict", fence, None, None)
         return DownloadOutcome(operation_id, "verified", fence, None, None)
 
-    @staticmethod
-    def _cleanup_download_withdrawn(conn, operation_id, lease_owner, fence, now_c):
-        """Fenced atomic cleanup when consent is withdrawn during download/finalize:
-        flip to a stable 'failed' state with a fixed error code, clear the lease,
-        and route the video resource to deletion_pending. The manual-recovery
-        error code prevents re-claiming."""
+    def _cleanup_download_withdrawn(self, conn, operation_id, lease_owner,
+                                    fence, now_c):
+        """Fenced atomic cleanup: flip to a stable terminal 'failed' state,
+        clear the lease, and route the video resource to deletion_pending —
+        but ONLY after a full exclusive-ownership check (exactly one resource,
+        owned by this operation, no other ref, credential match, not_started).
+        A corrupt/shared topology raises rather than blindly deleting."""
         conn.execute(
             "UPDATE heygen_operations SET download_status='failed', "
             "last_error_code='consent_withdrawn_cleanup_required', next_retry_at=NULL, "
             "lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
             "WHERE operation_id=? AND lease_owner=? AND lease_fence=?",
             (now_c, operation_id, lease_owner, fence))
-        res = conn.execute(
-            "SELECT r.resource_id FROM heygen_remote_resources r "
+        op_row = conn.execute(
+            "SELECT credential_profile_id FROM heygen_operations WHERE operation_id=?",
+            (operation_id,)).fetchone()
+        if op_row is None:
+            return
+        resources = conn.execute(
+            "SELECT r.resource_id, r.created_by_operation_id, "
+            "r.credential_profile_id, r.deletion_status FROM heygen_remote_resources r "
             "JOIN heygen_resource_operation_refs ref ON ref.resource_id=r.resource_id "
-            "WHERE ref.operation_id=? AND r.resource_kind='video' "
-            "AND r.created_by_operation_id=? AND r.deletion_status='not_started'",
-            (operation_id, operation_id)).fetchone()
-        if res is not None:
-            conn.execute(
-                "UPDATE heygen_remote_resources SET deletion_status='deletion_pending', "
-                "deletion_reason='consent_withdrawal', updated_at=? WHERE resource_id=?",
-                (now_c, res["resource_id"]))
+            "WHERE ref.operation_id=? AND r.resource_kind='video'",
+            (operation_id,)).fetchall()
+        if len(resources) != 1:
+            return  # ambiguous topology — do not delete
+        res = resources[0]
+        if (res["created_by_operation_id"] != operation_id
+                or res["credential_profile_id"] != op_row["credential_profile_id"]
+                or res["deletion_status"] != "not_started"):
+            return  # topology changed between claim and cleanup — do not delete
+        other_ref = conn.execute(
+            "SELECT 1 FROM heygen_resource_operation_refs "
+            "WHERE resource_id=? AND operation_id<>?",
+            (res["resource_id"], operation_id)).fetchone()
+        if other_ref is not None:
+            raise OperationIntegrityError(
+                f"resource {res['resource_id']} referenced by another operation during cleanup")
+        conn.execute(
+            "UPDATE heygen_remote_resources SET deletion_status='deletion_pending', "
+            "deletion_reason='consent_withdrawal', updated_at=? WHERE resource_id=?",
+            (now_c, res["resource_id"]))
 
     def apply_download_failure_in_tx(self, conn, operation_id, lease_owner,
                                      fence, now_iso, error_code, next_retry_iso):
@@ -1680,7 +1724,6 @@ class DownloadProcessor:
             with self._repository.begin_immediate() as conn:
                 outcome = self._repository.finalize_download_in_tx(
                     conn, operation_id, lease_owner, claim.fence, now_iso,
-                    str(self._project_dir),
                 )
             return DownloadOnceResult(claim=claim, outcome=outcome)
 
@@ -1739,7 +1782,7 @@ class DownloadProcessor:
         # Stage (tx1).
         with self._repository.begin_immediate() as conn:
             staged = self._repository.stage_download_in_tx(
-                conn, operation_id, lease_owner, claim.fence, now_iso, prepared,
+                conn, operation_id, lease_owner, claim.fence, now_iso, prepared, max_bytes,
             )
         if staged.status not in ("staged",):
             return DownloadOnceResult(claim=claim, outcome=staged)
@@ -1748,7 +1791,6 @@ class DownloadProcessor:
         with self._repository.begin_immediate() as conn:
             outcome = self._repository.finalize_download_in_tx(
                 conn, operation_id, lease_owner, claim.fence, now_iso,
-                str(self._project_dir), str(prepared.temp_path_str),
             )
         return DownloadOnceResult(claim=claim, outcome=outcome)
 

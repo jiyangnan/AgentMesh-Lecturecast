@@ -314,8 +314,7 @@ def test_stale_fence_does_not_publish(tmp_path):
     # Finalize with WRONG fence.
     with repo.begin_immediate() as conn:
         outcome = repo.finalize_download_in_tx(
-            conn, prepared_op.operation_id, OWNER, claim.fence + 99, NOW,
-            str(tmp_path))
+            conn, prepared_op.operation_id, OWNER, claim.fence + 99, NOW)
     assert outcome.status == "fence_conflict"
     final = tmp_path / ".lecturecast" / "runtime" / ref
     assert not final.exists()  # not published
