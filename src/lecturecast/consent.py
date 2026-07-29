@@ -90,6 +90,16 @@ _OPERATION_KIND_ENDPOINT: dict[str, str] = {
 OPERATION_KINDS = frozenset(_OPERATION_KIND_ENDPOINT)
 ENDPOINTS = frozenset(_OPERATION_KIND_ENDPOINT.values())
 
+# operation_kinds that execute against a signed orchestration plan and so must
+# bind its digest (not just the request).
+_KINDS_REQUIRING_ORCHESTRATION = frozenset({"video"})
+
+# v1: a single local BYO environment. The caller cannot stuff an API key or
+# account name here — only this closed identifier is accepted. Multi-account is
+# a future expansion, resolved from a trusted profile source, never a
+# caller-supplied raw string.
+CREDENTIAL_PROFILE_IDS = frozenset({"heygen_env_default"})
+
 # Basename only: strip path separators and control chars. The disclosure shows
 # users a safe filename; the real path never leaves the machine.
 _FILENAME_BAD = re.compile(r"[\x00-\x1f]|[/\\]")
@@ -132,8 +142,8 @@ class ThirdPartyTransferDisclosure:
             raise ValueError(f"unknown provider: {self.provider!r}")
         if self.disclosure_version != "heygen-transfer-2026-07-27":
             raise ValueError(f"unknown disclosure_version: {self.disclosure_version!r}")
-        if not self.operation_kind.strip():
-            raise ValueError("operation_kind is required")
+        if self.operation_kind not in OPERATION_KINDS:
+            raise ValueError(f"unknown operation_kind: {self.operation_kind!r}")
         # Freeze mutable inputs to tuples so the digest cannot change post-construction.
         object.__setattr__(self, "disclosed_assets", tuple(self.disclosed_assets))
         object.__setattr__(self, "data_categories", tuple(_nfc(c) for c in self.data_categories))
@@ -147,6 +157,10 @@ class ThirdPartyTransferDisclosure:
         keys = [(a.asset_kind, a.display_filename, a.asset_digest) for a in self.disclosed_assets]
         if len(set(keys)) != len(keys):
             raise ValueError("disclosed_assets must be unique")
+        # Duplicate categories would pass a set-equality check but yield a
+        # different receipt digest — reject explicitly.
+        if len(self.data_categories) != len(set(self.data_categories)):
+            raise ValueError("data_categories must be unique")
         # Cross-field: categories are fully determined by the disclosed assets.
         allowed = set()
         for asset in self.disclosed_assets:
@@ -266,16 +280,30 @@ class HeyGenOperationIdentity:
         if parsed.query or parsed.fragment:
             raise ValueError("endpoint must not contain query or fragment")
         object.__setattr__(self, "endpoint", endpoint)
-        for name in ("generation_id", "credential_profile_id"):
+        for name in ("generation_id",):
             if not getattr(self, name) or not getattr(self, name).strip():
                 raise ValueError(f"{name} must be non-empty")
         object.__setattr__(self, "generation_id", _nfc(self.generation_id).strip())
-        object.__setattr__(self, "credential_profile_id", _nfc(self.credential_profile_id).strip())
+        # credential_profile_id is a closed internal identifier, never a caller-
+        # supplied raw string (no API key / account name can leak into the DB).
+        if self.credential_profile_id not in CREDENTIAL_PROFILE_IDS:
+            raise ValueError(
+                f"credential_profile_id must be one of {sorted(CREDENTIAL_PROFILE_IDS)}"
+            )
         for name in ("manifest_digest", "request_digest"):
             if not is_digest(getattr(self, name)):
                 raise ValueError(f"{name} must be sha256:<64 hex>")
         if self.orchestration_plan_digest is not None and not is_digest(self.orchestration_plan_digest):
             raise ValueError("orchestration_plan_digest must be sha256:<64 hex> when set")
+        # Operations that execute against the signed M3 plan must bind it — the
+        # request alone is not enough.
+        if (
+            self.operation_kind in _KINDS_REQUIRING_ORCHESTRATION
+            and self.orchestration_plan_digest is None
+        ):
+            raise ValueError(
+                f"orchestration_plan_digest is required for {self.operation_kind!r} operations"
+            )
         if self.segment_id is not None:
             sid = _nfc(self.segment_id).strip()
             if not sid or not _STABLE_ID_RE.fullmatch(sid):

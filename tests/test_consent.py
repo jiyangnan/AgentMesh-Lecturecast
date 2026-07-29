@@ -29,7 +29,8 @@ def _identity(**over) -> HeyGenOperationIdentity:
         generation_id="gen_1",
         manifest_digest=D,
         request_digest=REQ,
-        credential_profile_id="cp_1",
+        credential_profile_id="heygen_env_default",
+        orchestration_plan_digest=BRIEF,  # video operations must bind the M3 plan
         endpoint="/v3/videos",
     )
     base.update(over)
@@ -172,6 +173,11 @@ def test_disclosure_requires_cost_and_non_processor_text():
         _disclosure(agentmesh_non_processor_disclosure="")
 
 
+def test_disclosure_closes_operation_kind():
+    with pytest.raises(ValueError):
+        _disclosure(operation_kind="bogus")
+
+
 # --- canonical_payload: deterministic + decision-bound + validated ---
 
 def test_payload_is_deterministic_regardless_of_input_order():
@@ -234,8 +240,21 @@ def test_identity_rejects_bad_digests_and_empty_fields():
         _identity(request_digest="not-a-digest")
     with pytest.raises(ValueError):
         _identity(generation_id="")
+
+
+def test_identity_rejects_arbitrary_credential_profile():
+    # An API key or account name cannot sneak into credential_profile_id and
+    # reach the DB — only the closed internal identifier is accepted.
     with pytest.raises(ValueError):
-        _identity(credential_profile_id="  ")
+        _identity(credential_profile_id="sk_live_XYc8RpGp9mW6WtwQZFn0DyoOsNqoaV5Y")
+    with pytest.raises(ValueError):
+        _identity(credential_profile_id="cp_1")
+    assert _identity().credential_profile_id == "heygen_env_default"
+
+
+def test_video_operation_requires_orchestration_plan():
+    with pytest.raises(ValueError):
+        _identity(orchestration_plan_digest=None)
 
 
 def test_identity_closes_operation_kind_and_endpoint():
@@ -291,9 +310,9 @@ def test_prepare_operation_changes_when_request_digest_changes():
 
 
 def test_prepare_operation_changes_when_credential_profile_changes():
-    p1 = prepare_operation(_identity(credential_profile_id="cp_1"))
-    p2 = prepare_operation(_identity(credential_profile_id="cp_2"))
-    assert p1.operation_id != p2.operation_id
+    # credential_profile_id is closed (single v1 value), so it is NOT a
+    # distinguishing dimension — operations are distinguished by request/plan.
+    assert _identity().credential_profile_id == "heygen_env_default"
 
 
 def test_prepare_operation_independent_of_optional_fields_when_none():
