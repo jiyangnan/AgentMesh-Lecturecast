@@ -1367,7 +1367,7 @@ class OperationRepository:
         runtime_root = self._project_dir / ".lecturecast" / "runtime"
         _verify_containment(Path(prepared.temp_path_str), runtime_root)
         import os as _os_mod
-        if _os_mod.normpath(prepared.temp_path_str) != _os_mod.normpath(str(expected_temp)):
+        if _os_mod.path.normpath(prepared.temp_path_str) != _os_mod.path.normpath(str(expected_temp)):
             raise OperationIntegrityError("temp path is not the deterministic location")
         temp = Path(prepared.temp_path_str)
         if temp.is_symlink() or not temp.is_file():
