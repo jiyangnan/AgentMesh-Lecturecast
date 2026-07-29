@@ -60,6 +60,13 @@ class SubmitAccepted:
     remote_id: str
     provider_status: str = ""    # transient, informational only
 
+    def __post_init__(self) -> None:
+        if not (self.remote_id or "").strip():
+            raise ValueError("SubmitAccepted.remote_id is required")
+        ps = self.provider_status or ""
+        if ps and ps not in PROVIDER_STATUS:
+            raise ValueError(f"unknown provider_status: {ps!r}")
+
 
 class HeyGenAdapterError(Exception):
     """A structured adapter failure. `code` is a closed stable code; `provider_code`
@@ -69,6 +76,8 @@ class HeyGenAdapterError(Exception):
                  provider_code: str | None = None, message: str = "") -> None:
         if code not in ADAPTER_ERROR_CODES:
             raise ValueError(f"unknown adapter error code: {code!r}")
+        if type(retryable) is not bool:
+            raise TypeError("retryable must be a bool")
         if submission_certainty not in SUBMISSION_CERTAINTY:
             raise ValueError(f"unknown submission_certainty: {submission_certainty!r}")
         self.code = code

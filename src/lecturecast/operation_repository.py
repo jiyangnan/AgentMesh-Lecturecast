@@ -192,8 +192,8 @@ class OperationRepository:
         def _fetch():
             row = conn.execute(
                 "SELECT status, consent_receipt_digest, attempt_started_at, lease_owner, "
-                "lease_expires_at, lease_fence, submit_attempts FROM heygen_operations "
-                "WHERE operation_id = ?",
+                "lease_expires_at, lease_fence, submit_attempts, next_retry_at "
+                "FROM heygen_operations WHERE operation_id = ?",
                 (operation_id,),
             ).fetchone()
             receipt = conn.execute(
@@ -241,6 +241,13 @@ class OperationRepository:
                 raise OperationStateError(
                     f"operation {operation_id} has a lease without an attempt"
                 )
+            # Retry backoff gate: a not_sent-retryable outcome set next_retry_at;
+            # do not claim again until it has elapsed.
+            nr = row["next_retry_at"]
+            if nr is not None:
+                if _parse_utc(nr) > now:
+                    return ClaimResult(operation_id, "retry_wait",
+                                       row["lease_fence"], row["submit_attempts"], None)
             return None  # eligible
 
         row, receipt = _fetch()
@@ -353,28 +360,36 @@ class OperationRepository:
             outcome, now
         )
 
-        # Common: clear lease, set status + updated_at. Extras per target.
-        sets = ["status = ?", "lease_owner = NULL", "lease_expires_at = NULL", "updated_at = ?"]
-        params: list = [target, now_c]
+        # Every transition explicitly sets the full audit column set so stale
+        # values from a previous round (old last_error_code / next_retry_at /
+        # submitted_at / completed_at / provider_status) never bleed across.
+        always = {
+            "status": target,
+            "lease_owner": None,
+            "lease_expires_at": None,
+            "updated_at": now_c,
+        }
         if target == "submitted":
-            sets += ["submitted_at = ?", "provider_status = ?"]
-            params += [now_c, provider_status or ""]
-        elif target == "submit_pending":
-            sets += ["attempt_started_at = NULL", "next_retry_at = ?", "last_error_code = ?"]
-            params += [next_retry, last_error]
+            always.update(submitted_at=now_c, provider_status=provider_status or "",
+                          next_retry_at=None, last_error_code=None, completed_at=None)
+        elif target == "submit_pending":  # not_sent retryable: reset for re-claim
+            always.update(attempt_started_at=None, next_retry_at=next_retry,
+                          last_error_code=last_error, submitted_at=None,
+                          completed_at=None, provider_status="")
         elif target == "failed":
-            sets += ["last_error_code = ?", "completed_at = ?"]
-            params += [last_error, now_c]
+            always.update(last_error_code=last_error, completed_at=now_c,
+                          next_retry_at=None, submitted_at=None, provider_status="")
         elif target == "reconciliation_required":
-            sets += ["last_error_code = ?"]
-            params += [last_error]
+            always.update(last_error_code=last_error, next_retry_at=None,
+                          submitted_at=None, completed_at=None, provider_status="")
+        set_clause = ", ".join(f"{col} = ?" for col in always)
+        params = list(always.values()) + [operation_id, lease_owner, fence]
         sql = (
-            "UPDATE heygen_operations SET " + ", ".join(sets) +
-            " WHERE operation_id = ? AND lease_owner = ? AND lease_fence = ? "
+            f"UPDATE heygen_operations SET {set_clause} "
+            "WHERE operation_id = ? AND lease_owner = ? AND lease_fence = ? "
             "AND status = 'submit_pending' AND attempt_started_at IS NOT NULL"
         )
-        where_params = [operation_id, lease_owner, fence]
-        cur = conn.execute(sql, params + where_params)
+        cur = conn.execute(sql, params)
         if cur.rowcount == 0:
             row = conn.execute(
                 "SELECT lease_fence FROM heygen_operations WHERE operation_id = ?",
@@ -395,11 +410,8 @@ class OperationRepository:
         """Map a typed outcome to (target_status, remote_id, provider_status,
         last_error_code, next_retry_iso)."""
         if isinstance(outcome, SubmitAccepted):
-            rid = (outcome.remote_id or "").strip()
-            if rid:
-                return ("submitted", rid, outcome.provider_status, None, None)
-            # Accepted but no remote id — ambiguous; reconcile to learn the truth.
-            return ("reconciliation_required", None, "", "unknown", None)
+            # SubmitAccepted guarantees a non-empty remote_id at construction.
+            return ("submitted", outcome.remote_id, outcome.provider_status, None, None)
         if isinstance(outcome, HeyGenAdapterError):
             if outcome.submission_certainty == "maybe_sent":
                 return ("reconciliation_required", None, "", outcome.code, None)
@@ -412,21 +424,46 @@ class OperationRepository:
 
     @staticmethod
     def _write_video_resource(conn, operation_id: str, remote_id: str, now_c: str) -> int:
-        """Atomically record the remote video resource + its operation ref. The
-        UNIQUE(credential_profile_id, resource_kind, remote_id) makes it
-        idempotent if the same remote id surfaces again (e.g. after recovery)."""
-        conn.execute(
-            "INSERT OR IGNORE INTO heygen_remote_resources "
-            "(credential_profile_id, resource_kind, remote_id, retention_mode, "
-            "created_by_operation_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("heygen_env_default", "video", remote_id, "ephemeral", operation_id, now_c, now_c),
-        )
-        row = conn.execute(
-            "SELECT resource_id FROM heygen_remote_resources "
-            "WHERE credential_profile_id = ? AND resource_kind = ? AND remote_id = ?",
-            ("heygen_env_default", "video", remote_id),
+        """Record the remote video resource + its operation ref. For an ephemeral
+        video a remote_id must belong to at most one operation — a collision with
+        another operation's resource is fail-closed (the whole tx rolls back).
+        credential_profile_id is read from the operation row, never hardcoded."""
+        op_row = conn.execute(
+            "SELECT credential_profile_id FROM heygen_operations WHERE operation_id = ?",
+            (operation_id,),
         ).fetchone()
-        resource_id = row["resource_id"]
+        if op_row is None:
+            raise OperationIntegrityError(f"no operation {operation_id}")
+        profile = op_row["credential_profile_id"]
+        existing = conn.execute(
+            "SELECT resource_id, created_by_operation_id, credential_profile_id "
+            "FROM heygen_remote_resources "
+            "WHERE credential_profile_id = ? AND resource_kind = 'video' AND remote_id = ?",
+            (profile, remote_id),
+        ).fetchone()
+        if existing is not None:
+            if existing["created_by_operation_id"] != operation_id:
+                raise OperationIntegrityError(
+                    f"remote video {remote_id!r} already belongs to another operation"
+                )
+            other_ref = conn.execute(
+                "SELECT 1 FROM heygen_resource_operation_refs "
+                "WHERE resource_id = ? AND operation_id <> ?",
+                (existing["resource_id"], operation_id),
+            ).fetchone()
+            if other_ref is not None:
+                raise OperationIntegrityError(
+                    f"remote video {remote_id!r} is referenced by another operation"
+                )
+            resource_id = existing["resource_id"]
+        else:
+            cur = conn.execute(
+                "INSERT INTO heygen_remote_resources "
+                "(credential_profile_id, resource_kind, remote_id, retention_mode, "
+                "created_by_operation_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (profile, "video", remote_id, "ephemeral", operation_id, now_c, now_c),
+            )
+            resource_id = cur.lastrowid
         conn.execute(
             "INSERT OR IGNORE INTO heygen_resource_operation_refs "
             "(resource_id, operation_id, created_at) VALUES (?, ?, ?)",
