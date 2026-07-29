@@ -189,25 +189,31 @@ def test_downloader_rejects_redirect(tmp_path, monkeypatch):
     server.shutdown()
 
 
+import io as _io
+
 def _make_fake_popen(fake_result):
-    """Create a fake Popen that writes fake_result.stdout to the fd and exits."""
-    class _FakeProc:
-        def __init__(self, *a, **kw): pass
-        @property
-        def returncode(self): return fake_result.returncode
-        def wait(self, timeout=None): return fake_result.returncode
-        def kill(self): pass
-    # We need to intercept stdout being a file: write to it, then the probe reads it.
+    """Create a fake Popen compatible with PIPE-based stdout reading."""
+    stdout_bytes = fake_result.stdout.encode() if isinstance(fake_result.stdout, str) else fake_result.stdout
+
     class _FakePopen:
         def __init__(self, cmd, stdout=None, stderr=None):
-            if stdout is not None:
-                stdout.write(fake_result.stdout.encode() if isinstance(fake_result.stdout, str) else fake_result.stdout)
-                stdout.flush()
-                stdout.seek(0)
+            self._stdout = _io.BytesIO(stdout_bytes)
+            self._returncode = fake_result.returncode
+
         @property
-        def returncode(self): return fake_result.returncode
-        def wait(self, timeout=None): return fake_result.returncode
-        def kill(self): pass
+        def stdout(self):
+            return self._stdout
+
+        @property
+        def returncode(self):
+            return self._returncode
+
+        def wait(self, timeout=None):
+            return self._returncode
+
+        def kill(self):
+            pass
+
     return _FakePopen
 
 
