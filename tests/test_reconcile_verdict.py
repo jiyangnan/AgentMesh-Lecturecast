@@ -287,7 +287,8 @@ def test_claim_refuses_declined_or_missing_receipt(tmp_path: Path):
 
 
 def test_claim_fail_closed_on_granted_pointer_mismatch(tmp_path: Path):
-    from lecturecast.operation_repository import OperationIntegrityError, OperationRepository
+    from lecturecast.consent import ConsentIntegrityError
+    from lecturecast.operation_repository import OperationRepository
     prepared, _ = _seed_reconcile(tmp_path, attempt_age_seconds=3600)  # granted, pointer==digest
     db = sqlite3.connect(str(tmp_path / DB_REL))
     db.execute("PRAGMA foreign_keys = OFF")
@@ -297,7 +298,7 @@ def test_claim_fail_closed_on_granted_pointer_mismatch(tmp_path: Path):
     db.close()
     repo = OperationRepository(tmp_path)
     with repo.begin_immediate() as conn:
-        with pytest.raises(OperationIntegrityError):
+        with pytest.raises(ConsentIntegrityError):
             repo.claim_reconcile_in_tx(conn, prepared.operation_id, OWNER, NOW, 60)
 
 
@@ -346,3 +347,47 @@ def test_not_found_candidate_is_not_a_match(tmp_path: Path):
             TitleCandidate(remote_id="hg_nf", title=title, created_at=attempt, provider_status="not_found"),))),
         now_iso=NOW, lease_seconds=60)
     assert res.outcome.verdict == "definitive_no_match"  # not_found candidate ignored
+
+
+def test_claim_fail_closed_on_tampered_receipt_content(tmp_path: Path):
+    """Tampering receipt content while keeping digest/pointer must fail closed
+    (the full validator recomputes the digest); the adapter is never called."""
+    from lecturecast.consent import ConsentIntegrityError
+    prepared, _ = _seed_reconcile(tmp_path, attempt_age_seconds=3600)  # granted, pointer==digest
+    db = sqlite3.connect(str(tmp_path / DB_REL))
+    db.execute("PRAGMA foreign_keys = OFF")
+    # tamper the disclosed assets but keep receipt_digest/pointer unchanged
+    db.execute("UPDATE heygen_consent_receipts SET disclosed_assets_json='[\"tampered\"]' "
+               "WHERE operation_id=?", (prepared.operation_id,))
+    db.commit()
+    db.close()
+    repo = OperationRepository(tmp_path)
+    with repo.begin_immediate() as conn:
+        with pytest.raises(ConsentIntegrityError):
+            repo.claim_reconcile_in_tx(conn, prepared.operation_id, OWNER, NOW, 60)
+
+
+def test_withdrawn_multiround_cleanup_keeps_reconciling(tmp_path: Path):
+    """withdrawn + incomplete: round 1 registers r1 as deletion_pending; after
+    backoff, round 2 is still claimable and registers r2 (cleanup resources do
+    not exclude a withdrawn op from further reconciliation)."""
+    prepared, attempt = _seed_reconcile(tmp_path, attempt_age_seconds=3600, receipt_status="withdrawn")
+    title = f"lecturecast:{prepared.operation_id}"
+    proc = ReconcileProcessor(tmp_path)
+    r1 = proc.reconcile_once(operation_id=prepared.operation_id, lease_owner=OWNER,
+        adapter=_Adapter(TitleQueryResult(query_complete=False, candidates=(
+            TitleCandidate(remote_id="hg_r1", title=title, created_at=attempt, provider_status="processing"),))),
+        now_iso=NOW, lease_seconds=60)
+    assert r1.outcome.verdict == "indeterminate"
+    assert r1.outcome.written_remote_ids == ("hg_r1",)
+    # after backoff (RECONCILE_BACKOFF_SECONDS=300), a second round finds r2
+    later = (datetime.fromisoformat(NOW.replace("Z", "+00:00")) + timedelta(seconds=400)).isoformat()
+    r2 = proc.reconcile_once(operation_id=prepared.operation_id, lease_owner=OWNER,
+        adapter=_Adapter(TitleQueryResult(query_complete=False, candidates=(
+            TitleCandidate(remote_id="hg_r2", title=title, created_at=attempt, provider_status="processing"),))),
+        now_iso=later, lease_seconds=60)
+    assert r2.outcome is not None  # still claimable
+    assert r2.outcome.written_remote_ids == ("hg_r2",)
+    rows = _video_resources(tmp_path, prepared.operation_id)
+    assert {row["remote_id"] for row in rows} == {"hg_r1", "hg_r2"}
+    assert all(row["deletion_status"] == "deletion_pending" for row in rows)
