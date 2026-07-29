@@ -1626,12 +1626,18 @@ class OperationRepository:
             "SELECT resource_id, remote_id, deletion_status, deletion_reason, "
             "retention_mode, created_by_operation_id, credential_profile_id, "
             "deletion_attempts, deletion_next_retry_at, last_deletion_error "
-            "FROM heygen_remote_resources WHERE resource_id=?",
+            "FROM heygen_remote_resources WHERE resource_id=? AND resource_kind='video'",
             (resource_id,)).fetchone()
         if res is None or res["created_by_operation_id"] != operation_id:
             return DeletionClaim(operation_id, resource_id, "not_ready", 0, None)
         if res["credential_profile_id"] != op["credential_profile_id"]:
             raise OperationIntegrityError("credential mismatch on deletion resource")
+        # This operation's ref must exist (exclusive binding).
+        own_ref = conn.execute(
+            "SELECT 1 FROM heygen_resource_operation_refs WHERE resource_id=? AND operation_id=?",
+            (resource_id, operation_id)).fetchone()
+        if own_ref is None:
+            return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
         other_ref = conn.execute(
             "SELECT 1 FROM heygen_resource_operation_refs WHERE resource_id=? AND operation_id<>?",
             (resource_id, operation_id)).fetchone()
@@ -1654,6 +1660,18 @@ class OperationRepository:
             nr = res["deletion_next_retry_at"]
             if nr is not None and _parse_utc(nr) > now:
                 return DeletionClaim(operation_id, resource_id, "retry_wait", op["lease_fence"], None)
+            # Inherit the original reason's eligibility (a retry must still
+            # satisfy the same gate that allowed the first attempt).
+            freason = res["deletion_reason"]
+            if freason == "consent_withdrawal":
+                pass
+            elif freason == "post_download":
+                if res["retention_mode"] != "ephemeral" or op["download_status"] != "verified":
+                    return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
+            elif freason == "manual_force":
+                return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
+            else:
+                raise OperationIntegrityError(f"deletion_failed with unknown reason: {freason!r}")
         elif ds == "deletion_pending":
             # Gate by deletion_reason — not all pending resources are auto-deletable.
             reason = res["deletion_reason"]
