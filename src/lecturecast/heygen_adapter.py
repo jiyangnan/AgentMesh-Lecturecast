@@ -267,6 +267,10 @@ class DeleteResult:
     to already_absent (idempotent success); the processor never parses HTTP."""
     status: str  # "deleted" | "already_absent"
 
+    def __post_init__(self) -> None:
+        if self.status not in ("deleted", "already_absent"):
+            raise ValueError(f"unknown DeleteResult.status: {self.status!r}")
+
 
 class DeleteAdapterError(Exception):
     """A structured deletion failure (same closed code vocabulary as the rest)."""
