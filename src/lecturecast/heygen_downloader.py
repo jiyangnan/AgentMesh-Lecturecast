@@ -261,7 +261,8 @@ class FfprobeMediaProbe:
     """Probes a media file via subprocess ffprobe. Output is streamed to a
     capped temp file (not buffered in memory)."""
 
-    def __init__(self, ffprobe_path: str | None = None) -> None:
+    def __init__(self, ffprobe_path: str | None = None, timeout_seconds: int = 30) -> None:
+        self.timeout_seconds = timeout_seconds
         path = ffprobe_path or os.environ.get("LECTURECAST_FFPROBE_PATH") \
             or shutil.which("ffprobe")
         if not path:
@@ -300,7 +301,7 @@ class FfprobeMediaProbe:
 
         reader_thread = _threading.Thread(target=_reader, daemon=True)
         reader_thread.start()
-        reader_thread.join(timeout=30)
+        reader_thread.join(timeout=self.timeout_seconds)
         if reader_thread.is_alive():
             proc.kill()
             proc.wait()
