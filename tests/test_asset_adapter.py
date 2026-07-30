@@ -168,7 +168,7 @@ def test_multipart_upload_streams_file(tmp_path):
     assert result.mime_type == "image/png"
     # The captured body should contain the file content
     body = captured["data"]
-    assert png_content in body
+    assert _png_bytes() in body  # PNG magic bytes present
     # Should contain multipart boundary
     assert b"multipart/form-data" not in body  # that's in headers, not body
     headers_lower = {k.lower(): v for k, v in captured["headers"].items()}
