@@ -395,27 +395,36 @@ def test_multipart_body_is_streamed_not_buffered(tmp_path):
 
 
 def test_forged_role_caught_by_extension_guard(tmp_path):
-    """Forged role + correctly re-derived idempotency is still caught by
-    the extension-role mismatch (PNG file + narration role)."""
+    """Forged role (narration) + correctly re-derived idempotency + matching
+    content_type=image/png is still caught by the extension-role guard
+    (.png not allowed for synthetic_narration_audio). MIME re-detection would
+    succeed (file is PNG), so this isolates the extension-role guard."""
     runtime = tmp_path / "runtime"; runtime.mkdir()
     (runtime / "portrait.png").write_bytes(_png_bytes())
     cmd = prepare_asset_upload(
         operation_id="op1", asset_role="portrait_photo",
         runtime_root=runtime, local_output_ref="portrait.png")
     import hashlib as _h
-    # Re-derive idempotency for the forged role so only extension guard catches it.
+    # Re-derive idempotency for the forged role so it passes the idem check.
     forged_idem = "lc-hg-asset-" + _h.sha256(
         f"op1:synthetic_narration_audio:{cmd.expected_asset_digest}".encode()).hexdigest()
     from dataclasses import replace as _replace
+    # Keep content_type as image/png (matches the actual file MIME re-detection).
+    # The extension-role guard (.png ∉ synthetic_narration_audio's allowed exts)
+    # is the only thing that can catch this.
     forged = _replace(cmd, asset_role="synthetic_narration_audio",
-                       idempotency_key=forged_idem,
-                       provider_filename="narration.wav",
-                       content_type="audio/wav")
+                       idempotency_key=forged_idem)
+    transport_called = []
+    class _TrackOpener:
+        def open(self, req, timeout=None):
+            transport_called.append(req)
+            return None
     transport = HeyGenHttpTransport(api_key_provider=lambda: "key",
-        opener_factory=lambda: type("O", (), {"open": lambda s,r,t=30: None}))
+        opener_factory=lambda: _TrackOpener())
     adapter = HeyGenAssetAdapter(transport)
-    with pytest.raises(AssetUploadError, match="extension|content_type|mime"):
+    with pytest.raises(AssetUploadError, match="extension"):
         adapter.upload_asset(forged, runtime_root=runtime)
+    assert transport_called == []  # transport never reached
 
 
 def test_transport_network_timeout_maps_ambiguous_retryable(tmp_path):
@@ -476,3 +485,24 @@ def test_transport_auth_failed_maps_not_sent(tmp_path):
         adapter.upload_asset(cmd, runtime_root=runtime)
     assert exc_info.value.code == "auth_failed"
     assert exc_info.value.submission_certainty == "not_sent"
+
+
+def test_transport_malformed_response_maps_ambiguous_non_retryable(tmp_path):
+    """HttpTransportError(malformed_response) → ambiguous, non-retryable."""
+    from lecturecast.heygen_http import HttpTransportError
+    runtime = tmp_path / "runtime"; runtime.mkdir()
+    (runtime / "portrait.png").write_bytes(_png_bytes())
+    cmd = prepare_asset_upload(
+        operation_id="op1", asset_role="portrait_photo",
+        runtime_root=runtime, local_output_ref="portrait.png")
+    class _ErrOpener:
+        def open(self, req, timeout=None):
+            raise HttpTransportError(code="malformed_response", message="bad json")
+    transport = HeyGenHttpTransport(api_key_provider=lambda: "key",
+        opener_factory=lambda: _ErrOpener())
+    adapter = HeyGenAssetAdapter(transport)
+    with pytest.raises(AssetUploadAmbiguousError) as exc_info:
+        adapter.upload_asset(cmd, runtime_root=runtime)
+    assert exc_info.value.code == "malformed_response"
+    assert exc_info.value.retryable is False
+    assert exc_info.value.submission_certainty == "maybe_sent"
