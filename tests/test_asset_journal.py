@@ -211,10 +211,11 @@ class TestAssetClaim:
         try:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
-            _do_claim(repo, conn)
+            c = _do_claim(repo, conn)
             repo.apply_asset_outcome_in_tx(conn, upload_id="u1", asset_id="ax",
                 retention_mode="ephemeral", credential_profile_id="prof",
-                now_iso="2026-07-30T00:00:01Z")
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
             again = _do_claim(repo, conn, now="2026-07-30T00:00:02Z")
             assert again.status == "done"
             assert again.remote_resource_id is not None
@@ -264,10 +265,11 @@ class TestAssetApplyOutcome:
         try:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
-            _do_claim(repo, conn)
+            c = _do_claim(repo, conn)
             rid = repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
                 asset_id="ax", retention_mode="ephemeral",
-                credential_profile_id="prof", now_iso="2026-07-30T00:00:01Z")
+                credential_profile_id="prof", now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
             up = conn.execute("SELECT status, remote_resource_id FROM "
                               "heygen_asset_uploads WHERE upload_id=?",
                               ("u1",)).fetchone()
@@ -294,12 +296,13 @@ class TestAssetApplyOutcome:
         try:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
-            _do_claim(repo, conn, role="synthetic_narration_audio",
+            c = _do_claim(repo, conn, role="synthetic_narration_audio",
                       digest=D_AUDIO, ctype="audio/wav", fname="narration.wav",
                       lref="r/n.wav")
             rid = repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
                 asset_id="aud", retention_mode="ephemeral",
-                credential_profile_id="prof", now_iso="2026-07-30T00:00:01Z")
+                credential_profile_id="prof", now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
             kind = conn.execute("SELECT resource_kind FROM heygen_remote_resources "
                                 "WHERE resource_id=?", (rid,)).fetchone()[0]
             assert kind == "audio_asset"
@@ -311,13 +314,15 @@ class TestAssetApplyOutcome:
         try:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
-            _do_claim(repo, conn)
+            c = _do_claim(repo, conn)
             rid1 = repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
                 asset_id="ax", retention_mode="ephemeral",
-                credential_profile_id="prof", now_iso="2026-07-30T00:00:01Z")
+                credential_profile_id="prof", now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
             rid2 = repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
                 asset_id="ax", retention_mode="ephemeral",
-                credential_profile_id="prof", now_iso="2026-07-30T00:00:02Z")
+                credential_profile_id="prof", now_iso="2026-07-30T00:00:02Z",
+                lease_owner=LEASE, expected_fence=c.fence)
             assert rid1 == rid2  # no duplicate resource
             n = conn.execute("SELECT count(*) c FROM heygen_remote_resources "
                              "WHERE remote_id='ax'").fetchone()["c"]
@@ -330,11 +335,12 @@ class TestAssetApplyOutcome:
         try:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
-            _do_claim(repo, conn)
+            c = _do_claim(repo, conn)
             with pytest.raises(ValueError):
                 repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
                     asset_id="  ", retention_mode="ephemeral",
-                    credential_profile_id="prof", now_iso=NOW)
+                    credential_profile_id="prof", now_iso=NOW,
+                    lease_owner=LEASE, expected_fence=c.fence)
         finally:
             conn.close()
 
@@ -344,15 +350,17 @@ class TestAssetApplyOutcome:
         try:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
-            _do_claim(repo, conn)
+            c = _do_claim(repo, conn)
             repo.apply_asset_outcome_in_tx(conn, upload_id="u1", asset_id="ax",
                 retention_mode="ephemeral", credential_profile_id="prof",
-                now_iso="2026-07-30T00:00:01Z")
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
             from lecturecast.operation_repository import OperationIntegrityError
             with pytest.raises(OperationIntegrityError):
                 repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
                     asset_id="different", retention_mode="ephemeral",
-                    credential_profile_id="prof", now_iso="2026-07-30T00:00:02Z")
+                    credential_profile_id="prof", now_iso="2026-07-30T00:00:02Z",
+                    lease_owner=LEASE, expected_fence=c.fence)
         finally:
             conn.close()
 
@@ -363,11 +371,12 @@ class TestAssetFailure:
         try:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
-            _do_claim(repo, conn)
+            c = _do_claim(repo, conn)
             status = repo.apply_asset_upload_failure_in_tx(
-                conn, upload_id="u2-fail" if False else "u1",
-                error_code="network_timeout", submission_certainty="maybe_sent",
-                retryable=True, now_iso="2026-07-30T00:00:30Z")
+                conn, upload_id="u1", error_code="network_timeout",
+                submission_certainty="maybe_sent", retryable=True,
+                now_iso="2026-07-30T00:00:30Z",
+                lease_owner=LEASE, expected_fence=c.fence)
             assert status == "reconciliation_required"
             row = conn.execute("SELECT maybe_sent_at, idempotency_expires_at, "
                                "last_error_code FROM heygen_asset_uploads "
@@ -383,10 +392,11 @@ class TestAssetFailure:
         try:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
-            _do_claim(repo, conn)
+            c = _do_claim(repo, conn)
             status = repo.apply_asset_upload_failure_in_tx(
                 conn, upload_id="u1", error_code="auth_failed",
-                submission_certainty="not_sent", retryable=False, now_iso=NOW)
+                submission_certainty="not_sent", retryable=False, now_iso=NOW,
+                lease_owner=LEASE, expected_fence=c.fence)
             assert status == "failed"
         finally:
             conn.close()
@@ -396,10 +406,11 @@ class TestAssetFailure:
         try:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
-            _do_claim(repo, conn)
+            c = _do_claim(repo, conn)
             status = repo.apply_asset_upload_failure_in_tx(
                 conn, upload_id="u1", error_code="connection_error",
-                submission_certainty="not_sent", retryable=True, now_iso=NOW)
+                submission_certainty="not_sent", retryable=True, now_iso=NOW,
+                lease_owner=LEASE, expected_fence=c.fence)
             assert status == "upload_pending"
             nr = conn.execute("SELECT next_retry_at FROM heygen_asset_uploads "
                               "WHERE upload_id=?", ("u1",)).fetchone()[0]
@@ -407,22 +418,45 @@ class TestAssetFailure:
         finally:
             conn.close()
 
-    def test_past_idempotency_window_goes_manual(self):
+    def test_past_idempotency_window_goes_manual_at_reclaim(self):
+        # Per Codex #3: past the 24h replay window, the upload must be promoted
+        # to manual BEFORE any provider call — i.e. at reclaim time, not at a
+        # second failure.
         conn, td = _db()
         try:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
-            _do_claim(repo, conn)
-            # first maybe-sent at t0
+            c = _do_claim(repo, conn, now="2026-07-30T00:00:00Z")
             repo.apply_asset_upload_failure_in_tx(
                 conn, upload_id="u1", error_code="network_timeout",
                 submission_certainty="maybe_sent", retryable=True,
-                now_iso="2026-07-30T00:00:30Z")
-            # replay still ambiguous 25h later → past the 24h window
-            status = repo.apply_asset_upload_failure_in_tx(
-                conn, upload_id="u1", error_code="network_timeout",
-                submission_certainty="maybe_sent", retryable=True,
-                now_iso="2026-07-31T01:00:30Z")
-            assert status == "manual_reconciliation_required"
+                now_iso="2026-07-30T00:00:30Z",
+                lease_owner=LEASE, expected_fence=c.fence)
+            # reclaim 25h later: past the 24h window → terminal (manual).
+            reclaim = _do_claim(repo, conn, now="2026-07-31T01:00:30Z")
+            assert reclaim.status == "terminal"
+            st = conn.execute("SELECT status FROM heygen_asset_uploads "
+                              "WHERE upload_id=?", ("u1",)).fetchone()[0]
+            assert st == "manual_reconciliation_required"
+        finally:
+            conn.close()
+
+    def test_stale_fence_apply_is_rejected(self):
+        # A second worker claiming the same upload bumps the fence; the first
+        # worker's apply with the stale fence must fail (no overwrite).
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            c1 = _do_claim(repo, conn, now="2026-07-30T00:00:00Z")
+            # worker 2 reclaims after lease expiry → fence bumps.
+            _do_claim(repo, conn, now="2026-07-30T00:02:00Z")
+            from lecturecast.operation_repository import OperationIntegrityError
+            with pytest.raises(OperationIntegrityError):
+                repo.apply_asset_outcome_in_tx(
+                    conn, upload_id="u1", asset_id="ax",
+                    retention_mode="ephemeral", credential_profile_id="prof",
+                    now_iso="2026-07-30T00:02:30Z",
+                    lease_owner=LEASE, expected_fence=c1.fence)
         finally:
             conn.close()

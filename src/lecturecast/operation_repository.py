@@ -1817,13 +1817,19 @@ class OperationRepository:
         provider_filename: str, idempotency_key: str,
         lease_owner: str, now_iso: str, lease_seconds: int,
     ) -> AssetClaimResult:
-        """Claim an asset upload row for one attempt. Idempotent on upload_id;
-        the idempotency_key must match on replay. Classification:
-          uploaded          → 'done' (carry remote_resource_id)
+        """Claim an asset upload row for one attempt. Idempotent on upload_id:
+        every immutable field must match on replay (not just the idempotency
+        key). Classification:
+          uploaded          → 'done' (carry remote_resource_id; verified non-null)
           failed/cancelled/
           manual_reconcile  → 'terminal'
+          reconciliation_required
+            within 24h      → reclaimable ('claimed' on expiry)
+            past 24h         → promoted to manual ('terminal') before provider call
           active lease      → 'busy'
-          expired/absent    → 'claimed' (bump fence + attempts, set lease)
+          backoff not elapsed → 'retry_wait'
+          else              → 'claimed' (bump fence + attempts, set lease)
+        Half lease states (one of owner/expires set) fail closed.
         """
         self._require_tx(conn)
         conn.row_factory = sqlite3.Row
@@ -1832,9 +1838,7 @@ class OperationRepository:
         _check_lease_seconds(lease_seconds)
         expires_iso = _canonical(now + timedelta(seconds=lease_seconds))
         row = conn.execute(
-            "SELECT status, remote_resource_id, attempt_started_at, lease_owner, "
-            "lease_expires_at, lease_fence, attempts, idempotency_key "
-            "FROM heygen_asset_uploads WHERE upload_id = ?",
+            "SELECT * FROM heygen_asset_uploads WHERE upload_id = ?",
             (upload_id,),
         ).fetchone()
         if row is None:
@@ -1850,25 +1854,57 @@ class OperationRepository:
                  idempotency_key, lease_owner, expires_iso, now_iso, now_iso, now_iso),
             )
             return AssetClaimResult(upload_id, "claimed", 1, 1, expires_iso, None)
-        if row["idempotency_key"] != idempotency_key:
-            raise OperationIntegrityError(
-                "asset upload idempotency_key mismatch on replay")
+        # Replay: every immutable field must match the stored row.
+        for col, val in {
+            "parent_operation_id": parent_operation_id, "asset_role": asset_role,
+            "content_digest": content_digest, "local_ref": local_ref,
+            "content_type": content_type, "size_bytes": size_bytes,
+            "provider_filename": provider_filename,
+            "idempotency_key": idempotency_key,
+        }.items():
+            if row[col] != val:
+                raise OperationIntegrityError(
+                    f"asset upload {col} mismatch on replay for {upload_id!r}")
         if row["status"] == "uploaded":
+            if row["remote_resource_id"] is None:
+                raise OperationIntegrityError(
+                    f"uploaded asset upload {upload_id!r} has no remote_resource_id")
             return AssetClaimResult(upload_id, "done", row["lease_fence"],
                                    row["attempts"], None, row["remote_resource_id"])
         if row["status"] in ("failed", "cancelled", "manual_reconciliation_required"):
             return AssetClaimResult(upload_id, "terminal", row["lease_fence"],
                                    row["attempts"], None, None)
+        # reconciliation_required past the 24h replay window → promote to manual
+        # (terminal) BEFORE attempting any provider call (no blind retransmit).
+        if row["status"] == "reconciliation_required":
+            exp = row["idempotency_expires_at"]
+            if exp is not None and _parse_utc(exp) <= now:
+                conn.execute(
+                    "UPDATE heygen_asset_uploads SET "
+                    "status='manual_reconciliation_required', updated_at=? "
+                    "WHERE upload_id=?", (now_iso, upload_id))
+                return AssetClaimResult(upload_id, "terminal", row["lease_fence"],
+                                       row["attempts"], None, None)
+        # Retry-backoff gate.
+        nr = row["next_retry_at"]
+        if nr is not None and _parse_utc(nr) > now:
+            return AssetClaimResult(upload_id, "retry_wait", row["lease_fence"],
+                                   row["attempts"], None, None)
+        # Half lease → corrupt topology, fail closed.
+        owner, lease_exp, att = (row["lease_owner"], row["lease_expires_at"],
+                                 row["attempt_started_at"])
+        if (owner is None) != (lease_exp is None):
+            raise OperationIntegrityError(
+                f"asset upload {upload_id!r} has a half lease state")
+        if att is not None and owner is not None and _parse_utc(lease_exp) > now:
+            return AssetClaimResult(upload_id, "busy", row["lease_fence"],
+                                   row["attempts"], lease_exp, None)
         new_fence = row["lease_fence"] + 1
         new_attempts = row["attempts"] + 1
-        if row["attempt_started_at"] is not None and row["lease_expires_at"] is not None:
-            if _parse_utc(row["lease_expires_at"]) > now:
-                return AssetClaimResult(upload_id, "busy", row["lease_fence"],
-                                       row["attempts"], row["lease_expires_at"], None)
         conn.execute(
             "UPDATE heygen_asset_uploads SET status='uploading', attempts=?, "
             "lease_owner=?, lease_expires_at=?, lease_fence=?, attempt_started_at=?, "
-            "updated_at=? WHERE upload_id=?",
+            "next_retry_at=NULL, updated_at=? WHERE upload_id=?",
             (new_attempts, lease_owner, expires_iso, new_fence, now_iso, now_iso,
              upload_id),
         )
@@ -1878,27 +1914,30 @@ class OperationRepository:
     def apply_asset_outcome_in_tx(
         self, conn: sqlite3.Connection, *, upload_id: str, asset_id: str,
         retention_mode: str, credential_profile_id: str, now_iso: str,
+        lease_owner: str, expected_fence: int,
     ) -> int:
         """On a successful upload: insert the remote_resource + a parent-op ref,
         backfill remote_resource_id, and mark the upload 'uploaded' — all in the
-        caller's fenced tx. resource_kind is derived from asset_role (portrait_
-        photo→portrait_asset, audio→audio_asset). Idempotent: a re-apply on an
-        already-uploaded row is a no-op returning the existing resource_id."""
+        caller's fenced tx. The status flip is guarded by a CAS on the claim's
+        lease_owner + fence (a stale worker cannot overwrite a newer claim).
+        resource_kind is derived from asset_role (portrait_photo→portrait_asset,
+        audio→audio_asset). Idempotent: a re-apply on an already-uploaded row is
+        a no-op returning the existing resource_id (asset_id must match)."""
         self._require_tx(conn)
         conn.row_factory = sqlite3.Row
+        _require_lease_owner(lease_owner)
+        if not isinstance(expected_fence, int) or expected_fence < 0:
+            raise ValueError("expected_fence must be a non-negative int")
         if not isinstance(asset_id, str) or not asset_id.strip():
             raise ValueError("asset_id must be a non-empty string")
         row = conn.execute(
-            "SELECT parent_operation_id, asset_role, status, lease_fence, "
+            "SELECT parent_operation_id, asset_role, status, "
             "remote_resource_id FROM heygen_asset_uploads WHERE upload_id = ?",
             (upload_id,),
         ).fetchone()
         if row is None:
             raise OperationStateError(f"no asset upload {upload_id!r}")
         if row["status"] == "uploaded":
-            # Idempotent re-apply: the new asset_id MUST match the one already
-            # bound. A different id means the same upload row is being tied to a
-            # second remote asset — an integrity violation, not a replay.
             existing = conn.execute(
                 "SELECT remote_id FROM heygen_remote_resources WHERE resource_id=?",
                 (row["remote_resource_id"],),
@@ -1922,32 +1961,40 @@ class OperationRepository:
             "(resource_id, operation_id, created_at) VALUES (?,?,?)",
             (resource_id, row["parent_operation_id"], now_iso),
         )
-        conn.execute(
+        cur = conn.execute(
             "UPDATE heygen_asset_uploads SET status='uploaded', remote_resource_id=?, "
             "uploaded_at=?, lease_owner=NULL, lease_expires_at=NULL, "
-            "lease_fence=?, next_retry_at=NULL, last_error_code=NULL, updated_at=? "
-            "WHERE upload_id=?",
-            (resource_id, now_iso, row["lease_fence"] + 1, now_iso, upload_id),
+            "attempt_started_at=NULL, next_retry_at=NULL, last_error_code=NULL, "
+            "updated_at=? WHERE upload_id=? AND status='uploading' AND lease_owner=? "
+            "AND lease_fence=? AND attempt_started_at IS NOT NULL",
+            (resource_id, now_iso, now_iso, upload_id, lease_owner, expected_fence),
         )
+        if cur.rowcount != 1:
+            raise OperationIntegrityError(
+                f"asset upload {upload_id!r} fence conflict — lease no longer held "
+                f"(owner={lease_owner!r}, fence={expected_fence})")
         return resource_id
 
     def apply_asset_upload_failure_in_tx(
         self, conn: sqlite3.Connection, *, upload_id: str, error_code: str,
         submission_certainty: str, retryable: bool, now_iso: str,
-        backoff_seconds: int = 30,
+        lease_owner: str, expected_fence: int, backoff_seconds: int = 30,
     ) -> str:
-        """Record a failed upload attempt. maybe_sent → reconciliation_required
-        within the 24h idempotency window (or manual_reconciliation_required past
-        it — never blind-retransmit). not_sent → upload_pending (retryable, with
-        backoff) or failed (permanent). Returns the new status."""
+        """Record a failed upload attempt, guarded by the same lease CAS as
+        apply_asset_outcome (a stale worker cannot flip a newer claim's state).
+        attempts/fence increment only at claim, never here. maybe_sent →
+        reconciliation_required within the 24h idempotency window (or
+        manual_reconciliation_required past it — never blind-retransmit);
+        not_sent → upload_pending (retryable backoff, attempt cleared) or failed
+        (permanent). Returns the new status."""
         self._require_tx(conn)
         conn.row_factory = sqlite3.Row
+        _require_lease_owner(lease_owner)
         if submission_certainty not in ("not_sent", "maybe_sent"):
             raise ValueError(f"unknown submission_certainty: {submission_certainty!r}")
         row = conn.execute(
-            "SELECT status, lease_fence, attempts, maybe_sent_at, "
-            "idempotency_expires_at, attempt_started_at "
-            "FROM heygen_asset_uploads WHERE upload_id=?",
+            "SELECT status, maybe_sent_at, idempotency_expires_at, "
+            "attempt_started_at FROM heygen_asset_uploads WHERE upload_id=?",
             (upload_id,),
         ).fetchone()
         if row is None:
@@ -1955,13 +2002,10 @@ class OperationRepository:
         if row["status"] == "uploaded":
             return "uploaded"
         now = _parse_utc(now_iso)
-        new_fence = row["lease_fence"] + 1
-        new_attempts = row["attempts"] + 1
         if submission_certainty == "maybe_sent":
             # Freeze the 24h replay window at the FIRST possible-send moment:
             # the attempt's start time (earlier of maybe_sent_at /
-            # attempt_started_at), never the failure-land time — HeyGen only
-            # guarantees replay within 24h of the original send.
+            # attempt_started_at), never the failure-land time.
             maybe_sent = row["maybe_sent_at"] or row["attempt_started_at"] or now_iso
             expires = row["idempotency_expires_at"] or _canonical(
                 _parse_utc(maybe_sent) + timedelta(
@@ -1972,29 +2016,27 @@ class OperationRepository:
             else:
                 status = "reconciliation_required"
                 next_retry = _canonical(now + timedelta(seconds=backoff_seconds))
-            conn.execute(
-                "UPDATE heygen_asset_uploads SET status=?, last_error_code=?, "
-                "attempts=?, maybe_sent_at=?, idempotency_expires_at=?, "
-                "next_retry_at=?, lease_owner=NULL, lease_expires_at=NULL, "
-                "lease_fence=?, updated_at=? WHERE upload_id=?",
-                (status, error_code, new_attempts, maybe_sent, expires, next_retry,
-                 new_fence, now_iso, upload_id),
-            )
-            return status
-        # not_sent
-        if retryable:
+        elif retryable:
             status = "upload_pending"
             next_retry = _canonical(now + timedelta(seconds=backoff_seconds))
         else:
             status = "failed"
             next_retry = None
-        conn.execute(
-            "UPDATE heygen_asset_uploads SET status=?, last_error_code=?, attempts=?, "
-            "next_retry_at=?, lease_owner=NULL, lease_expires_at=NULL, lease_fence=?, "
-            "updated_at=? WHERE upload_id=?",
-            (status, error_code, new_attempts, next_retry, new_fence, now_iso,
-             upload_id),
+        cur = conn.execute(
+            "UPDATE heygen_asset_uploads SET status=?, last_error_code=?, "
+            "maybe_sent_at=COALESCE(maybe_sent_at, ?), idempotency_expires_at=COALESCE("
+            "idempotency_expires_at, ?), next_retry_at=?, lease_owner=NULL, "
+            "lease_expires_at=NULL, attempt_started_at=NULL, updated_at=? "
+            "WHERE upload_id=? AND status='uploading' AND lease_owner=? AND "
+            "lease_fence=? AND attempt_started_at IS NOT NULL",
+            (status, error_code, maybe_sent if submission_certainty == "maybe_sent"
+             else None, expires if submission_certainty == "maybe_sent"
+             else None, next_retry, now_iso, upload_id, lease_owner, expected_fence),
         )
+        if cur.rowcount != 1:
+            raise OperationIntegrityError(
+                f"asset upload {upload_id!r} fence conflict — lease no longer held "
+                f"(owner={lease_owner!r}, fence={expected_fence})")
         return status
 
 
@@ -2046,7 +2088,7 @@ _ASSET_IDEMPOTENCY_WINDOW_SECONDS = 24 * 60 * 60
 @dataclass(frozen=True)
 class AssetClaimResult:
     upload_id: str
-    status: str  # "claimed" | "busy" | "done" | "ambiguous" | "terminal"
+    status: str  # "claimed" | "busy" | "done" | "terminal" | "retry_wait"
     fence: int
     attempts: int
     lease_expires_at: str | None
