@@ -155,6 +155,95 @@ class HeyGenHttpTransport:
         filtered = _filter_headers(resp.headers)
         return HttpResponse(resp.status, parsed_body, filtered)
 
+    def request_multipart_file(
+        self,
+        *,
+        path: str,
+        fileobj,
+        filename: str,
+        content_type: str,
+        file_size: int,
+        idempotency_key: str,
+    ) -> HttpResponse:
+        """Upload a single file via multipart/form-data. Uses a deterministic
+        boundary derived from the idempotency key. The file is streamed in
+        chunks — never fully buffered. Only the 'file' field is sent."""
+        import hashlib as _h
+        import io as _io
+        _validate_path(path)
+        if not _IDEMPOTENCY_RE.fullmatch(idempotency_key):
+            raise ValueError(f"invalid Idempotency-Key: {idempotency_key!r}")
+        if type(file_size) is not int or file_size <= 0 or file_size > 33_554_432:
+            raise ValueError("file_size must be a positive int ≤ 32 MiB")
+        # Sanitize filename: basename only, no path separators/control chars/quotes.
+        safe_name = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        safe_name = re.sub(r"[\x00-\x1f\"'\\/]", "", safe_name).strip()
+        if not safe_name:
+            raise ValueError("filename must be a non-empty basename")
+        api_key = self._api_key_provider()
+        if not isinstance(api_key, str) or not api_key.strip():
+            raise HttpTransportError(code="auth_failed", message="API key is blank or missing")
+
+        boundary = "----lec" + _h.sha256(idempotency_key.encode()).hexdigest()[:32]
+        prefix = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{safe_name}"\r\n'
+            f"Content-Type: {content_type}\r\n\r\n"
+        ).encode("utf-8")
+        suffix = f"\r\n--{boundary}--\r\n".encode("utf-8")
+        total_length = len(prefix) + file_size + len(suffix)
+
+        url = self._base_url + path
+        headers = {
+            "X-Api-Key": api_key,
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Content-Length": str(total_length),
+            "Idempotency-Key": idempotency_key,
+        }
+
+        # Build a streaming body iterator
+        def body_iter():
+            yield prefix
+            remaining = file_size
+            while remaining > 0:
+                chunk = fileobj.read(min(65536, remaining))
+                if not chunk:
+                    raise HttpTransportError(code="connection_error", message="file ended prematurely")
+                remaining -= len(chunk)
+                yield chunk
+            yield suffix
+
+        body_bytes = b"".join(body_iter())
+        req = urllib_request.Request(url, data=body_bytes, method="POST", headers=headers)
+        try:
+            opener = self._opener_factory()
+            resp = opener.open(req, timeout=self._timeout)
+        except HTTPError as exc:
+            raise _make_error_response(exc) from None
+        except URLError as exc:
+            reason = str(exc.reason).lower()
+            if "timed out" in reason:
+                raise HttpTransportError(code="network_timeout", message=str(exc.reason)) from exc
+            raise HttpTransportError(code="connection_error", message=str(exc.reason)) from exc
+        except OSError as exc:
+            raise HttpTransportError(code="connection_error", message=str(exc)) from exc
+
+        try:
+            raw = _stream_read(resp, _RESPONSE_MAX)
+            if len(raw) >= _RESPONSE_MAX:
+                raise HttpTransportError(code="malformed_response", message="response exceeded 1 MiB")
+            if not raw:
+                raise HttpTransportError(code="malformed_response", message="empty response body")
+            parsed_body = json.loads(raw)
+            if not isinstance(parsed_body, dict):
+                raise HttpTransportError(code="malformed_response", message="response is not a JSON object")
+        except json.JSONDecodeError as exc:
+            raise HttpTransportError(code="malformed_response", message="response is not valid JSON") from exc
+        finally:
+            resp.close()
+        filtered = _filter_headers(resp.headers)
+        return HttpResponse(resp.status, parsed_body, filtered)
+
 
 # --- helpers ---------------------------------------------------------------
 

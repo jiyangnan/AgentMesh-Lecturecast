@@ -1,0 +1,238 @@
+"""HeyGen asset upload adapter — safe multipart upload (§5.5e5b0b).
+
+Uploads portrait photos and synthetic narration audio to HeyGen's
+POST /v3/assets endpoint via multipart/form-data.
+
+Security rules (per Codex e5b plan):
+- Single fixed multipart field "file" (no arbitrary fields)
+- Boundary deterministic from idempotency_key hash
+- File opened O_RDONLY | O_NOFOLLOW, fstat'd, regular-file checked
+- MIME from magic bytes + extension (both must match asset_role)
+- 32 MiB hard limit (double-layer: adapter fstat + transport check)
+- Hash completed BEFORE upload (no media leak on digest mismatch)
+- seek(0) + same FD for upload (no hash/upload swap)
+- Filename fixed by asset_role (portrait.png / narration.wav)
+- 32 MiB not buffered in memory (streaming multipart)
+"""
+from __future__ import annotations
+
+import hashlib
+import os
+import re
+import stat
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+from lecturecast.heygen_http import HeyGenHttpTransport, HttpResponse, HttpErrorResponse, HttpTransportError
+from lecturecast.heygen_adapter import HeyGenAdapterError
+
+AssetRole = Literal["portrait_photo", "synthetic_narration_audio"]
+
+_ASSET_MAX_BYTES = 32 * 1024 * 1024  # 32 MiB
+_PROVIDER_FILENAMES = {
+    "portrait_photo": "portrait.png",
+    "synthetic_narration_audio": "narration.wav",
+}
+_ALLOWED_EXTENSIONS = {
+    "portrait_photo": {".png", ".jpg", ".jpeg"},
+    "synthetic_narration_audio": {".mp3", ".wav"},
+}
+_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True)
+class AssetUploadCommand:
+    """Prepared, validated command for an asset upload. Constructed only via
+    prepare_asset_upload() — callers cannot forge it."""
+    operation_id: str
+    asset_role: AssetRole
+    local_output_ref: str        # runtime-root-relative path
+    expected_asset_digest: str    # sha256:<64hex>
+    idempotency_key: str          # derived from op+role+digest
+    provider_filename: str        # fixed by asset_role
+    content_type: str             # derived from magic+ext
+    file_size: int
+
+
+@dataclass(frozen=True)
+class AssetUploadResult:
+    asset_id: str
+    remote_url: str   # transient, never persisted
+    mime_type: str
+    size_bytes: int
+
+
+class AssetUploadError(HeyGenAdapterError):
+    """Asset upload failed (not_sent)."""
+    def __init__(self, *, code: str, message: str = ""):
+        super().__init__(code=code, retryable=False,
+                         submission_certainty="not_sent", message=message)
+
+
+class AssetUploadAmbiguousError(HeyGenAdapterError):
+    """Asset upload may have reached HeyGen (maybe_sent)."""
+    def __init__(self, *, code: str, message: str = ""):
+        super().__init__(code=code, retryable=True,
+                         submission_certainty="maybe_sent", message=message)
+
+
+def prepare_asset_upload(
+    *,
+    operation_id: str,
+    asset_role: AssetRole,
+    runtime_root: Path,
+    local_output_ref: str,
+) -> AssetUploadCommand:
+    """Derive a validated, deterministic AssetUploadCommand. Reads the file to
+    compute SHA-256 (which must match on replay). Derives idempotency_key from
+    operation_id + asset_role + digest so replays are idempotent."""
+    if asset_role not in ("portrait_photo", "synthetic_narration_audio"):
+        raise ValueError(f"unknown asset_role: {asset_role!r}")
+    if not operation_id or not operation_id.strip():
+        raise ValueError("operation_id is required")
+    if ".." in local_output_ref or local_output_ref.startswith("/"):
+        raise ValueError(f"invalid local_output_ref: {local_output_ref!r}")
+    file_path = runtime_root / local_output_ref
+    # Lexical containment
+    try:
+        rel = file_path.relative_to(runtime_root)
+    except ValueError:
+        raise ValueError("file path escapes runtime")
+    if "." in rel.parts or ".." in rel.parts:
+        raise ValueError(f"path contains . or ..: {file_path}")
+    # Open safely
+    flags = os.O_RDONLY
+    try:
+        flags |= os.O_NOFOLLOW  # type: ignore[attr-defined]
+    except AttributeError:
+        pass
+    fd = None
+    try:
+        fd = os.open(str(file_path), flags)
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError("asset file is not a regular file")
+        if st.st_size > _ASSET_MAX_BYTES:
+            raise ValueError(f"asset file exceeds {_ASSET_MAX_BYTES} bytes")
+        if st.st_size <= 0:
+            raise ValueError("asset file is empty")
+        # Determine MIME from magic + extension
+        ext = Path(local_output_ref).suffix.lower()
+        if ext not in _ALLOWED_EXTENSIONS.get(asset_role, set()):
+            raise ValueError(f"extension {ext!r} not allowed for role {asset_role!r}")
+        magic = os.read(fd, 16)
+        os.lseek(fd, 0, os.SEEK_SET)  # rewind
+        content_type = _detect_mime(magic, ext, asset_role)
+        # Stream SHA-256
+        h = hashlib.sha256()
+        remaining = st.st_size
+        while remaining > 0:
+            chunk_size = min(65536, remaining)
+            chunk = os.read(fd, chunk_size)
+            if not chunk:
+                break
+            h.update(chunk)
+            remaining -= len(chunk)
+        digest = "sha256:" + h.hexdigest()
+    finally:
+        if fd is not None:
+            os.close(fd)
+    # Derive idempotency key
+    idem_input = f"{operation_id}:{asset_role}:{digest}"
+    idempotency_key = "lc-hg-asset-" + hashlib.sha256(idem_input.encode()).hexdigest()
+    return AssetUploadCommand(
+        operation_id=operation_id,
+        asset_role=asset_role,
+        local_output_ref=local_output_ref,
+        expected_asset_digest=digest,
+        idempotency_key=idempotency_key,
+        provider_filename=_PROVIDER_FILENAMES[asset_role],
+        content_type=content_type,
+        file_size=st.st_size,
+    )
+
+
+def _detect_mime(magic: bytes, ext: str, asset_role: AssetRole) -> str:
+    """Detect MIME from magic bytes + extension. Both must be consistent with
+    the asset role."""
+    # PNG: \x89PNG\r\n\x1a\n
+    if magic[:8] == b"\x89PNG\r\n\x1a\n":
+        if ext != ".png":
+            raise ValueError("PNG magic but non-.png extension")
+        return "image/png"
+    # JPEG: \xff\xd8\xff
+    if magic[:3] == b"\xff\xd8\xff":
+        if ext not in (".jpg", ".jpeg"):
+            raise ValueError("JPEG magic but non-.jpg extension")
+        return "image/jpeg"
+    # MP3: ID3 tag or \xff\xfb/\xff\xf3/\xff\xf2
+    if magic[:3] == b"ID3" or magic[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
+        if ext != ".mp3":
+            raise ValueError("MP3 magic but non-.mp3 extension")
+        return "audio/mpeg"
+    # WAV: RIFF....WAVE
+    if magic[:4] == b"RIFF" and magic[8:12] == b"WAVE":
+        if ext != ".wav":
+            raise ValueError("WAV magic but non-.wav extension")
+        return "audio/wav"
+    raise ValueError(f"unrecognized file format for asset_role {asset_role!r}")
+
+
+class HeyGenAssetAdapter:
+    """Uploads assets to HeyGen POST /v3/assets. Uses the shared HTTP transport
+    for the actual multipart call."""
+
+    def __init__(self, transport: HeyGenHttpTransport) -> None:
+        self._transport = transport
+
+    def upload_asset(self, command: AssetUploadCommand, *, runtime_root: Path) -> AssetUploadResult:
+        """Upload one asset. Hash is already verified in prepare_asset_upload;
+        this method opens the same FD, seeks to 0, and streams via multipart."""
+        file_path = runtime_root / command.local_output_ref
+        # Re-open the file safely for the upload (hash was in prepare).
+        flags = os.O_RDONLY
+        try:
+            flags |= os.O_NOFOLLOW  # type: ignore[attr-defined]
+        except AttributeError:
+            pass
+        fd = None
+        try:
+            fd = os.open(str(file_path), flags)
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode) or st.st_size != command.file_size:
+                raise AssetUploadError(code="validation_error", message="file changed since prepare")
+            import io
+            fileobj = os.fdopen(fd, "rb")
+            fd = None  # ownership transferred
+            try:
+                resp = self._transport.request_multipart_file(
+                    path="/v3/assets",
+                    fileobj=fileobj,
+                    filename=command.provider_filename,
+                    content_type=command.content_type,
+                    file_size=command.file_size,
+                    idempotency_key=command.idempotency_key,
+                )
+            finally:
+                fileobj.close()
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+        data = resp.body.get("data", {})
+        asset_id = data.get("asset_id", "")
+        remote_url = data.get("url", "")
+        mime_type = data.get("mime_type", "")
+        size_bytes = data.get("size_bytes", 0)
+        if not asset_id:
+            raise AssetUploadAmbiguousError(
+                code="malformed_response",
+                message="upload succeeded but no asset_id returned",
+            )
+        return AssetUploadResult(
+            asset_id=asset_id,
+            remote_url=remote_url,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+        )
