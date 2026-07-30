@@ -105,7 +105,7 @@ def test_prepare_valid_png(tmp_path):
 
 def test_prepare_rejects_wrong_role_for_file(tmp_path):
     runtime = tmp_path / "runtime"; runtime.mkdir()
-    (runtime / "portrait.png").write_bytes(png_content)
+    (runtime / "portrait.png").write_bytes(_png_bytes())
     with pytest.raises(ValueError, match="extension"):
         prepare_asset_upload(
             operation_id="op1", asset_role="synthetic_narration_audio",
@@ -151,7 +151,7 @@ def test_multipart_upload_streams_file(tmp_path):
     """Verify multipart body contains the file content and correct headers."""
     runtime = tmp_path / "runtime"; runtime.mkdir()
     png_content = _png_bytes() + b"test portrait data"
-    (runtime / "portrait.png").write_bytes(png_content)
+    (runtime / "portrait.png").write_bytes(_png_bytes())
     cmd = prepare_asset_upload(
         operation_id="op1", asset_role="portrait_photo",
         runtime_root=runtime, local_output_ref="portrait.png")
@@ -190,7 +190,7 @@ def test_multipart_filename_sanitized():
     # Create the file in tmp and pass runtime_root
     runtime = Path("/tmp/test_multipart_runtime")
     runtime.mkdir(exist_ok=True)
-    (runtime / "portrait.png").write_bytes(png_content)
+    (runtime / "portrait.png").write_bytes(_png_bytes())
     try:
         adapter = HeyGenAssetAdapter(transport)
         adapter.upload_asset(cmd, runtime_root=runtime)
