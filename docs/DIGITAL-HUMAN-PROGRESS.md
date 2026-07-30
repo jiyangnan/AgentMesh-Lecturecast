@@ -42,7 +42,7 @@
 | §5.5e5b0a | HeyGenHttpTransport（host 锁 api.heygen.com/v3-only path/API key fresh/ProxyHandler/no-redirect/1MiB cap/headers whitelist/error body oversized guard） | ✅ |
 
 | §5.5e5b0b | asset upload adapter + 安全 multipart（digest re-verify/streaming iterator/shared path helper/forged command/error matrix/MIME binding） | ✅ |
-| §5.5e5b1 | HeyGen Videos v3 adapter（submit/poll/list-by-title/delete + closed descriptor + remote-id 校验 + 状态映射） | ✅ |
+| §5.5e5b1 | HeyGen Videos v3 adapter（封闭 descriptor + 响应资源绑定 + fail-closed reconcile + token cycle 检测 + canonical title 校验；4 轮 Codex 审阅后锁定） | ✅ |
 
 ## §6 跨仓 contract tests（commit bcec6f3，待 Codex 复审）
 
@@ -62,7 +62,7 @@
 
 ### 还没做
 
-- §5.5e5b0c asset journal/recovery
+- §5.5e5b0c asset journal/recovery（**当前进行中**，e5b1 锁定后按 Codex 顺序开干）
 - §5.5e5c/d capability wiring + doctor/canary
 - §5.5e6 RecoveryDirectiveCatalog 验签 + failure mapping + 宿主 workflow（§6 #14 依赖它）
 
