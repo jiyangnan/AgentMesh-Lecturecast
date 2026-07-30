@@ -68,8 +68,8 @@ class AssetUploadResult:
 
 class AssetUploadError(HeyGenAdapterError):
     """Asset upload failed (not_sent)."""
-    def __init__(self, *, code: str, message: str = ""):
-        super().__init__(code=code, retryable=False,
+    def __init__(self, *, code: str, message: str = "", retryable: bool = False):
+        super().__init__(code=code, retryable=retryable,
                          submission_certainty="not_sent", message=message)
 
 
@@ -218,6 +218,26 @@ class HeyGenAssetAdapter:
             if actual_digest != command.expected_asset_digest:
                 raise AssetUploadError(code="validation_error",
                     message="asset digest mismatch on re-open (file mutated)")
+            # Re-derive idempotency key from operation_id + role + digest.
+            idem_input = f"{command.operation_id}:{command.asset_role}:{actual_digest}"
+            expected_idem = "lc-hg-asset-" + hashlib.sha256(idem_input.encode()).hexdigest()
+            if expected_idem != command.idempotency_key:
+                raise AssetUploadError(code="validation_error",
+                    message="idempotency key does not match derivation")
+            # Re-detect MIME from magic + extension, verify matches command.
+            os.lseek(fd, 0, os.SEEK_SET)
+            magic = os.read(fd, 16)
+            os.lseek(fd, 0, os.SEEK_SET)
+            ext = Path(command.local_output_ref).suffix.lower()
+            re_detected_ct = _detect_mime(magic, ext, command.asset_role)
+            if re_detected_ct != command.content_type:
+                raise AssetUploadError(code="validation_error",
+                    message="content_type mismatch on re-open")
+            expected_fn = _PROVIDER_FILENAMES.get(
+                (command.asset_role, command.content_type), f"asset.{ext.lstrip('.')}")
+            if expected_fn != command.provider_filename:
+                raise AssetUploadError(code="validation_error",
+                    message="provider filename mismatch")
             # Rewind for upload.
             os.lseek(fd, 0, os.SEEK_SET)
             fileobj = os.fdopen(fd, "rb")
@@ -234,7 +254,10 @@ class HeyGenAssetAdapter:
             except HttpErrorResponse as exc:
                 raise self._map_error(exc) from None
             except HttpTransportError as exc:
-                raise AssetUploadAmbiguousError(code=exc.code,
+                if exc.code == "auth_failed":
+                    raise AssetUploadError(code="auth_failed",
+                        message=f"transport error: {exc}") from None
+                raise AssetUploadAmbiguousError(code="unknown",
                     message=f"transport error during upload: {exc}") from None
             finally:
                 fileobj.close()
@@ -254,6 +277,9 @@ class HeyGenAssetAdapter:
         if not isinstance(mime_type, str) or not mime_type.strip():
             raise AssetUploadAmbiguousError(code="malformed_response",
                 message="upload response missing mime_type")
+        if mime_type.strip() != command.content_type:
+            raise AssetUploadAmbiguousError(code="malformed_response",
+                message=f"MIME mismatch: response {mime_type} != upload {command.content_type}")
         size_bytes = data.get("size_bytes", 0)
         if type(size_bytes) is not int or size_bytes <= 0 or size_bytes != command.file_size:
             raise AssetUploadAmbiguousError(code="malformed_response",
@@ -267,15 +293,24 @@ class HeyGenAssetAdapter:
 
     @staticmethod
     def _map_error(exc: HttpErrorResponse) -> Exception:
-        """Map HTTP error responses to adapter errors with correct certainty."""
-        code = exc.provider_code or "unknown"
+        """Map HTTP error responses to adapter errors with stable internal codes.
+        Provider codes are preserved in the message, never used as .code."""
+        provider_code = exc.provider_code or "unknown"
         if exc.status == 429:
-            return AssetUploadError(code="rate_limited", message=f"HTTP 429: {code}")
+            return AssetUploadError(code="rate_limited", retryable=True,
+                message=f"HTTP 429 ({provider_code})")
         if exc.status == 409:
-            if code == "request_in_progress":
-                return AssetUploadAmbiguousError(code=code, message="upload already in progress")
-            return AssetUploadAmbiguousError(code=code, message=f"HTTP 409: {code}")
+            if provider_code == "request_in_progress":
+                return AssetUploadAmbiguousError(code="unknown",
+                    message="HTTP 409 request_in_progress")
+            return AssetUploadAmbiguousError(code="unknown",
+                message=f"HTTP 409 ({provider_code}) — non-retryable")
+        if exc.status in (400, 401, 403, 404, 422):
+            return AssetUploadError(code="validation_error",
+                message=f"HTTP {exc.status} ({provider_code})")
         if 400 <= exc.status < 500:
-            return AssetUploadError(code=code, message=f"HTTP {exc.status}: {code}")
+            return AssetUploadError(code="unknown",
+                message=f"HTTP {exc.status} ({provider_code})")
         # 5xx
-        return AssetUploadAmbiguousError(code=code, message=f"HTTP {exc.status}: {code}")
+        return AssetUploadAmbiguousError(code="unknown",
+            message=f"HTTP {exc.status} ({provider_code})")
