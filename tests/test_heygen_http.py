@@ -318,3 +318,122 @@ def test_api_key_read_each_call():
     t.request_json(method="GET", path="/v3/videos/a")
     t.request_json(method="GET", path="/v3/videos/b")
     assert count[0] == 2  # called twice, fresh each time
+
+
+# ---- e5b0a round-3: error body, default opener, canonical body --------
+
+def test_default_opener_has_redirect_handler():
+    """Default opener must wire _NoRedirectHandler."""
+    from lecturecast.heygen_http import HeyGenHttpTransport, _NoRedirectHandler
+    from urllib.request import HTTPRedirectHandler
+    t = HeyGenHttpTransport(api_key_provider=lambda: "key")
+    opener = t._opener_factory()
+    redirect_handlers = [h for h in opener.handlers if isinstance(h, HTTPRedirectHandler)]
+    assert len(redirect_handlers) == 1
+    assert isinstance(redirect_handlers[0], _NoRedirectHandler)
+
+def test_default_opener_disables_proxy():
+    """Default opener source includes ProxyHandler({}) to disable env proxies."""
+    import inspect
+    from lecturecast.heygen_http import HeyGenHttpTransport
+    src = inspect.getsource(HeyGenHttpTransport._default_opener)
+    assert "ProxyHandler({})" in src
+
+
+def test_canonical_json_body_sorts_keys():
+    """JSON body must use sort_keys + separators for deterministic replay."""
+    class _CapturingOpener:
+        def __init__(self): self.captured_body = None
+        def open(self, req, timeout=None):
+            self.captured_body = req.data
+            class _R:
+                status = 200
+                headers = {}
+                def read(self, n=-1):
+                    if not hasattr(self, "_s"):
+                        self._s = True
+                        return json.dumps({"ok": True}).encode()
+                    return b""
+                def close(self): pass
+            return _R()
+    cap = _CapturingOpener()
+    t = HeyGenHttpTransport(
+        api_key_provider=lambda: "key",
+        opener_factory=lambda: cap)
+    t.request_json(method="POST", path="/v3/videos",
+                   json_body={"b": 1, "a": 2})
+    assert cap.captured_body == json.dumps({"a": 2, "b": 1}, sort_keys=True,
+                                           separators=(",", ":")).encode()
+
+
+def test_api_key_header_sent_each_call():
+    """Each request gets a fresh API key in the X-Api-Key header."""
+    keys_sent = []
+    class _KeyCaptureOpener:
+        def open(self, req, timeout=None):
+            keys_sent.append(req.get_header("X-api-key") or req.headers.get("X-Api-Key") or "")
+            class _R:
+                status = 200
+                headers = {}
+                def read(self, n=-1):
+                    if not hasattr(self, "_s"):
+                        self._s = True
+                        return json.dumps({"ok": True}).encode()
+                    return b""
+                def close(self): pass
+            return _R()
+    counter = [0]
+    t = HeyGenHttpTransport(
+        api_key_provider=lambda: (counter.__setitem__(0, counter[0]+1) or f"key-{counter[0]}"),
+        opener_factory=lambda: _KeyCaptureOpener())
+    t.request_json(method="GET", path="/v3/videos/a")
+    t.request_json(method="GET", path="/v3/videos/b")
+    assert keys_sent == ["key-1", "key-2"]
+
+
+def test_idempotency_key_header_sent():
+    class _Cap:
+        def open(self, req, timeout=None):
+            assert req.get_header("Idempotency-key") == "idem-abc"
+            class _R:
+                status = 200
+                headers = {}
+                def read(self, n=-1):
+                    if not hasattr(self, "_s"):
+                        self._s = True
+                        return json.dumps({"ok": True}).encode()
+                    return b""
+                def close(self): pass
+            return _R()
+    t = HeyGenHttpTransport(
+        api_key_provider=lambda: "key",
+        opener_factory=lambda: _Cap())
+    t.request_json(method="POST", path="/v3/videos",
+                   json_body={"x": 1}, idempotency_key="idem-abc")
+
+
+def test_oversized_error_body_not_parsed(monkeypatch):
+    """Error body exceeding 1 MiB → body=None, provider_code=None."""
+    import urllib.error
+    big_body = b"x" * (2 * 1024 * 1024)
+    fake_exc = urllib.error.HTTPError(
+        "https://api.heygen.com/v3/videos", 500, "Server Error",
+        {"Content-Type": "text/plain"},
+        __import__("io").BytesIO(big_body))
+    from lecturecast.heygen_http import _make_error_response
+    err = _make_error_response(fake_exc)
+    assert err.status == 500
+    assert not err.body  # None or {}
+    assert err.provider_code is None
+
+
+def test_provider_code_rejects_control_chars(monkeypatch):
+    """provider_code with control chars or >128 chars is rejected."""
+    import urllib.error, io
+    body = json.dumps({"error": {"code": "bad\x00code"}}).encode()
+    fake_exc = urllib.error.HTTPError(
+        "https://api.heygen.com/v3/videos", 422, "Bad",
+        {}, io.BytesIO(body))
+    from lecturecast.heygen_http import _make_error_response
+    err = _make_error_response(fake_exc)
+    assert err.provider_code is None

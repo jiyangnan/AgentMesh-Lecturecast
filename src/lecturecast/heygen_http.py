@@ -228,19 +228,22 @@ def _make_error_response(exc: HTTPError) -> HttpErrorResponse:
         except Exception:
             pass
     body: dict | None = None
-    if raw:
-        try:
-            body = json.loads(raw)
-            if not isinstance(body, dict):
-                body = None
-        except json.JSONDecodeError:
-            body = None
     provider_code = None
-    if body and isinstance(body.get("error"), dict):
-        raw_code = body["error"].get("code", "")
-        provider_code = None
-        if isinstance(raw_code, str) and 1 <= len(raw_code) <= 128:
-            provider_code = raw_code.strip() or None
+    # Reject oversized error bodies — don't parse truncated JSON.
+    if len(raw) <= _RESPONSE_MAX:
+        if raw:
+            try:
+                body = json.loads(raw)
+                if not isinstance(body, dict):
+                    body = None
+            except json.JSONDecodeError:
+                body = None
+        if body and isinstance(body.get("error"), dict):
+            raw_code = body["error"].get("code", "")
+            if isinstance(raw_code, str):
+                cleaned = raw_code.strip()
+                if cleaned and re.fullmatch(r"[A-Za-z0-9._\-]{1,128}", cleaned):
+                    provider_code = cleaned
     filtered = _filter_headers(exc.headers)
     return HttpErrorResponse(exc.code, body, filtered, provider_code)
 
