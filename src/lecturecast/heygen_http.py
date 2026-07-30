@@ -1,0 +1,223 @@
+"""HeyGen HTTP transport — injectable urllib-based JSON + multipart client (§5.5e5b0a).
+
+A single HTTP boundary for all HeyGen API calls. Never logs keys, bodies, or
+URLs. Blocks redirects and environment proxies. API key is read fresh on every
+call via a provider callable (never cached).
+
+Per Codex e5b plan:
+- base URL HTTPS-only, no userinfo/query/fragment, host = api.heygen.com
+- path is relative /v3/... only (no full-URL injection)
+- Idempotency-Key validated 1–255 chars
+- response streamed with 1 MiB + 1 cap (even error bodies)
+- headers whitelisted: only Retry-After, request-id, Content-Type returned
+- structured transport errors (network/timeout/malformed) raised here;
+  endpoint-specific status mapping stays in the adapter
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Protocol
+from urllib import request as urllib_request
+from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin
+
+_DEFAULT_BASE_URL = "https://api.heygen.com"
+_RESPONSE_MAX = 1_048_576 + 1  # 1 MiB + 1 to detect overflow
+_IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9._\-:]{1,255}$")
+_PATH_RE = re.compile(r"^/v[0-9]+/[A-Za-z0-9._\-/]*$")
+_ALLOWED_HEADERS = frozenset({
+    "retry-after", "x-request-id", "request-id", "content-type",
+})
+
+
+class HttpTransportError(Exception):
+    """Base for transport-level failures (network, timeout, malformed)."""
+    def __init__(self, *, code: str, message: str = ""):
+        self.code = code
+        super().__init__(message or code)
+
+
+class HttpResponse:
+    """A successful HTTP response with a parsed JSON body."""
+    __slots__ = ("status", "body", "headers")
+
+    def __init__(self, status: int, body: dict, headers: dict):
+        self.status = status
+        self.body = body
+        self.headers = headers
+
+
+class HttpErrorResponse(Exception):
+    """A non-2xx HTTP response with status + sanitized headers."""
+    __slots__ = ("status", "body", "headers", "provider_code")
+
+    def __init__(self, status: int, body: dict | None, headers: dict,
+                 provider_code: str | None = None):
+        self.status = status
+        self.body = body or {}
+        self.headers = headers
+        self.provider_code = provider_code
+
+
+class HeyGenHttpTransport:
+    """HTTP transport for HeyGen API calls. Injectable for testing."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str = _DEFAULT_BASE_URL,
+        api_key_provider: Callable[[], str] | None = None,
+        timeout: int = 30,
+    ) -> None:
+        parsed = _validate_base_url(base_url)
+        self._base_url = parsed
+        self._api_key_provider = api_key_provider or _default_key_provider
+        self._timeout = timeout
+
+    def request_json(
+        self,
+        *,
+        method: str,
+        path: str,
+        json_body: dict | None = None,
+        idempotency_key: str | None = None,
+        params: dict[str, str] | None = None,
+    ) -> HttpResponse:
+        """Send a JSON request and return HttpResponse on 2xx, or raise
+        HttpErrorResponse on non-2xx (caller catches and maps to adapter error)."""
+        _validate_path(path)
+        if idempotency_key is not None and not _IDEMPOTENCY_RE.fullmatch(idempotency_key):
+            raise ValueError(f"invalid Idempotency-Key: {idempotency_key!r}")
+        api_key = self._api_key_provider()
+        if not isinstance(api_key, str) or not api_key.strip():
+            raise HttpTransportError(code="auth_failed", message="API key is blank or missing")
+
+        url = self._base_url + path
+        if params:
+            from urllib.parse import urlencode
+            url += "?" + urlencode(params)
+
+        body_bytes = b""
+        headers: dict[str, str] = {
+            "X-Api-Key": api_key,
+            "Accept": "application/json",
+        }
+        if json_body is not None:
+            body_bytes = json.dumps(json_body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        if idempotency_key is not None:
+            headers["Idempotency-Key"] = idempotency_key
+
+        req = urllib_request.Request(url, data=body_bytes or None, method=method,
+                                     headers=headers)
+        try:
+            opener = urllib_request.build_opener(
+                urllib_request.ProxyHandler({}), _NoRedirectHandler())
+            resp = opener.open(req, timeout=self._timeout)
+        except HTTPError as exc:
+            raise _make_error_response(exc) from None
+        except URLError as exc:
+            reason = str(exc.reason).lower()
+            if "timed out" in reason:
+                raise HttpTransportError(code="network_timeout", message=str(exc.reason)) from exc
+            raise HttpTransportError(code="connection_error", message=str(exc.reason)) from exc
+        except OSError as exc:
+            raise HttpTransportError(code="connection_error", message=str(exc)) from exc
+
+        try:
+            raw = _stream_read(resp, _RESPONSE_MAX)
+            if len(raw) >= _RESPONSE_MAX:
+                raise HttpTransportError(code="malformed_response", message="response exceeded 1 MiB")
+            parsed_body = json.loads(raw) if raw else {}
+            if not isinstance(parsed_body, dict):
+                raise HttpTransportError(code="malformed_response", message="response is not a JSON object")
+        except json.JSONDecodeError as exc:
+            raise HttpTransportError(code="malformed_response", message="response is not valid JSON") from exc
+        finally:
+            resp.close()
+
+        filtered = _filter_headers(resp.headers)
+        return HttpResponse(resp.status, parsed_body, filtered)
+
+
+# --- helpers ---------------------------------------------------------------
+
+def _default_key_provider() -> str:
+    return os.environ.get("HEYGEN_API_KEY", "")
+
+
+def _validate_base_url(url: str) -> str:
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(f"base_url must be HTTPS: {url}")
+    if parsed.username or parsed.password:
+        raise ValueError("base_url must not contain userinfo")
+    if parsed.query or parsed.fragment:
+        raise ValueError("base_url must not contain query or fragment")
+    if parsed.path and parsed.path != "/":
+        raise ValueError("base_url must not contain a path")
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise ValueError("base_url missing host")
+    return url.rstrip("/")
+
+
+def _validate_path(path: str) -> None:
+    if ".." in path or not _PATH_RE.fullmatch(path):
+        raise ValueError(f"invalid API path: {path!r}")
+
+
+def _stream_read(resp, max_bytes: int) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = resp.read(65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total >= max_bytes:
+            chunks.append(chunk)
+            break
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _filter_headers(headers) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for key in headers.keys():
+        kl = key.lower()
+        if kl in _ALLOWED_HEADERS:
+            result[kl] = headers[key]
+    return result
+
+
+def _make_error_response(exc: HTTPError) -> HttpErrorResponse:
+    raw = b""
+    try:
+        raw = exc.read(_RESPONSE_MAX)
+    except Exception:
+        pass
+    body: dict | None = None
+    if raw:
+        try:
+            body = json.loads(raw)
+            if not isinstance(body, dict):
+                body = None
+        except json.JSONDecodeError:
+            body = None
+    provider_code = None
+    if body and isinstance(body.get("error"), dict):
+        provider_code = str(body["error"].get("code", "")).strip() or None
+    filtered = _filter_headers(exc.headers)
+    return HttpErrorResponse(exc.code, body, filtered, provider_code)
+
+
+class _NoRedirectHandler(urllib_request.HTTPRedirectHandler):
+    """Refuse all redirects."""
+    def redirect_request(self, *args, **kwargs):
+        raise HttpTransportError(code="connection_error", message="redirect refused")
