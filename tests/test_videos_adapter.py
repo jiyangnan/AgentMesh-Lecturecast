@@ -167,6 +167,20 @@ def test_submit_rejects_bad_asset_id():
             _cmd(request_descriptor=descriptor))
 
 
+@pytest.mark.parametrize("bad_title", [
+    "", "t", "lecturecast:", "lc:op1", "lecturecast:op 1",
+    "lecturecast:" + "x" * 200, " lecturecast:op1",
+])
+def test_submit_rejects_bad_heygen_title(bad_title):
+    # The title is the recovery key for title reconciliation; a malformed title
+    # must be rejected before the request is sent.
+    transport, opener = _transport(_single({"data": {"video_id": "v", "status": "queued"}}))
+    with pytest.raises(ValueError, match="heygen_title"):
+        HeyGenVideosAdapter(transport).submit_video(_cmd(heygen_title=bad_title))
+    # Nothing was sent.
+    assert opener.calls == []
+
+
 # === submit: response strictness ===========================================
 
 def test_submit_data_not_dict_is_malformed_maybe_sent():
@@ -279,6 +293,15 @@ def test_submit_transport_timeout_maybe_sent():
         HeyGenVideosAdapter(transport).submit_video(_cmd())
     assert exc.value.submission_certainty == "maybe_sent"
     assert exc.value.retryable is True
+
+
+def test_submit_transport_malformed_not_retryable():
+    transport, _ = _transport(lambda call: HttpTransportError(code="malformed_response", message="x"))
+    with pytest.raises(HeyGenAdapterError) as exc:
+        HeyGenVideosAdapter(transport).submit_video(_cmd())
+    assert exc.value.code == "malformed_response"
+    assert exc.value.submission_certainty == "maybe_sent"
+    assert exc.value.retryable is False
 
 
 # === poll ===================================================================
@@ -447,6 +470,20 @@ def test_query_bad_timestamp_malformed():
         HeyGenVideosAdapter(transport).query_videos_by_title(_QUERY)
 
 
+@pytest.mark.parametrize("bad_ts", [
+    float("nan"), float("inf"), float("-inf"),
+    99999999999999, -99999999999999,
+])
+def test_query_non_finite_or_outrange_timestamp_malformed(bad_ts):
+    # NaN/Inf/out-of-range must surface as a structured error, not leak as a
+    # native ValueError/OverflowError/OSError.
+    transport, _ = _transport(_single({"data": [
+        {"id": "v1", "title": "t", "status": "completed", "created_at": bad_ts}],
+        "has_more": False}))
+    with pytest.raises(TitleQueryAdapterError):
+        HeyGenVideosAdapter(transport).query_videos_by_title(_QUERY)
+
+
 def test_query_duplicate_id_malformed_not_silently_dropped():
     transport, _ = _transport(_single({"data": [
         {"id": "v1", "title": "t", "status": "completed", "created_at": 1700000000},
@@ -475,7 +512,7 @@ def test_query_5xx_uses_title_error_type_retryable():
 # === delete ================================================================
 
 def test_delete_success():
-    transport, _ = _transport(_single({"data": {"deleted": True}}))
+    transport, _ = _transport(_single({"data": {"id": "vid_1", "deleted": True}}))
     assert HeyGenVideosAdapter(transport).delete_video("vid_1").status == "deleted"
 
 
@@ -485,13 +522,22 @@ def test_delete_404_already_absent():
 
 
 def test_delete_not_deleted_flag():
-    transport, _ = _transport(_single({"data": {"deleted": False}}))
+    transport, _ = _transport(_single({"data": {"id": "vid_1", "deleted": False}}))
     with pytest.raises(DeleteAdapterError, match="deleted"):
         HeyGenVideosAdapter(transport).delete_video("vid_1")
 
 
 def test_delete_id_mismatch_malformed():
     transport, _ = _transport(_single({"data": {"id": "vid_other", "deleted": True}}))
+    with pytest.raises(DeleteAdapterError, match="does not match"):
+        HeyGenVideosAdapter(transport).delete_video("vid_1")
+
+
+@pytest.mark.parametrize("returned_id", [None, 42, [], ""])
+def test_delete_id_missing_or_wrong_type_malformed(returned_id):
+    body = {"data": {"deleted": True}}
+    body["data"]["id"] = returned_id
+    transport, _ = _transport(_single(body))
     with pytest.raises(DeleteAdapterError, match="does not match"):
         HeyGenVideosAdapter(transport).delete_video("vid_1")
 
