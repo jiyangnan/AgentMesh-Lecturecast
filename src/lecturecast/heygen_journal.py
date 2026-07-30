@@ -196,7 +196,7 @@ _ASSET_UPLOADS_DDL = """
         content_digest TEXT NOT NULL,
         local_ref TEXT NOT NULL,
         content_type TEXT NOT NULL,
-        size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+        size_bytes INTEGER NOT NULL CHECK (size_bytes > 0),
         provider_filename TEXT NOT NULL,
         idempotency_key TEXT NOT NULL UNIQUE,
         status TEXT NOT NULL DEFAULT 'upload_pending'
