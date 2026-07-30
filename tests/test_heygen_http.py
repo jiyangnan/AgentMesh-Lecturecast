@@ -212,3 +212,110 @@ def test_header_whitelist(monkeypatch):
         assert "x-secret-internal" not in resp.headers
     finally:
         server.shutdown()
+
+
+# ---- e5b0a round-2 contract tests ------------------------------------
+
+def test_validate_base_url_rejects_evil_host():
+    with pytest.raises(ValueError, match="api.heygen.com"):
+        _validate_base_url("https://evil.example")
+
+
+def test_validate_base_url_rejects_non_443_port():
+    with pytest.raises(ValueError, match="443"):
+        _validate_base_url("https://api.heygen.com:8443")
+
+
+def test_validate_path_rejects_v1():
+    with pytest.raises(ValueError, match="path"):
+        _validate_path("/v1/videos")
+
+
+def test_validate_path_rejects_dot_segment():
+    with pytest.raises(ValueError, match="path"):
+        _validate_path("/v3/./videos")
+
+
+def test_validate_path_rejects_double_slash():
+    with pytest.raises(ValueError, match="path"):
+        _validate_path("/v3//videos")
+
+
+def test_transport_rejects_bad_method():
+    t = HeyGenHttpTransport(api_key_provider=lambda: "key")
+    with pytest.raises(ValueError, match="method"):
+        t.request_json(method="PUT", path="/v3/videos")
+
+
+def test_transport_rejects_bad_timeout():
+    t = HeyGenHttpTransport(api_key_provider=lambda: "key", timeout=0)
+    with pytest.raises(ValueError, match="timeout"):
+        t.request_json(method="GET", path="/v3/videos")
+
+
+def test_transport_rejects_empty_2xx(monkeypatch):
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        def log_message(self, *a): pass
+    server = _start_server(Handler)
+    port = server.server_address[1]
+    t = _make_transport(monkeypatch, port)
+    try:
+        with pytest.raises(HttpTransportError, match="empty"):
+            t.request_json(method="GET", path="/v3/videos/abc")
+    finally:
+        server.shutdown()
+
+
+def test_opener_factory_injection():
+    """Verify the opener factory is called and its opener is used."""
+    called = []
+    class _FakeOpener:
+        def open(self, req, timeout=None):
+            called.append(req)
+            from io import BytesIO
+            class _R:
+                status = 200
+                def read(self, n=-1):
+                if not hasattr(self, "_sent"):
+                    self._sent = True
+                    return json.dumps({"ok": True}).encode()
+                return b""
+                def close(self): pass
+                headers = {}
+            return _R()
+    t = HeyGenHttpTransport(
+        api_key_provider=lambda: "key",
+        opener_factory=lambda: _FakeOpener())
+    resp = t.request_json(method="GET", path="/v3/videos/abc")
+    assert resp.body == {"ok": True}
+    assert len(called) == 1
+
+
+def test_api_key_read_each_call():
+    """API key provider is called on every request, not cached."""
+    count = [0]
+    def provider():
+        count[0] += 1
+        return f"key-{count[0]}"
+    class _FakeOpener:
+        def open(self, req, timeout=None):
+            class _R:
+                status = 200
+                def read(self, n=-1):
+                if not hasattr(self, "_sent"):
+                    self._sent = True
+                    return json.dumps({"ok": True}).encode()
+                return b""
+                def close(self): pass
+                headers = {}
+            return _R()
+    t = HeyGenHttpTransport(
+        api_key_provider=provider,
+        opener_factory=lambda: _FakeOpener())
+    t.request_json(method="GET", path="/v3/videos/a")
+    t.request_json(method="GET", path="/v3/videos/b")
+    assert count[0] == 2  # called twice, fresh each time
