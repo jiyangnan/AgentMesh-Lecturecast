@@ -276,16 +276,15 @@ def test_opener_factory_injection():
     class _FakeOpener:
         def open(self, req, timeout=None):
             called.append(req)
-            from io import BytesIO
             class _R:
                 status = 200
-                def read(self, n=-1):
-                if not hasattr(self, "_sent"):
-                    self._sent = True
-                    return json.dumps({"ok": True}).encode()
-                return b""
-                def close(self): pass
                 headers = {}
+                def read(self, n=-1):
+                    if not hasattr(self, "_sent"):
+                        self._sent = True
+                        return json.dumps({"ok": True}).encode()
+                    return b""
+                def close(self): pass
             return _R()
     t = HeyGenHttpTransport(
         api_key_provider=lambda: "key",
@@ -305,13 +304,13 @@ def test_api_key_read_each_call():
         def open(self, req, timeout=None):
             class _R:
                 status = 200
-                def read(self, n=-1):
-                if not hasattr(self, "_sent"):
-                    self._sent = True
-                    return json.dumps({"ok": True}).encode()
-                return b""
-                def close(self): pass
                 headers = {}
+                def read(self, n=-1):
+                    if not hasattr(self, "_sent"):
+                        self._sent = True
+                        return json.dumps({"ok": True}).encode()
+                    return b""
+                def close(self): pass
             return _R()
     t = HeyGenHttpTransport(
         api_key_provider=provider,
