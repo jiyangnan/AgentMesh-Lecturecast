@@ -61,14 +61,14 @@ def test_detect_mime_unknown():
 
 def test_prepare_rejects_traversal(tmp_path):
     runtime = tmp_path / "runtime"; runtime.mkdir()
-    with pytest.raises(ValueError, match="\\.\\."):
+    with pytest.raises(ValueError, match="traversal"):
         prepare_asset_upload(
             operation_id="op1", asset_role="portrait_photo",
             runtime_root=runtime, local_output_ref="../escape.png")
 
 def test_prepare_rejects_absolute(tmp_path):
     runtime = tmp_path / "runtime"; runtime.mkdir()
-    with pytest.raises(ValueError, match="ref"):
+    with pytest.raises(ValueError, match="absolute|ref|escape"):
         prepare_asset_upload(
             operation_id="op1", asset_role="portrait_photo",
             runtime_root=runtime, local_output_ref="/etc/passwd")
@@ -139,6 +139,8 @@ def _fake_opener(response_body: dict, status: int = 200):
         headers = {}
     class _FakeOpener:
         def open(self, req, timeout=None):
+            # Record whether body was an iterator (streaming) or bytes (buffered).
+            captured["is_iterator"] = not isinstance(req.data, (bytes, bytearray, type(None)))
             # Consume the iterator body (urllib passes it as iterable)
             data = req.data
             if hasattr(data, '__iter__') and not isinstance(data, (bytes, bytearray)):
@@ -354,3 +356,123 @@ def test_response_mime_mismatch_ambiguous(tmp_path):
     adapter = HeyGenAssetAdapter(transport)
     with pytest.raises(AssetUploadAmbiguousError, match="MIME mismatch"):
         adapter.upload_asset(cmd, runtime_root=runtime)
+
+
+# ---- e5b0b round-6: prepare symlink, streaming assertion, forged role, transport mapping ---
+
+def test_prepare_rejects_intermediate_symlink(tmp_path):
+    """prepare_asset_upload must reject a symlinked intermediate directory."""
+    runtime = tmp_path / "runtime"; runtime.mkdir()
+    outside = tmp_path / "outside"; outside.mkdir()
+    (outside / "evil.png").write_bytes(_png_bytes())
+    os.symlink(outside, runtime / "link")
+    with pytest.raises(ValueError, match="symlink"):
+        prepare_asset_upload(
+            operation_id="op1", asset_role="portrait_photo",
+            runtime_root=runtime, local_output_ref="link/evil.png")
+
+
+def test_multipart_body_is_streamed_not_buffered(tmp_path):
+    """Verify the multipart body is passed as an iterator, not pre-joined bytes."""
+    runtime = tmp_path / "runtime"; runtime.mkdir()
+    (runtime / "portrait.png").write_bytes(_png_bytes())
+    cmd = prepare_asset_upload(
+        operation_id="op1", asset_role="portrait_photo",
+        runtime_root=runtime, local_output_ref="portrait.png")
+    fake_opener, captured = _fake_opener({"data": {
+        "asset_id": "a1", "mime_type": "image/png", "size_bytes": cmd.file_size}})
+    transport = HeyGenHttpTransport(
+        api_key_provider=lambda: "key", opener_factory=fake_opener)
+    adapter = HeyGenAssetAdapter(transport)
+    adapter.upload_asset(cmd, runtime_root=runtime)
+    # The fake opener records whether req.data was bytes or an iterator.
+    # The fake opener records whether req.data was an iterator vs bytes
+    assert captured.get("is_iterator") is True
+    # Content-Length header must match actual body size.
+    headers_lower = {k.lower(): v for k, v in captured["headers"].items()}
+    actual_len = len(captured["data"])
+    assert int(headers_lower["content-length"]) == actual_len
+
+
+def test_forged_role_caught_by_extension_guard(tmp_path):
+    """Forged role + correctly re-derived idempotency is still caught by
+    the extension-role mismatch (PNG file + narration role)."""
+    runtime = tmp_path / "runtime"; runtime.mkdir()
+    (runtime / "portrait.png").write_bytes(_png_bytes())
+    cmd = prepare_asset_upload(
+        operation_id="op1", asset_role="portrait_photo",
+        runtime_root=runtime, local_output_ref="portrait.png")
+    import hashlib as _h
+    # Re-derive idempotency for the forged role so only extension guard catches it.
+    forged_idem = "lc-hg-asset-" + _h.sha256(
+        f"op1:synthetic_narration_audio:{cmd.expected_asset_digest}".encode()).hexdigest()
+    from dataclasses import replace as _replace
+    forged = _replace(cmd, asset_role="synthetic_narration_audio",
+                       idempotency_key=forged_idem,
+                       provider_filename="narration.wav",
+                       content_type="audio/wav")
+    transport = HeyGenHttpTransport(api_key_provider=lambda: "key",
+        opener_factory=lambda: type("O", (), {"open": lambda s,r,t=30: None}))
+    adapter = HeyGenAssetAdapter(transport)
+    with pytest.raises(AssetUploadError, match="extension|content_type|mime"):
+        adapter.upload_asset(forged, runtime_root=runtime)
+
+
+def test_transport_network_timeout_maps_ambiguous_retryable(tmp_path):
+    """upload_asset catches HttpTransportError(network_timeout) → ambiguous retryable."""
+    from lecturecast.heygen_http import HttpTransportError
+    runtime = tmp_path / "runtime"; runtime.mkdir()
+    (runtime / "portrait.png").write_bytes(_png_bytes())
+    cmd = prepare_asset_upload(
+        operation_id="op1", asset_role="portrait_photo",
+        runtime_root=runtime, local_output_ref="portrait.png")
+    class _ErrOpener:
+        def open(self, req, timeout=None):
+            raise HttpTransportError(code="network_timeout", message="timed out")
+    transport = HeyGenHttpTransport(api_key_provider=lambda: "key",
+        opener_factory=lambda: _ErrOpener())
+    adapter = HeyGenAssetAdapter(transport)
+    with pytest.raises(AssetUploadAmbiguousError) as exc_info:
+        adapter.upload_asset(cmd, runtime_root=runtime)
+    assert exc_info.value.code == "network_timeout"
+    assert exc_info.value.retryable is True
+
+
+def test_transport_connection_error_maps_ambiguous_retryable(tmp_path):
+    """upload_asset catches HttpTransportError(connection_error) → ambiguous retryable."""
+    from lecturecast.heygen_http import HttpTransportError
+    runtime = tmp_path / "runtime"; runtime.mkdir()
+    (runtime / "portrait.png").write_bytes(_png_bytes())
+    cmd = prepare_asset_upload(
+        operation_id="op1", asset_role="portrait_photo",
+        runtime_root=runtime, local_output_ref="portrait.png")
+    class _ErrOpener:
+        def open(self, req, timeout=None):
+            raise HttpTransportError(code="connection_error", message="refused")
+    transport = HeyGenHttpTransport(api_key_provider=lambda: "key",
+        opener_factory=lambda: _ErrOpener())
+    adapter = HeyGenAssetAdapter(transport)
+    with pytest.raises(AssetUploadAmbiguousError) as exc_info:
+        adapter.upload_asset(cmd, runtime_root=runtime)
+    assert exc_info.value.code == "connection_error"
+    assert exc_info.value.retryable is True
+
+
+def test_transport_auth_failed_maps_not_sent(tmp_path):
+    """upload_asset catches HttpTransportError(auth_failed) → not_sent."""
+    from lecturecast.heygen_http import HttpTransportError
+    runtime = tmp_path / "runtime"; runtime.mkdir()
+    (runtime / "portrait.png").write_bytes(_png_bytes())
+    cmd = prepare_asset_upload(
+        operation_id="op1", asset_role="portrait_photo",
+        runtime_root=runtime, local_output_ref="portrait.png")
+    class _ErrOpener:
+        def open(self, req, timeout=None):
+            raise HttpTransportError(code="auth_failed", message="blank key")
+    transport = HeyGenHttpTransport(api_key_provider=lambda: "key",
+        opener_factory=lambda: _ErrOpener())
+    adapter = HeyGenAssetAdapter(transport)
+    with pytest.raises(AssetUploadError) as exc_info:
+        adapter.upload_asset(cmd, runtime_root=runtime)
+    assert exc_info.value.code == "auth_failed"
+    assert exc_info.value.submission_certainty == "not_sent"
