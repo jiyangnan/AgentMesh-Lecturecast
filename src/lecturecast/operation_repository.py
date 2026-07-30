@@ -1808,6 +1808,184 @@ class OperationRepository:
             "UPDATE heygen_operations SET lease_owner=NULL, lease_expires_at=NULL, "
             "updated_at=? WHERE operation_id=?", (now_c, operation_id))
 
+    # === asset upload lifecycle (§5.5e5b0c) ==============================
+
+    def claim_asset_upload_in_tx(
+        self, conn: sqlite3.Connection, *, upload_id: str,
+        parent_operation_id: str, asset_role: str, content_digest: str,
+        local_ref: str, content_type: str, size_bytes: int,
+        provider_filename: str, idempotency_key: str,
+        lease_owner: str, now_iso: str, lease_seconds: int,
+    ) -> AssetClaimResult:
+        """Claim an asset upload row for one attempt. Idempotent on upload_id;
+        the idempotency_key must match on replay. Classification:
+          uploaded          → 'done' (carry remote_resource_id)
+          failed/cancelled/
+          manual_reconcile  → 'terminal'
+          active lease      → 'busy'
+          expired/absent    → 'claimed' (bump fence + attempts, set lease)
+        """
+        self._require_tx(conn)
+        conn.row_factory = sqlite3.Row
+        _require_lease_owner(lease_owner)
+        now = _parse_utc(now_iso)
+        _check_lease_seconds(lease_seconds)
+        expires_iso = _canonical(now + timedelta(seconds=lease_seconds))
+        row = conn.execute(
+            "SELECT status, remote_resource_id, attempt_started_at, lease_owner, "
+            "lease_expires_at, lease_fence, attempts, idempotency_key "
+            "FROM heygen_asset_uploads WHERE upload_id = ?",
+            (upload_id,),
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO heygen_asset_uploads ("
+                "  upload_id, parent_operation_id, asset_role, content_digest,"
+                "  local_ref, content_type, size_bytes, provider_filename,"
+                "  idempotency_key, status, attempts, lease_owner, lease_expires_at,"
+                "  lease_fence, attempt_started_at, created_at, updated_at"
+                ") VALUES (?,?,?,?,?,?,?,?,?, 'uploading', 1, ?, ?, 1, ?, ?, ?)",
+                (upload_id, parent_operation_id, asset_role, content_digest,
+                 local_ref, content_type, size_bytes, provider_filename,
+                 idempotency_key, lease_owner, expires_iso, now_iso, now_iso, now_iso),
+            )
+            return AssetClaimResult(upload_id, "claimed", 1, 1, expires_iso, None)
+        if row["idempotency_key"] != idempotency_key:
+            raise OperationIntegrityError(
+                "asset upload idempotency_key mismatch on replay")
+        if row["status"] == "uploaded":
+            return AssetClaimResult(upload_id, "done", row["lease_fence"],
+                                   row["attempts"], None, row["remote_resource_id"])
+        if row["status"] in ("failed", "cancelled", "manual_reconciliation_required"):
+            return AssetClaimResult(upload_id, "terminal", row["lease_fence"],
+                                   row["attempts"], None, None)
+        new_fence = row["lease_fence"] + 1
+        new_attempts = row["attempts"] + 1
+        if row["attempt_started_at"] is not None and row["lease_expires_at"] is not None:
+            if _parse_utc(row["lease_expires_at"]) > now:
+                return AssetClaimResult(upload_id, "busy", row["lease_fence"],
+                                       row["attempts"], row["lease_expires_at"], None)
+        conn.execute(
+            "UPDATE heygen_asset_uploads SET status='uploading', attempts=?, "
+            "lease_owner=?, lease_expires_at=?, lease_fence=?, attempt_started_at=?, "
+            "updated_at=? WHERE upload_id=?",
+            (new_attempts, lease_owner, expires_iso, new_fence, now_iso, now_iso,
+             upload_id),
+        )
+        return AssetClaimResult(upload_id, "claimed", new_fence, new_attempts,
+                               expires_iso, None)
+
+    def apply_asset_outcome_in_tx(
+        self, conn: sqlite3.Connection, *, upload_id: str, asset_id: str,
+        retention_mode: str, credential_profile_id: str, now_iso: str,
+    ) -> int:
+        """On a successful upload: insert the remote_resource + a parent-op ref,
+        backfill remote_resource_id, and mark the upload 'uploaded' — all in the
+        caller's fenced tx. resource_kind is derived from asset_role (portrait_
+        photo→portrait_asset, audio→audio_asset). Idempotent: a re-apply on an
+        already-uploaded row is a no-op returning the existing resource_id."""
+        self._require_tx(conn)
+        conn.row_factory = sqlite3.Row
+        if not isinstance(asset_id, str) or not asset_id.strip():
+            raise ValueError("asset_id must be a non-empty string")
+        row = conn.execute(
+            "SELECT parent_operation_id, asset_role, status, lease_fence "
+            "FROM heygen_asset_uploads WHERE upload_id = ?",
+            (upload_id,),
+        ).fetchone()
+        if row is None:
+            raise OperationStateError(f"no asset upload {upload_id!r}")
+        if row["status"] == "uploaded" and _asset_resource_kind(row["asset_role"]):
+            existing = conn.execute(
+                "SELECT remote_resource_id FROM heygen_asset_uploads WHERE upload_id=?",
+                (upload_id,),
+            ).fetchone()
+            return existing["remote_resource_id"]
+        resource_kind = _asset_resource_kind(row["asset_role"])
+        cur = conn.execute(
+            "INSERT INTO heygen_remote_resources ("
+            "  credential_profile_id, resource_kind, remote_id, retention_mode,"
+            "  created_by_operation_id, created_at, updated_at"
+            ") VALUES (?,?,?,?,?,?,?)",
+            (credential_profile_id, resource_kind, asset_id.strip(), retention_mode,
+             row["parent_operation_id"], now_iso, now_iso),
+        )
+        resource_id = cur.lastrowid
+        conn.execute(
+            "INSERT OR IGNORE INTO heygen_resource_operation_refs "
+            "(resource_id, operation_id, created_at) VALUES (?,?,?)",
+            (resource_id, row["parent_operation_id"], now_iso),
+        )
+        conn.execute(
+            "UPDATE heygen_asset_uploads SET status='uploaded', remote_resource_id=?, "
+            "uploaded_at=?, lease_owner=NULL, lease_expires_at=NULL, "
+            "lease_fence=?, next_retry_at=NULL, last_error_code=NULL, updated_at=? "
+            "WHERE upload_id=?",
+            (resource_id, now_iso, row["lease_fence"] + 1, now_iso, upload_id),
+        )
+        return resource_id
+
+    def apply_asset_upload_failure_in_tx(
+        self, conn: sqlite3.Connection, *, upload_id: str, error_code: str,
+        submission_certainty: str, retryable: bool, now_iso: str,
+        backoff_seconds: int = 30,
+    ) -> str:
+        """Record a failed upload attempt. maybe_sent → reconciliation_required
+        within the 24h idempotency window (or manual_reconciliation_required past
+        it — never blind-retransmit). not_sent → upload_pending (retryable, with
+        backoff) or failed (permanent). Returns the new status."""
+        self._require_tx(conn)
+        conn.row_factory = sqlite3.Row
+        if submission_certainty not in ("not_sent", "maybe_sent"):
+            raise ValueError(f"unknown submission_certainty: {submission_certainty!r}")
+        row = conn.execute(
+            "SELECT status, lease_fence, attempts, maybe_sent_at, "
+            "idempotency_expires_at FROM heygen_asset_uploads WHERE upload_id=?",
+            (upload_id,),
+        ).fetchone()
+        if row is None:
+            raise OperationStateError(f"no asset upload {upload_id!r}")
+        if row["status"] == "uploaded":
+            return "uploaded"
+        now = _parse_utc(now_iso)
+        new_fence = row["lease_fence"] + 1
+        new_attempts = row["attempts"] + 1
+        if submission_certainty == "maybe_sent":
+            maybe_sent = row["maybe_sent_at"] or now_iso
+            expires = row["idempotency_expires_at"] or _canonical(
+                _parse_utc(maybe_sent) + timedelta(
+                    seconds=_ASSET_IDEMPOTENCY_WINDOW_SECONDS))
+            if _parse_utc(expires) <= now:
+                status = "manual_reconciliation_required"
+                next_retry = None
+            else:
+                status = "reconciliation_required"
+                next_retry = _canonical(now + timedelta(seconds=backoff_seconds))
+            conn.execute(
+                "UPDATE heygen_asset_uploads SET status=?, last_error_code=?, "
+                "attempts=?, maybe_sent_at=?, idempotency_expires_at=?, "
+                "next_retry_at=?, lease_owner=NULL, lease_expires_at=NULL, "
+                "lease_fence=?, updated_at=? WHERE upload_id=?",
+                (status, error_code, new_attempts, maybe_sent, expires, next_retry,
+                 new_fence, now_iso, upload_id),
+            )
+            return status
+        # not_sent
+        if retryable:
+            status = "upload_pending"
+            next_retry = _canonical(now + timedelta(seconds=backoff_seconds))
+        else:
+            status = "failed"
+            next_retry = None
+        conn.execute(
+            "UPDATE heygen_asset_uploads SET status=?, last_error_code=?, attempts=?, "
+            "next_retry_at=?, lease_owner=NULL, lease_expires_at=NULL, lease_fence=?, "
+            "updated_at=? WHERE upload_id=?",
+            (status, error_code, new_attempts, next_retry, new_fence, now_iso,
+             upload_id),
+        )
+        return status
+
 
 def _output_ref(operation_id: str) -> str:
     return f"outputs/heygen/{operation_id}.mp4"
@@ -1835,6 +2013,40 @@ def _verify_containment(path: Path, runtime_root: Path) -> None:
     # Layer 2: resolved containment.
     if not path.resolve().is_relative_to(runtime_root.resolve()):
         raise OperationIntegrityError(f"path escapes runtime (resolved): {path.resolve()}")
+
+
+# --- asset upload lifecycle (§5.5e5b0c) ---------------------------------
+#
+# Asset uploads have their own claim/apply/failure primitives, mirroring the
+# video submit flow but on heygen_asset_uploads. Crash recovery: a lost
+# response (maybe_sent) is reconciled by re-issuing the idempotent upload
+# within HeyGen's 24h window; past the window with no asset_id the upload
+# goes manual_reconciliation_required (never blind-retransmit → no duplicates).
+
+_ASSET_ROLE_TO_RESOURCE_KIND = {
+    "portrait_photo": "portrait_asset",
+    "synthetic_narration_audio": "audio_asset",
+}
+
+# Default HeyGen idempotency-key replay window.
+_ASSET_IDEMPOTENCY_WINDOW_SECONDS = 24 * 60 * 60
+
+
+@dataclass(frozen=True)
+class AssetClaimResult:
+    upload_id: str
+    status: str  # "claimed" | "busy" | "done" | "ambiguous" | "terminal"
+    fence: int
+    attempts: int
+    lease_expires_at: str | None
+    remote_resource_id: int | None
+
+
+def _asset_resource_kind(asset_role: str) -> str:
+    kind = _ASSET_ROLE_TO_RESOURCE_KIND.get(asset_role)
+    if kind is None:
+        raise OperationIntegrityError(f"no resource_kind mapping for {asset_role!r}")
+    return kind
 
 
 # --- coordinator -------------------------------------------------------
