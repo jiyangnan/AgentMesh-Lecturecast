@@ -72,11 +72,18 @@ class HeyGenHttpTransport:
         base_url: str = _DEFAULT_BASE_URL,
         api_key_provider: Callable[[], str] | None = None,
         timeout: int = 30,
+        opener_factory: Callable[[], object] | None = None,
     ) -> None:
         parsed = _validate_base_url(base_url)
         self._base_url = parsed
         self._api_key_provider = api_key_provider or _default_key_provider
         self._timeout = timeout
+        self._opener_factory = opener_factory or self._default_opener
+
+    @staticmethod
+    def _default_opener():
+        return urllib_request.build_opener(
+            urllib_request.ProxyHandler({}), _NoRedirectHandler())
 
     def request_json(
         self,
@@ -89,6 +96,10 @@ class HeyGenHttpTransport:
     ) -> HttpResponse:
         """Send a JSON request and return HttpResponse on 2xx, or raise
         HttpErrorResponse on non-2xx (caller catches and maps to adapter error)."""
+        if method not in ("GET", "POST", "DELETE"):
+            raise ValueError(f"method must be GET/POST/DELETE: {method!r}")
+        if type(self._timeout) is not int or self._timeout <= 0:
+            raise ValueError("timeout must be a positive int")
         _validate_path(path)
         if idempotency_key is not None and not _IDEMPOTENCY_RE.fullmatch(idempotency_key):
             raise ValueError(f"invalid Idempotency-Key: {idempotency_key!r}")
@@ -107,7 +118,7 @@ class HeyGenHttpTransport:
             "Accept": "application/json",
         }
         if json_body is not None:
-            body_bytes = json.dumps(json_body).encode("utf-8")
+            body_bytes = json.dumps(json_body, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
             headers["Content-Type"] = "application/json"
         if idempotency_key is not None:
             headers["Idempotency-Key"] = idempotency_key
@@ -115,8 +126,7 @@ class HeyGenHttpTransport:
         req = urllib_request.Request(url, data=body_bytes or None, method=method,
                                      headers=headers)
         try:
-            opener = urllib_request.build_opener(
-                urllib_request.ProxyHandler({}), _NoRedirectHandler())
+            opener = self._opener_factory()
             resp = opener.open(req, timeout=self._timeout)
         except HTTPError as exc:
             raise _make_error_response(exc) from None
@@ -132,7 +142,9 @@ class HeyGenHttpTransport:
             raw = _stream_read(resp, _RESPONSE_MAX)
             if len(raw) >= _RESPONSE_MAX:
                 raise HttpTransportError(code="malformed_response", message="response exceeded 1 MiB")
-            parsed_body = json.loads(raw) if raw else {}
+            if not raw:
+                raise HttpTransportError(code="malformed_response", message="empty response body")
+            parsed_body = json.loads(raw)
             if not isinstance(parsed_body, dict):
                 raise HttpTransportError(code="malformed_response", message="response is not a JSON object")
         except json.JSONDecodeError as exc:
@@ -164,6 +176,10 @@ def _validate_base_url(url: str) -> str:
     host = (parsed.hostname or "").lower()
     if not host:
         raise ValueError("base_url missing host")
+    if host != "api.heygen.com":
+        raise ValueError(f"base_url host must be api.heygen.com, got: {host}")
+    if parsed.port is not None and parsed.port != 443:
+        raise ValueError("base_url port must be 443 or omitted")
     return url.rstrip("/")
 
 
@@ -199,9 +215,14 @@ def _filter_headers(headers) -> dict[str, str]:
 def _make_error_response(exc: HTTPError) -> HttpErrorResponse:
     raw = b""
     try:
-        raw = exc.read(_RESPONSE_MAX)
+        raw = exc.read(_RESPONSE_MAX + 1)
     except Exception:
         pass
+    finally:
+        try:
+            exc.close()
+        except Exception:
+            pass
     body: dict | None = None
     if raw:
         try:
