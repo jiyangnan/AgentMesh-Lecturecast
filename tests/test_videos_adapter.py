@@ -89,13 +89,18 @@ def _sequence(items):
     return responder
 
 
+# Canonical title shape produced by consent.prepare_operation():
+# lecturecast:lc_hg_<32 lowercase hex>.
+_GOOD_TITLE = "lecturecast:lc_hg_" + "a" * 32
+
+
 def _cmd(**overrides):
     base = dict(
         request_descriptor={
             "schema_version": "heygen.video-submit.v1", "type": "image",
             "image_asset_id": "img_1", "audio_asset_id": "aud_1",
         },
-        heygen_title="lecturecast:op1", idempotency_key="idem-1",
+        heygen_title=_GOOD_TITLE, idempotency_key="lc-hg-" + "a" * 64,
     )
     base.update(overrides)
     return SubmitVideoCommand(**base)
@@ -110,7 +115,7 @@ def test_submit_success_maps_pending_to_queued():
     assert result.remote_id == "vid_123"
     assert result.provider_status == "queued"
     body = json.loads(opener.calls[0]["body"])
-    assert body["title"] == "lecturecast:op1"
+    assert body["title"] == _GOOD_TITLE
     assert body["image_asset_id"] == "img_1"
     assert body["audio_asset_id"] == "aud_1"
     assert body["output_format"] == "mp4"
@@ -170,6 +175,13 @@ def test_submit_rejects_bad_asset_id():
 @pytest.mark.parametrize("bad_title", [
     "", "t", "lecturecast:", "lc:op1", "lecturecast:op 1",
     "lecturecast:" + "x" * 200, " lecturecast:op1",
+    # Forged titles that the broad shape would have allowed but
+    # prepare_operation() can never produce:
+    "lecturecast:forged",
+    "lecturecast:lc_hg_" + "g" * 32,      # 'g' is not a hex digit
+    "lecturecast:lc_hg_" + "A" * 32,      # uppercase not produced by sha256 hex
+    "lecturecast:lc_hg_" + "a" * 31,      # too short
+    "lecturecast:lc_hg_" + "a" * 33,      # too long
 ])
 def test_submit_rejects_bad_heygen_title(bad_title):
     # The title is the recovery key for title reconciliation; a malformed title
@@ -178,6 +190,18 @@ def test_submit_rejects_bad_heygen_title(bad_title):
     with pytest.raises(ValueError, match="heygen_title"):
         HeyGenVideosAdapter(transport).submit_video(_cmd(heygen_title=bad_title))
     # Nothing was sent.
+    assert opener.calls == []
+
+
+def test_query_rejects_bad_heygen_title_before_transport():
+    # query_videos_by_title uses the same validator; a forged search key never
+    # reaches HeyGen.
+    transport, opener = _transport(_single({"data": [], "has_more": False}))
+    bad = TitleQuery(heygen_title="lecturecast:forged",
+                     created_after="2023-01-01T00:00:00Z",
+                     created_before="2026-01-01T00:00:00Z")
+    with pytest.raises(ValueError, match="heygen_title"):
+        HeyGenVideosAdapter(transport).query_videos_by_title(bad)
     assert opener.calls == []
 
 
@@ -371,7 +395,7 @@ def test_poll_5xx_retryable():
 
 # === query by title =========================================================
 
-_QUERY = TitleQuery(heygen_title="lecturecast:op1",
+_QUERY = TitleQuery(heygen_title=_GOOD_TITLE,
                     created_after="2023-01-01T00:00:00Z",
                     created_before="2026-01-01T00:00:00Z")
 
