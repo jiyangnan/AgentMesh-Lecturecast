@@ -784,10 +784,13 @@ class ConsentService:
         content_digest: str,
     ) -> AssetUploadConsentResult:
         """Gate ONE asset upload on the PARENT video operation's granted
-        receipt. The receipt must disclose this exact (asset_role,
-        content_digest). Narrower than the video submit guard: the asset id does
-        not exist yet, so there is no artifact chain to recompute. The caller
-        runs this inside its claim transaction."""
+        receipt. Full fail-closed integrity (not a status-only peek): loads the
+        parent operation + receipt, runs the existing receipt-integrity check,
+        confirms the parent is a HeyGen video operation the receipt authorizes,
+        then requires the receipt to disclose this exact (asset_role,
+        content_digest). Narrower than the video submit guard: the asset id
+        does not exist yet, so there is no artifact chain to recompute. The
+        caller runs this inside its claim transaction."""
         if not conn.in_transaction:
             raise ConsentStateError(
                 "validate_asset_upload_consent_in_tx requires an active transaction"
@@ -796,18 +799,38 @@ class ConsentService:
             raise ValueError(f"unknown asset_role: {asset_role!r}")
         if not is_digest(content_digest):
             raise ValueError("content_digest must be sha256:<64 hex>")
+        op = conn.execute(
+            "SELECT * FROM heygen_operations WHERE operation_id = ?",
+            (parent_operation_id,),
+        ).fetchone()
+        if op is None:
+            raise ConsentStateError(
+                f"no parent operation {parent_operation_id!r}"
+            )
+        # The parent must be a HeyGen video operation — assets are uploaded in
+        # service of exactly that operation kind.
+        if op["kind"] != "video":
+            raise ConsentStateError(
+                f"parent operation kind {op['kind']!r} is not 'video'"
+            )
         rc = conn.execute(
-            "SELECT status, disclosed_assets_json, receipt_digest "
-            "FROM heygen_consent_receipts WHERE operation_id = ?",
+            "SELECT * FROM heygen_consent_receipts WHERE operation_id = ?",
             (parent_operation_id,),
         ).fetchone()
         if rc is None:
             raise ConsentStateError(
                 f"no consent receipt for parent operation {parent_operation_id!r}"
             )
+        # Full receipt integrity: tampered digest, broken pointer, or receipt↔op
+        # drift all fail closed before we trust the disclosure.
+        ConsentService._validate_existing_integrity(rc, op, conn)
         if rc["status"] != "granted":
             raise ConsentStateError(
                 f"parent receipt status {rc['status']!r} does not authorize asset upload"
+            )
+        if rc["provider"] != "heygen" or rc["operation_kind"] != "video":
+            raise ConsentConflictError(
+                "parent receipt is not for a heygen video operation"
             )
         assets = json.loads(rc["disclosed_assets_json"])
         disclosed = any(
