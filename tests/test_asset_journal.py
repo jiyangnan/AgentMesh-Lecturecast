@@ -15,7 +15,11 @@ import pytest
 
 from lecturecast.heygen_journal import init_database
 from lecturecast.consent import (
+    CANONICAL_AGENTMESH_NON_PROCESSOR_DISCLOSURE,
+    CANONICAL_PROVIDER_COST_DISCLOSURE,
     ConsentService, ConsentConflictError, ConsentStateError,
+    DisclosedAsset, HeyGenOperationIdentity, ThirdPartyTransferDisclosure,
+    prepare_operation,
 )
 from lecturecast.operation_repository import OperationRepository
 
@@ -25,6 +29,11 @@ D_AUDIO = "sha256:" + "b" * 64
 D_OTHER = "sha256:" + "c" * 64
 LEASE = "worker-1"
 NOW = "2026-07-30T00:00:00Z"
+
+_ASSET_CATEGORIES = {
+    "portrait_photo": ("portrait_image", "facial_biometric_template"),
+    "synthetic_narration_audio": ("synthetic_narration_audio",),
+}
 
 
 def _db():
@@ -44,19 +53,28 @@ def _add_parent_op(conn, op_id="op1"):
     )
 
 
-def _add_receipt(conn, op_id="op1", status="granted",
-                 assets=(("portrait_photo", D_PORT),)):
-    disclosed = [{"kind": k, "filename": f"{k}.bin", "digest": d} for k, d in assets]
-    conn.execute(
-        "INSERT INTO heygen_consent_receipts (receipt_digest, operation_id,"
-        " disclosure_version, generation_id, request_digest, creative_brief_digest,"
-        " provider, operation_kind, disclosed_assets_json, data_categories_json,"
-        " provider_cost_disclosure, agentmesh_non_processor_disclosure, status,"
-        " consented_at, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (f"rd-{op_id}", op_id, "heygen-transfer-2026-07-27", "gen", "sha256:r",
-         "sha256:b", "heygen", "video", json.dumps(disclosed),
-         json.dumps(["portrait_image"]), "cost", "nonproc", status, "t", "t"),
-    )
+def _grant_parent(td, assets=(("portrait_photo", D_PORT),), decision="granted"):
+    """Create a real parent video operation + a receipt with a valid digest via
+    record_decision (the canonical path), so the integrity check passes.
+    Returns the derived operation_id."""
+    svc = ConsentService(Path(td))
+    prepared = prepare_operation(HeyGenOperationIdentity(
+        operation_kind="video", generation_id="gen_1",
+        manifest_digest="sha256:" + "1" * 64, request_digest="sha256:" + "2" * 64,
+        credential_profile_id="heygen_env_default",
+        orchestration_plan_digest="sha256:" + "3" * 64, endpoint="/v3/videos"))
+    disclosed = [DisclosedAsset(kind, f"{kind}.bin", dig) for kind, dig in assets]
+    cats = sorted({c for kind, _ in assets for c in _ASSET_CATEGORIES[kind]})
+    disclosure = ThirdPartyTransferDisclosure(
+        provider="heygen", operation_kind="video",
+        disclosure_version="heygen-transfer-2026-07-27",
+        disclosed_assets=disclosed, data_categories=cats,
+        provider_cost_disclosure=CANONICAL_PROVIDER_COST_DISCLOSURE,
+        agentmesh_non_processor_disclosure=CANONICAL_AGENTMESH_NON_PROCESSOR_DISCLOSURE)
+    svc.record_decision(prepared=prepared, disclosure=disclosure, decision=decision,
+                        creative_brief_digest="sha256:" + "b" * 64,
+                        decision_at="2026-07-29T00:00:00Z")
+    return prepared.operation_id
 
 
 # === consent guard =========================================================
@@ -69,14 +87,13 @@ class TestAssetConsentGuard:
         conn, td = _db()
         try:
             conn.execute("BEGIN")
-            _add_parent_op(conn)
-            _add_receipt(conn, assets=[("portrait_photo", D_PORT)])
+            op_id = _grant_parent(td, assets=[("portrait_photo", D_PORT)])
             r = self._svc(td).validate_asset_upload_consent_in_tx(
-                conn, parent_operation_id="op1",
+                conn, parent_operation_id=op_id,
                 asset_role="portrait_photo", content_digest=D_PORT)
             assert r.asset_role == "portrait_photo"
             assert r.content_digest == D_PORT
-            assert r.receipt_digest == "rd-op1"
+            assert r.receipt_digest.startswith("sha256:")
         finally:
             conn.close()
 
@@ -84,11 +101,10 @@ class TestAssetConsentGuard:
         conn, td = _db()
         try:
             conn.execute("BEGIN")
-            _add_parent_op(conn)
-            _add_receipt(conn, assets=[("portrait_photo", D_PORT)])
+            op_id = _grant_parent(td, assets=[("portrait_photo", D_PORT)])
             with pytest.raises(ConsentConflictError):
                 self._svc(td).validate_asset_upload_consent_in_tx(
-                    conn, parent_operation_id="op1",
+                    conn, parent_operation_id=op_id,
                     asset_role="portrait_photo", content_digest=D_OTHER)
         finally:
             conn.close()
@@ -97,13 +113,11 @@ class TestAssetConsentGuard:
         conn, td = _db()
         try:
             conn.execute("BEGIN")
-            _add_parent_op(conn)
-            _add_receipt(conn, assets=[("portrait_photo", D_PORT),
-                                       ("synthetic_narration_audio", D_AUDIO)])
-            # audio digest under portrait role → not disclosed for that role.
+            op_id = _grant_parent(td, assets=[("portrait_photo", D_PORT),
+                                              ("synthetic_narration_audio", D_AUDIO)])
             with pytest.raises(ConsentConflictError):
                 self._svc(td).validate_asset_upload_consent_in_tx(
-                    conn, parent_operation_id="op1",
+                    conn, parent_operation_id=op_id,
                     asset_role="portrait_photo", content_digest=D_AUDIO)
         finally:
             conn.close()
@@ -112,12 +126,11 @@ class TestAssetConsentGuard:
         conn, td = _db()
         try:
             conn.execute("BEGIN")
-            _add_parent_op(conn)
-            _add_receipt(conn, status="withdrawn",
-                         assets=[("portrait_photo", D_PORT)])
+            op_id = _grant_parent(td, assets=[("portrait_photo", D_PORT)])
+            self._svc(td).withdraw(operation_id=op_id)
             with pytest.raises(ConsentStateError):
                 self._svc(td).validate_asset_upload_consent_in_tx(
-                    conn, parent_operation_id="op1",
+                    conn, parent_operation_id=op_id,
                     asset_role="portrait_photo", content_digest=D_PORT)
         finally:
             conn.close()
@@ -126,10 +139,28 @@ class TestAssetConsentGuard:
         conn, td = _db()
         try:
             conn.execute("BEGIN")
-            _add_parent_op(conn)
+            _add_parent_op(conn, "op_bare")  # op with no receipt
             with pytest.raises(ConsentStateError):
                 self._svc(td).validate_asset_upload_consent_in_tx(
-                    conn, parent_operation_id="op1",
+                    conn, parent_operation_id="op_bare",
+                    asset_role="portrait_photo", content_digest=D_PORT)
+        finally:
+            conn.close()
+
+    def test_rejects_tampered_receipt_digest(self):
+        # Flip a disclosure byte but leave the stored digest → integrity check
+        # must fail closed (blocker #1: not a status-only peek).
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN")
+            op_id = _grant_parent(td, assets=[("portrait_photo", D_PORT)])
+            conn.execute(
+                "UPDATE heygen_consent_receipts SET creative_brief_digest=? "
+                "WHERE operation_id=?",
+                ("sha256:" + "z" * 64, op_id))
+            with pytest.raises(Exception):  # ConsentIntegrityError
+                self._svc(td).validate_asset_upload_consent_in_tx(
+                    conn, parent_operation_id=op_id,
                     asset_role="portrait_photo", content_digest=D_PORT)
         finally:
             conn.close()
@@ -304,6 +335,24 @@ class TestAssetApplyOutcome:
                 repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
                     asset_id="  ", retention_mode="ephemeral",
                     credential_profile_id="prof", now_iso=NOW)
+        finally:
+            conn.close()
+
+    def test_reapply_with_different_asset_id_is_integrity_error(self):
+        # Same upload row bound to a second remote asset → reject (blocker #5/C).
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            _do_claim(repo, conn)
+            repo.apply_asset_outcome_in_tx(conn, upload_id="u1", asset_id="ax",
+                retention_mode="ephemeral", credential_profile_id="prof",
+                now_iso="2026-07-30T00:00:01Z")
+            from lecturecast.operation_repository import OperationIntegrityError
+            with pytest.raises(OperationIntegrityError):
+                repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
+                    asset_id="different", retention_mode="ephemeral",
+                    credential_profile_id="prof", now_iso="2026-07-30T00:00:02Z")
         finally:
             conn.close()
 

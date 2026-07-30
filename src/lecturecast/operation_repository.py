@@ -1889,18 +1889,24 @@ class OperationRepository:
         if not isinstance(asset_id, str) or not asset_id.strip():
             raise ValueError("asset_id must be a non-empty string")
         row = conn.execute(
-            "SELECT parent_operation_id, asset_role, status, lease_fence "
-            "FROM heygen_asset_uploads WHERE upload_id = ?",
+            "SELECT parent_operation_id, asset_role, status, lease_fence, "
+            "remote_resource_id FROM heygen_asset_uploads WHERE upload_id = ?",
             (upload_id,),
         ).fetchone()
         if row is None:
             raise OperationStateError(f"no asset upload {upload_id!r}")
-        if row["status"] == "uploaded" and _asset_resource_kind(row["asset_role"]):
+        if row["status"] == "uploaded":
+            # Idempotent re-apply: the new asset_id MUST match the one already
+            # bound. A different id means the same upload row is being tied to a
+            # second remote asset — an integrity violation, not a replay.
             existing = conn.execute(
-                "SELECT remote_resource_id FROM heygen_asset_uploads WHERE upload_id=?",
-                (upload_id,),
+                "SELECT remote_id FROM heygen_remote_resources WHERE resource_id=?",
+                (row["remote_resource_id"],),
             ).fetchone()
-            return existing["remote_resource_id"]
+            if existing is None or existing["remote_id"] != asset_id.strip():
+                raise OperationIntegrityError(
+                    f"asset upload {upload_id!r} already bound to a different remote id")
+            return row["remote_resource_id"]
         resource_kind = _asset_resource_kind(row["asset_role"])
         cur = conn.execute(
             "INSERT INTO heygen_remote_resources ("
@@ -1940,7 +1946,8 @@ class OperationRepository:
             raise ValueError(f"unknown submission_certainty: {submission_certainty!r}")
         row = conn.execute(
             "SELECT status, lease_fence, attempts, maybe_sent_at, "
-            "idempotency_expires_at FROM heygen_asset_uploads WHERE upload_id=?",
+            "idempotency_expires_at, attempt_started_at "
+            "FROM heygen_asset_uploads WHERE upload_id=?",
             (upload_id,),
         ).fetchone()
         if row is None:
@@ -1951,7 +1958,11 @@ class OperationRepository:
         new_fence = row["lease_fence"] + 1
         new_attempts = row["attempts"] + 1
         if submission_certainty == "maybe_sent":
-            maybe_sent = row["maybe_sent_at"] or now_iso
+            # Freeze the 24h replay window at the FIRST possible-send moment:
+            # the attempt's start time (earlier of maybe_sent_at /
+            # attempt_started_at), never the failure-land time — HeyGen only
+            # guarantees replay within 24h of the original send.
+            maybe_sent = row["maybe_sent_at"] or row["attempt_started_at"] or now_iso
             expires = row["idempotency_expires_at"] or _canonical(
                 _parse_utc(maybe_sent) + timedelta(
                     seconds=_ASSET_IDEMPOTENCY_WINDOW_SECONDS))
