@@ -1,11 +1,11 @@
 {
-  "bundle_digest": "sha256:825965ea6857b8f7cb852f4f7cb080ce870922bcab81b7fc7370f15997982a1e",
+  "bundle_digest": "sha256:f0e73b4121437dab72867001080e47546a495635882e1180f382ec1c242fc73e",
   "bundle_version": "1.0",
   "files": {
     "client-capabilities.schema.json": "sha256:8b41154c35c26a91bf23fb052a18b7c16076d1cdd131bfa658a06557b8ec529d",
     "creative-brief.schema.json": "sha256:838979b4c75ac2563904c74e68e34355d83b177379882c7e476df58c122e8ecf",
     "decision-card-set.schema.json": "sha256:3b6896325547250ca994b22508dbb61df4453d9c993d8a32158f28aee860084b",
-    "error-envelope.schema.json": "sha256:b639c5c612fee1563823d09dd9a11afaaf19e1f70956658e008511facd3e7d91",
+    "error-envelope.schema.json": "sha256:8d74540a3647bd1ef62cf99c51cfc6b89baa57d90ec472fe10f3126d8821ed02",
     "production-manifest.schema.json": "sha256:3d6c780abae769cc2579bc3889ec0a5c0bd62247c855239a5ef6e1e532bf7ee0"
   },
   "generated_by": "lecturecast-server"

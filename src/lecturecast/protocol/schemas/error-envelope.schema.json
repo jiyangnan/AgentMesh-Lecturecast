@@ -35,7 +35,8 @@
         "credit_return_pending",
         "manifest_signature_invalid",
         "manifest_incompatible",
-        "project_revision_conflict"
+        "project_revision_conflict",
+        "unsupported_protocol"
       ],
       "title": "Code",
       "type": "string"
