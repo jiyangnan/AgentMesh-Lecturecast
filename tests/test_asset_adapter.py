@@ -105,7 +105,7 @@ def test_prepare_valid_png(tmp_path):
 
 def test_prepare_rejects_wrong_role_for_file(tmp_path):
     runtime = tmp_path / "runtime"; runtime.mkdir()
-    (runtime / "portrait.png").write_bytes(_png_bytes())
+    (runtime / "portrait.png").write_bytes(png_content)
     with pytest.raises(ValueError, match="extension"):
         prepare_asset_upload(
             operation_id="op1", asset_role="synthetic_narration_audio",
@@ -181,15 +181,16 @@ def test_multipart_filename_sanitized():
     fake_opener, captured = _fake_opener({"data": {"asset_id": "a1"}})
     transport = HeyGenHttpTransport(
         api_key_provider=lambda: "key", opener_factory=fake_opener)
+    png_content = _png_bytes()
     cmd = AssetUploadCommand(
         operation_id="op1", asset_role="portrait_photo",
         local_output_ref="portrait.png", expected_asset_digest="sha256:" + "a"*64,
         idempotency_key="idem-test", provider_filename="portrait.png",
-        content_type="image/png", file_size=4)
+        content_type="image/png", file_size=len(png_content))
     # Create the file in tmp and pass runtime_root
     runtime = Path("/tmp/test_multipart_runtime")
     runtime.mkdir(exist_ok=True)
-    (runtime / "portrait.png").write_bytes(_png_bytes())
+    (runtime / "portrait.png").write_bytes(png_content)
     try:
         adapter = HeyGenAssetAdapter(transport)
         adapter.upload_asset(cmd, runtime_root=runtime)
