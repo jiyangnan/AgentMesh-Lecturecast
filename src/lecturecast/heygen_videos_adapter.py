@@ -40,9 +40,10 @@ from lecturecast.heygen_adapter import (
 _SAFE_REMOTE_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,128}$")
 
 # The heygen_title is the deterministic recovery key used by title
-# reconciliation after a lost submit response. It MUST follow the canonical
-# lecturecast:<operation_id> shape or the submit can never be found again.
-_HEYGEN_TITLE_RE = re.compile(r"^lecturecast:[A-Za-z0-9_\-]{1,128}$")
+# reconciliation after a lost submit response. prepare_operation() (§5.5e2)
+# derives it as lecturecast:lc_hg_<32 lowercase hex>; nothing else is legal,
+# so a forged title is rejected before it can reach HeyGen.
+_HEYGEN_TITLE_RE = re.compile(r"^lecturecast:lc_hg_[0-9a-f]{32}$")
 
 _MAX_LIST_PAGES = 10
 _MAX_CANDIDATES = 500
@@ -201,6 +202,7 @@ class HeyGenVideosAdapter:
     # -- query by title ---------------------------------------------------
 
     def query_videos_by_title(self, query: TitleQuery) -> TitleQueryResult:
+        _validate_heygen_title(query.heygen_title)
         candidates: list[TitleCandidate] = []
         seen_ids: set[str] = set()
         token: str | None = None
