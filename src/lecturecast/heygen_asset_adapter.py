@@ -205,6 +205,22 @@ class HeyGenAssetAdapter:
             raise AssetUploadError(code="validation_error", message="path escapes runtime")
         if "." in rel.parts or ".." in rel.parts:
             raise AssetUploadError(code="validation_error", message="path contains . or ..")
+        # lstat each intermediate directory to reject symlink swap.
+        current = runtime_root
+        try:
+            root_st = current.lstat()
+            if stat.S_ISLNK(root_st.st_mode):
+                raise AssetUploadError(code="validation_error", message="runtime root is a symlink")
+        except FileNotFoundError:
+            pass
+        for part in rel.parts[:-1]:
+            current = current / part
+            try:
+                st = current.lstat()
+                if stat.S_ISLNK(st.st_mode):
+                    raise AssetUploadError(code="validation_error", message=f"symlink in path: {current}")
+            except FileNotFoundError:
+                pass
         flags = os.O_RDONLY
         try:
             flags |= os.O_NOFOLLOW  # type: ignore[attr-defined]
@@ -244,6 +260,12 @@ class HeyGenAssetAdapter:
             if re_detected_ct != command.content_type:
                 raise AssetUploadError(code="validation_error",
                     message="content_type mismatch on re-open")
+            # Verify role + extension consistency.
+            if command.asset_role not in ("portrait_photo", "synthetic_narration_audio"):
+                raise AssetUploadError(code="validation_error", message="invalid asset_role")
+            if ext not in _ALLOWED_EXTENSIONS.get(command.asset_role, set()):
+                raise AssetUploadError(code="validation_error",
+                    message=f"extension {ext!r} not allowed for role {command.asset_role!r}")
             expected_fn = _PROVIDER_FILENAMES.get(
                 (command.asset_role, command.content_type), f"asset.{ext.lstrip('.')}")
             if expected_fn != command.provider_filename:
@@ -320,7 +342,7 @@ class HeyGenAssetAdapter:
             if provider_code == "request_in_progress":
                 return AssetUploadAmbiguousError(code="unknown",
                     message="HTTP 409 request_in_progress")
-            return AssetUploadAmbiguousError(code="unknown",
+            return AssetUploadAmbiguousError(code="unknown", retryable=False,
                 message=f"HTTP 409 ({provider_code}) — non-retryable")
         if exc.status in (401, 403):
             return AssetUploadError(code="auth_failed",
