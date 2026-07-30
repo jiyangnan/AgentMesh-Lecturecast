@@ -482,6 +482,19 @@ class SubmitConsentResult:
     presenter_plan_digest: str
 
 
+@dataclass(frozen=True)
+class AssetUploadConsentResult:
+    """Authorization to upload ONE asset. The asset upload is gated by the
+    PARENT video operation's granted receipt — the receipt must disclose this
+    exact (asset_role, content_digest). The asset id does not exist yet, so this
+    is a narrower check than the full video submit guard (no artifact chain)."""
+
+    parent_operation_id: str
+    asset_role: str
+    content_digest: str
+    receipt_digest: str
+
+
 class ConsentService:
     """Persists HeyGen third-party-transfer consent decisions in the per-project
     journal. Construct with the project directory; each call is self-contained."""
@@ -761,6 +774,59 @@ class ConsentService:
             prepared, brief, manifest, presenter_plan, orchestration_plan, request_descriptor
         )
         return self._validate_submit_in_tx(conn, prepared, digests)
+
+    def validate_asset_upload_consent_in_tx(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        parent_operation_id: str,
+        asset_role: str,
+        content_digest: str,
+    ) -> AssetUploadConsentResult:
+        """Gate ONE asset upload on the PARENT video operation's granted
+        receipt. The receipt must disclose this exact (asset_role,
+        content_digest). Narrower than the video submit guard: the asset id does
+        not exist yet, so there is no artifact chain to recompute. The caller
+        runs this inside its claim transaction."""
+        if not conn.in_transaction:
+            raise ConsentStateError(
+                "validate_asset_upload_consent_in_tx requires an active transaction"
+            )
+        if asset_role not in ASSET_KINDS:
+            raise ValueError(f"unknown asset_role: {asset_role!r}")
+        if not is_digest(content_digest):
+            raise ValueError("content_digest must be sha256:<64 hex>")
+        rc = conn.execute(
+            "SELECT status, disclosed_assets_json, receipt_digest "
+            "FROM heygen_consent_receipts WHERE operation_id = ?",
+            (parent_operation_id,),
+        ).fetchone()
+        if rc is None:
+            raise ConsentStateError(
+                f"no consent receipt for parent operation {parent_operation_id!r}"
+            )
+        if rc["status"] != "granted":
+            raise ConsentStateError(
+                f"parent receipt status {rc['status']!r} does not authorize asset upload"
+            )
+        assets = json.loads(rc["disclosed_assets_json"])
+        disclosed = any(
+            isinstance(a, dict)
+            and a.get("kind") == asset_role
+            and a.get("digest") == content_digest
+            for a in assets
+        )
+        if not disclosed:
+            raise ConsentConflictError(
+                f"asset {asset_role!r} digest {content_digest!r} was not disclosed "
+                f"in the parent operation's receipt"
+            )
+        return AssetUploadConsentResult(
+            parent_operation_id=parent_operation_id,
+            asset_role=asset_role,
+            content_digest=content_digest,
+            receipt_digest=rc["receipt_digest"],
+        )
 
     def _check_artifact_chain(
         self,
