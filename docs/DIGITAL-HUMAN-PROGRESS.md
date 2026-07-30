@@ -41,11 +41,7 @@
 | §5.5e5a | StdlibVideoDownloader + FfprobeMediaProbe（HTTPS-only/DNS pin/private HTTPS/流式 sha256/no-redirect/lexical containment/reader-thread timeout） | ✅ |
 | §5.5e5b0a | HeyGenHttpTransport（host 锁 api.heygen.com/v3-only path/API key fresh/ProxyHandler/no-redirect/1MiB cap/headers whitelist/error body oversized guard） | ✅ |
 
-### 已实现待 Codex 复审
-
-| 子步 | 内容 | 状态 |
-|------|------|------|
-| §5.5e5b0b | asset upload adapter + 安全 multipart（digest re-verify/error mapping/response validation/MIME filename） | ⏳ 待审 |
+| §5.5e5b0b | asset upload adapter + 安全 multipart（digest re-verify/streaming iterator/shared path helper/forged command/error matrix/MIME binding） | ✅ |
 
 ### 还没做
 
@@ -55,7 +51,7 @@
 - §5.5e6 RecoveryDirectiveCatalog 验签 + failure mapping + 宿主 workflow
 - §6 跨仓库 contract 测试 + 三产品 registry/客户端回归（含 2026-07-29 事故教训）
 
-客户端 594 测试全绿。分支 `feat/digital-human-protocol-v1_1`。
+客户端 610 测试全绿。分支 `feat/digital-human-protocol-v1_1`。
 
 ## Codex 审阅工作流
 
