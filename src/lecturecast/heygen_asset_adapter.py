@@ -24,15 +24,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from lecturecast.heygen_http import HeyGenHttpTransport, HttpResponse, HttpErrorResponse, HttpTransportError
+from lecturecast.heygen_http import (HeyGenHttpTransport, HttpResponse,
+    HttpErrorResponse, HttpTransportError)
 from lecturecast.heygen_adapter import HeyGenAdapterError
 
 AssetRole = Literal["portrait_photo", "synthetic_narration_audio"]
 
 _ASSET_MAX_BYTES = 32 * 1024 * 1024  # 32 MiB
 _PROVIDER_FILENAMES = {
-    "portrait_photo": "portrait.png",
-    "synthetic_narration_audio": "narration.wav",
+    ("portrait_photo", "image/png"): "portrait.png",
+    ("portrait_photo", "image/jpeg"): "portrait.jpg",
+    ("synthetic_narration_audio", "audio/mpeg"): "narration.mp3",
+    ("synthetic_narration_audio", "audio/wav"): "narration.wav",
 }
 _ALLOWED_EXTENSIONS = {
     "portrait_photo": {".png", ".jpg", ".jpeg"},
@@ -147,7 +150,7 @@ def prepare_asset_upload(
         local_output_ref=local_output_ref,
         expected_asset_digest=digest,
         idempotency_key=idempotency_key,
-        provider_filename=_PROVIDER_FILENAMES[asset_role],
+        provider_filename=_PROVIDER_FILENAMES.get((asset_role, content_type), f"asset.{ext.lstrip('.')}"),
         content_type=content_type,
         file_size=st.st_size,
     )
@@ -187,10 +190,10 @@ class HeyGenAssetAdapter:
         self._transport = transport
 
     def upload_asset(self, command: AssetUploadCommand, *, runtime_root: Path) -> AssetUploadResult:
-        """Upload one asset. Hash is already verified in prepare_asset_upload;
-        this method opens the same FD, seeks to 0, and streams via multipart."""
+        """Upload one asset. Re-verifies the SHA-256 digest on the re-opened
+        FD (prevents same-size mutation), then seeks to 0 and streams via
+        multipart. Never re-hashes after the network call."""
         file_path = runtime_root / command.local_output_ref
-        # Re-open the file safely for the upload (hash was in prepare).
         flags = os.O_RDONLY
         try:
             flags |= os.O_NOFOLLOW  # type: ignore[attr-defined]
@@ -202,9 +205,23 @@ class HeyGenAssetAdapter:
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode) or st.st_size != command.file_size:
                 raise AssetUploadError(code="validation_error", message="file changed since prepare")
-            import io
+            # Re-verify digest on the same FD before upload.
+            h = hashlib.sha256()
+            remaining = st.st_size
+            while remaining > 0:
+                chunk = os.read(fd, min(65536, remaining))
+                if not chunk:
+                    break
+                h.update(chunk)
+                remaining -= len(chunk)
+            actual_digest = "sha256:" + h.hexdigest()
+            if actual_digest != command.expected_asset_digest:
+                raise AssetUploadError(code="validation_error",
+                    message="asset digest mismatch on re-open (file mutated)")
+            # Rewind for upload.
+            os.lseek(fd, 0, os.SEEK_SET)
             fileobj = os.fdopen(fd, "rb")
-            fd = None  # ownership transferred
+            fd = None
             try:
                 resp = self._transport.request_multipart_file(
                     path="/v3/assets",
@@ -214,25 +231,51 @@ class HeyGenAssetAdapter:
                     file_size=command.file_size,
                     idempotency_key=command.idempotency_key,
                 )
+            except HttpErrorResponse as exc:
+                raise self._map_error(exc) from None
+            except HttpTransportError as exc:
+                raise AssetUploadAmbiguousError(code=exc.code,
+                    message=f"transport error during upload: {exc}") from None
             finally:
                 fileobj.close()
         finally:
             if fd is not None:
                 os.close(fd)
 
-        data = resp.body.get("data", {})
-        asset_id = data.get("asset_id", "")
-        remote_url = data.get("url", "")
+        data = resp.body.get("data")
+        if not isinstance(data, dict):
+            raise AssetUploadAmbiguousError(code="malformed_response",
+                message="upload response data is not a dict")
+        asset_id = data.get("asset_id")
+        if not isinstance(asset_id, str) or not asset_id.strip():
+            raise AssetUploadAmbiguousError(code="malformed_response",
+                message="upload succeeded but no asset_id returned")
         mime_type = data.get("mime_type", "")
+        if not isinstance(mime_type, str) or not mime_type.strip():
+            raise AssetUploadAmbiguousError(code="malformed_response",
+                message="upload response missing mime_type")
         size_bytes = data.get("size_bytes", 0)
-        if not asset_id:
-            raise AssetUploadAmbiguousError(
-                code="malformed_response",
-                message="upload succeeded but no asset_id returned",
-            )
+        if type(size_bytes) is not int or size_bytes <= 0 or size_bytes != command.file_size:
+            raise AssetUploadAmbiguousError(code="malformed_response",
+                message=f"upload response size_bytes mismatch: {size_bytes} != {command.file_size}")
         return AssetUploadResult(
-            asset_id=asset_id,
-            remote_url=remote_url,
-            mime_type=mime_type,
+            asset_id=asset_id.strip(),
+            remote_url=str(data.get("url", "")),
+            mime_type=mime_type.strip(),
             size_bytes=size_bytes,
         )
+
+    @staticmethod
+    def _map_error(exc: HttpErrorResponse) -> Exception:
+        """Map HTTP error responses to adapter errors with correct certainty."""
+        code = exc.provider_code or "unknown"
+        if exc.status == 429:
+            return AssetUploadError(code="rate_limited", message=f"HTTP 429: {code}")
+        if exc.status == 409:
+            if code == "request_in_progress":
+                return AssetUploadAmbiguousError(code=code, message="upload already in progress")
+            return AssetUploadAmbiguousError(code=code, message=f"HTTP 409: {code}")
+        if 400 <= exc.status < 500:
+            return AssetUploadError(code=code, message=f"HTTP {exc.status}: {code}")
+        # 5xx
+        return AssetUploadAmbiguousError(code=code, message=f"HTTP {exc.status}: {code}")
