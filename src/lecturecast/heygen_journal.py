@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 _RUNTIME_DIR_NAME = "runtime"
 _DB_NAME = "heygen-operations.db"
 
@@ -183,14 +183,62 @@ _REFS_DDL = """
     )
     """
 
+# v5: asset uploads have their OWN lifecycle, decoupled from the video operation
+# status machine (heygen_operations.status CHECK does not admit asset states,
+# and mixing asset rows there would pollute video title-reconciliation scans).
+# portrait + audio uploads carry independent leases so they can run concurrently.
+_ASSET_UPLOADS_DDL = """
+    CREATE TABLE IF NOT EXISTS heygen_asset_uploads (
+        upload_id TEXT PRIMARY KEY NOT NULL,
+        parent_operation_id TEXT NOT NULL,
+        asset_role TEXT NOT NULL
+            CHECK (asset_role IN ('portrait_photo', 'synthetic_narration_audio')),
+        content_digest TEXT NOT NULL,
+        local_ref TEXT NOT NULL,
+        content_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+        provider_filename TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL DEFAULT 'upload_pending'
+            CHECK (status IN (
+                'upload_pending', 'uploading', 'uploaded',
+                'reconciliation_required', 'manual_reconciliation_required',
+                'failed', 'cancelled'
+            )),
+        remote_resource_id INTEGER,
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+        next_retry_at TEXT,
+        last_error_code TEXT,
+        lease_owner TEXT,
+        lease_expires_at TEXT,
+        lease_fence INTEGER NOT NULL DEFAULT 0 CHECK (lease_fence >= 0),
+        attempt_started_at TEXT,
+        maybe_sent_at TEXT,
+        idempotency_expires_at TEXT,
+        uploaded_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(parent_operation_id, asset_role),
+        FOREIGN KEY (parent_operation_id)
+            REFERENCES heygen_operations(operation_id)
+            ON DELETE CASCADE,
+        FOREIGN KEY (remote_resource_id)
+            REFERENCES heygen_remote_resources(resource_id)
+            ON DELETE SET NULL
+    )
+    """
+
 _DDL_STATEMENTS = [
     _OPERATIONS_DDL,
     _RECEIPTS_DDL,
     _RESOURCES_DDL,
     _REFS_DDL,
+    _ASSET_UPLOADS_DDL,
     "CREATE INDEX IF NOT EXISTS idx_operations_generation ON heygen_operations(generation_id)",
     "CREATE INDEX IF NOT EXISTS idx_operations_status ON heygen_operations(status)",
     "CREATE INDEX IF NOT EXISTS idx_remote_resources_created_by_op ON heygen_remote_resources(created_by_operation_id)",
+    "CREATE INDEX IF NOT EXISTS idx_asset_uploads_parent ON heygen_asset_uploads(parent_operation_id)",
+    "CREATE INDEX IF NOT EXISTS idx_asset_uploads_status ON heygen_asset_uploads(status)",
 ]
 
 
@@ -245,6 +293,26 @@ def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
+    """v4 → v5: add the heygen_asset_uploads table (asset upload lifecycle,
+    decoupled from the video operation status machine). CREATE TABLE IF NOT
+    EXISTS makes this safe and idempotent on a populated v4 database — no
+    existing column changes, no data move."""
+    tables = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )}
+    if "heygen_asset_uploads" not in tables:
+        conn.execute(_ASSET_UPLOADS_DDL)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_asset_uploads_parent "
+            "ON heygen_asset_uploads(parent_operation_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_asset_uploads_status "
+            "ON heygen_asset_uploads(status)"
+        )
+
+
 def _migrate(conn: sqlite3.Connection, current_version: int) -> None:
     """Run all version steps < _SCHEMA_VERSION, then bump user_version, in one
     BEGIN IMMEDIATE transaction. All-or-nothing: on any failure the whole
@@ -260,6 +328,8 @@ def _migrate(conn: sqlite3.Connection, current_version: int) -> None:
             _migrate_v2_to_v3(conn)
         if current_version < 4:
             _migrate_v3_to_v4(conn)
+        if current_version < 5:
+            _migrate_v4_to_v5(conn)
         conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         conn.execute("COMMIT")
     except Exception:
