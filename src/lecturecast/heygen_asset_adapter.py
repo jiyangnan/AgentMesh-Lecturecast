@@ -80,6 +80,38 @@ class AssetUploadAmbiguousError(HeyGenAdapterError):
                          submission_certainty="maybe_sent", message=message)
 
 
+def _validate_asset_path(runtime_root: Path, local_output_ref: str) -> None:
+    """Shared path containment guard for prepare + upload. Rejects absolute,
+    traversal, dot segments, and symlinks in runtime root or any intermediate
+    directory."""
+    if local_output_ref.startswith("/"):
+        raise ValueError("absolute path rejected")
+    if ".." in local_output_ref:
+        raise ValueError("path traversal rejected")
+    file_path = runtime_root / local_output_ref
+    try:
+        rel = file_path.relative_to(runtime_root)
+    except ValueError:
+        raise ValueError("file path escapes runtime")
+    if "." in rel.parts or ".." in rel.parts:
+        raise ValueError(f"path contains . or ..")
+    current = runtime_root
+    try:
+        root_st = current.lstat()
+        if stat.S_ISLNK(root_st.st_mode):
+            raise ValueError("runtime root is a symlink")
+    except FileNotFoundError:
+        pass
+    for part in rel.parts[:-1]:
+        current = current / part
+        try:
+            st = current.lstat()
+            if stat.S_ISLNK(st.st_mode):
+                raise ValueError(f"symlink in path: {current}")
+        except FileNotFoundError:
+            pass
+
+
 def prepare_asset_upload(
     *,
     operation_id: str,
@@ -94,32 +126,8 @@ def prepare_asset_upload(
         raise ValueError(f"unknown asset_role: {asset_role!r}")
     if not operation_id or not operation_id.strip():
         raise ValueError("operation_id is required")
-    if ".." in local_output_ref or local_output_ref.startswith("/"):
-        raise ValueError(f"invalid local_output_ref: {local_output_ref!r}")
+    _validate_asset_path(runtime_root, local_output_ref)
     file_path = runtime_root / local_output_ref
-    # Lexical containment
-    try:
-        rel = file_path.relative_to(runtime_root)
-    except ValueError:
-        raise ValueError("file path escapes runtime")
-    if "." in rel.parts or ".." in rel.parts:
-        raise ValueError(f"path contains . or ..: {file_path}")
-    # lstat each intermediate directory to reject symlink swap.
-    _current = runtime_root
-    try:
-        _root_st = _current.lstat()
-        if stat.S_ISLNK(_root_st.st_mode):
-            raise ValueError("runtime root is a symlink")
-    except FileNotFoundError:
-        pass
-    for _part in rel.parts[:-1]:
-        _current = _current / _part
-        try:
-            _st = _current.lstat()
-            if stat.S_ISLNK(_st.st_mode):
-                raise ValueError(f"symlink in path: {_current}")
-        except FileNotFoundError:
-            pass
     # Open safely
     flags = os.O_RDONLY
     try:
@@ -209,34 +217,11 @@ class HeyGenAssetAdapter:
         """Upload one asset. Re-verifies the SHA-256 digest on the re-opened
         FD (prevents same-size mutation), then seeks to 0 and streams via
         multipart. Never re-hashes after the network call."""
+        try:
+            _validate_asset_path(runtime_root, command.local_output_ref)
+        except ValueError as exc:
+            raise AssetUploadError(code="validation_error", message=str(exc))
         file_path = runtime_root / command.local_output_ref
-        # Validate path containment BEFORE any open (forged command defense).
-        if command.local_output_ref.startswith("/"):
-            raise AssetUploadError(code="validation_error", message="absolute path rejected")
-        if ".." in command.local_output_ref:
-            raise AssetUploadError(code="validation_error", message="path traversal rejected")
-        try:
-            rel = file_path.relative_to(runtime_root)
-        except ValueError:
-            raise AssetUploadError(code="validation_error", message="path escapes runtime")
-        if "." in rel.parts or ".." in rel.parts:
-            raise AssetUploadError(code="validation_error", message="path contains . or ..")
-        # lstat each intermediate directory to reject symlink swap.
-        current = runtime_root
-        try:
-            root_st = current.lstat()
-            if stat.S_ISLNK(root_st.st_mode):
-                raise AssetUploadError(code="validation_error", message="runtime root is a symlink")
-        except FileNotFoundError:
-            pass
-        for part in rel.parts[:-1]:
-            current = current / part
-            try:
-                st = current.lstat()
-                if stat.S_ISLNK(st.st_mode):
-                    raise AssetUploadError(code="validation_error", message=f"symlink in path: {current}")
-            except FileNotFoundError:
-                pass
         flags = os.O_RDONLY
         try:
             flags |= os.O_NOFOLLOW  # type: ignore[attr-defined]
