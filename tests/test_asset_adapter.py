@@ -158,7 +158,7 @@ def test_multipart_upload_streams_file(tmp_path):
 
     fake_opener, captured = _fake_opener({"data": {
         "asset_id": "ast_123", "url": "https://files.heygen.ai/x.png",
-        "mime_type": "image/png", "size_bytes": len(png_content)}})
+        "mime_type": "image/png", "size_bytes": cmd.file_size}})
     transport = HeyGenHttpTransport(
         api_key_provider=lambda: "key", opener_factory=fake_opener)
     adapter = HeyGenAssetAdapter(transport)
@@ -176,29 +176,21 @@ def test_multipart_upload_streams_file(tmp_path):
     assert headers_lower.get("idempotency-key") == cmd.idempotency_key
 
 
-def test_multipart_filename_sanitized():
+def test_multipart_filename_sanitized(tmp_path):
     """Provider filename is fixed by asset_role (not from disk)."""
-    fake_opener, captured = _fake_opener({"data": {"asset_id": "a1"}})
+    runtime = tmp_path / "runtime"; runtime.mkdir()
+    (runtime / "portrait.png").write_bytes(_png_bytes())
+    cmd = prepare_asset_upload(
+        operation_id="op1", asset_role="portrait_photo",
+        runtime_root=runtime, local_output_ref="portrait.png")
+    fake_opener, captured = _fake_opener({"data": {
+        "asset_id": "a1", "mime_type": "image/png", "size_bytes": cmd.file_size}})
     transport = HeyGenHttpTransport(
         api_key_provider=lambda: "key", opener_factory=fake_opener)
-    png_content = _png_bytes()
-    cmd = AssetUploadCommand(
-        operation_id="op1", asset_role="portrait_photo",
-        local_output_ref="portrait.png", expected_asset_digest="sha256:" + "a"*64,
-        idempotency_key="idem-test", provider_filename="portrait.png",
-        content_type="image/png", file_size=len(png_content))
-    # Create the file in tmp and pass runtime_root
-    runtime = Path("/tmp/test_multipart_runtime")
-    runtime.mkdir(exist_ok=True)
-    (runtime / "portrait.png").write_bytes(_png_bytes())
-    try:
-        adapter = HeyGenAssetAdapter(transport)
-        adapter.upload_asset(cmd, runtime_root=runtime)
-        body = captured["data"]
-        assert b'filename="portrait.png"' in body
-    finally:
-        (runtime / "portrait.png").unlink(missing_ok=True)
-        runtime.rmdir()
+    adapter = HeyGenAssetAdapter(transport)
+    adapter.upload_asset(cmd, runtime_root=runtime)
+    body = captured["data"]
+    assert b'filename="portrait.png"' in body
 
 
 def test_multipart_rejects_no_asset_id(tmp_path):
