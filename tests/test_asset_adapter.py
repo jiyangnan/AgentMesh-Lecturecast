@@ -139,7 +139,11 @@ def _fake_opener(response_body: dict, status: int = 200):
         headers = {}
     class _FakeOpener:
         def open(self, req, timeout=None):
-            captured["data"] = req.data
+            # Consume the iterator body (urllib passes it as iterable)
+            data = req.data
+            if hasattr(data, '__iter__') and not isinstance(data, (bytes, bytearray)):
+                data = b"".join(data)
+            captured["data"] = data
             captured["headers"] = dict(req.header_items())
             captured["method"] = req.get_method()
             captured["url"] = req.full_url

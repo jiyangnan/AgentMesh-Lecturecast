@@ -213,8 +213,10 @@ class HeyGenHttpTransport:
                 yield chunk
             yield suffix
 
-        body_bytes = b"".join(body_iter())
-        req = urllib_request.Request(url, data=body_bytes, method="POST", headers=headers)
+        # Pass the iterator directly as Request.data — urllib accepts an
+        # iterable of bytes and streams it chunk-by-chunk.
+        req = urllib_request.Request(url, data=body_iter(), method="POST",
+                                     headers=headers)
         try:
             opener = self._opener_factory()
             resp = opener.open(req, timeout=self._timeout)

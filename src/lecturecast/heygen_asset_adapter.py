@@ -75,8 +75,8 @@ class AssetUploadError(HeyGenAdapterError):
 
 class AssetUploadAmbiguousError(HeyGenAdapterError):
     """Asset upload may have reached HeyGen (maybe_sent)."""
-    def __init__(self, *, code: str, message: str = ""):
-        super().__init__(code=code, retryable=True,
+    def __init__(self, *, code: str, message: str = "", retryable: bool = True):
+        super().__init__(code=code, retryable=retryable,
                          submission_certainty="maybe_sent", message=message)
 
 
@@ -194,6 +194,17 @@ class HeyGenAssetAdapter:
         FD (prevents same-size mutation), then seeks to 0 and streams via
         multipart. Never re-hashes after the network call."""
         file_path = runtime_root / command.local_output_ref
+        # Validate path containment BEFORE any open (forged command defense).
+        if command.local_output_ref.startswith("/"):
+            raise AssetUploadError(code="validation_error", message="absolute path rejected")
+        if ".." in command.local_output_ref:
+            raise AssetUploadError(code="validation_error", message="path traversal rejected")
+        try:
+            rel = file_path.relative_to(runtime_root)
+        except ValueError:
+            raise AssetUploadError(code="validation_error", message="path escapes runtime")
+        if "." in rel.parts or ".." in rel.parts:
+            raise AssetUploadError(code="validation_error", message="path contains . or ..")
         flags = os.O_RDONLY
         try:
             flags |= os.O_NOFOLLOW  # type: ignore[attr-defined]
@@ -257,6 +268,12 @@ class HeyGenAssetAdapter:
                 if exc.code == "auth_failed":
                     raise AssetUploadError(code="auth_failed",
                         message=f"transport error: {exc}") from None
+                if exc.code in ("network_timeout", "connection_error"):
+                    raise AssetUploadAmbiguousError(code=exc.code, retryable=True,
+                        message=f"transport error: {exc}") from None
+                if exc.code == "malformed_response":
+                    raise AssetUploadAmbiguousError(code="malformed_response", retryable=False,
+                        message=f"transport error: {exc}") from None
                 raise AssetUploadAmbiguousError(code="unknown",
                     message=f"transport error during upload: {exc}") from None
             finally:
@@ -305,12 +322,15 @@ class HeyGenAssetAdapter:
                     message="HTTP 409 request_in_progress")
             return AssetUploadAmbiguousError(code="unknown",
                 message=f"HTTP 409 ({provider_code}) — non-retryable")
-        if exc.status in (400, 401, 403, 404, 422):
+        if exc.status in (401, 403):
+            return AssetUploadError(code="auth_failed",
+                message=f"HTTP {exc.status} ({provider_code})")
+        if exc.status in (400, 404, 422):
             return AssetUploadError(code="validation_error",
                 message=f"HTTP {exc.status} ({provider_code})")
         if 400 <= exc.status < 500:
             return AssetUploadError(code="unknown",
                 message=f"HTTP {exc.status} ({provider_code})")
         # 5xx
-        return AssetUploadAmbiguousError(code="unknown",
+        return AssetUploadAmbiguousError(code="provider_server_error",
             message=f"HTTP {exc.status} ({provider_code})")
