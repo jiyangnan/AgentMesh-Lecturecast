@@ -28,7 +28,7 @@ from urllib.parse import urljoin
 _DEFAULT_BASE_URL = "https://api.heygen.com"
 _RESPONSE_MAX = 1_048_576 + 1  # 1 MiB + 1 to detect overflow
 _IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9._\-:]{1,255}$")
-_PATH_RE = re.compile(r"^/v[0-9]+/[A-Za-z0-9._\-/]*$")
+_PATH_RE = re.compile(r"^/v3/(?:[A-Za-z0-9._\-]+/)*[A-Za-z0-9._\-]*$")
 _ALLOWED_HEADERS = frozenset({
     "retry-after", "x-request-id", "request-id", "content-type",
 })
@@ -186,6 +186,10 @@ def _validate_base_url(url: str) -> str:
 def _validate_path(path: str) -> None:
     if ".." in path or not _PATH_RE.fullmatch(path):
         raise ValueError(f"invalid API path: {path!r}")
+    # Reject empty/dot/dotdot in any segment
+    for seg in path.split("/")[1:]:  # skip leading empty (from /)
+        if seg in ("", ".", ".."):
+            raise ValueError(f"invalid API path segment: {path!r}")
 
 
 def _stream_read(resp, max_bytes: int) -> bytes:
@@ -233,7 +237,10 @@ def _make_error_response(exc: HTTPError) -> HttpErrorResponse:
             body = None
     provider_code = None
     if body and isinstance(body.get("error"), dict):
-        provider_code = str(body["error"].get("code", "")).strip() or None
+        raw_code = body["error"].get("code", "")
+        provider_code = None
+        if isinstance(raw_code, str) and 1 <= len(raw_code) <= 128:
+            provider_code = raw_code.strip() or None
     filtered = _filter_headers(exc.headers)
     return HttpErrorResponse(exc.code, body, filtered, provider_code)
 
