@@ -19,6 +19,7 @@ HeyGenHttpTransport. Hardened per Codex round-2 review:
 from __future__ import annotations
 
 import re
+import math
 from datetime import datetime, timezone
 from typing import Mapping
 
@@ -37,6 +38,11 @@ from lecturecast.heygen_adapter import (
 # Applied to every remote id — inbound in responses and outbound in commands —
 # before it is trusted or placed in a URL path.
 _SAFE_REMOTE_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,128}$")
+
+# The heygen_title is the deterministic recovery key used by title
+# reconciliation after a lost submit response. It MUST follow the canonical
+# lecturecast:<operation_id> shape or the submit can never be found again.
+_HEYGEN_TITLE_RE = re.compile(r"^lecturecast:[A-Za-z0-9_\-]{1,128}$")
 
 _MAX_LIST_PAGES = 10
 _MAX_CANDIDATES = 500
@@ -76,6 +82,15 @@ def _validate_remote_id(remote_id: str) -> str:
     return remote_id
 
 
+def _validate_heygen_title(title: str) -> str:
+    """The title is the recovery key for title reconciliation; a malformed title
+    means a successful submit could never be found again. Reject before send."""
+    if not _HEYGEN_TITLE_RE.fullmatch(title or ""):
+        raise ValueError(
+            f"heygen_title must be 'lecturecast:<operation_id>', got: {title!r}")
+    return title
+
+
 class HeyGenVideosAdapter:
     """HeyGen Videos v3 API adapter. Inject the transport for testing."""
 
@@ -89,6 +104,7 @@ class HeyGenVideosAdapter:
         if not isinstance(descriptor, Mapping):
             raise ValueError("request_descriptor must be a mapping")
         _validate_descriptor(descriptor)
+        _validate_heygen_title(command.heygen_title)
         body = _build_submit_body(descriptor, command.heygen_title)
         try:
             resp = self._transport.request_json(
@@ -269,9 +285,11 @@ class HeyGenVideosAdapter:
             raise DeleteAdapterError(
                 code="malformed_response", retryable=False,
                 message="delete response data is not an object")
-        # If the provider echoes an id, it must be the one we asked to delete.
+        # The provider MUST echo the id of the resource it deleted; a missing,
+        # null, or non-string id is treated as malformed (we cannot confirm the
+        # right resource was deleted).
         returned_id = data.get("id")
-        if isinstance(returned_id, str) and returned_id != remote_id:
+        if type(returned_id) is not str or returned_id != remote_id:
             raise DeleteAdapterError(
                 code="malformed_response", retryable=False,
                 message="delete response id does not match requested remote_id")
@@ -364,7 +382,18 @@ def _to_iso(raw: object) -> str:
             code="malformed_response", retryable=False,
             message=f"invalid created_at: {raw!r}")
     if isinstance(raw, (int, float)):
-        return datetime.fromtimestamp(raw, tz=timezone.utc).isoformat()
+        # NaN / Inf / out-of-range must surface as a structured error, not leak
+        # as ValueError/OverflowError/OSError from fromtimestamp.
+        if not math.isfinite(raw):
+            raise TitleQueryAdapterError(
+                code="malformed_response", retryable=False,
+                message=f"created_at is not finite: {raw!r}")
+        try:
+            return datetime.fromtimestamp(raw, tz=timezone.utc).isoformat()
+        except (ValueError, OverflowError, OSError):
+            raise TitleQueryAdapterError(
+                code="malformed_response", retryable=False,
+                message=f"created_at out of range: {raw!r}") from None
     if isinstance(raw, str) and raw.strip():
         candidate = raw.strip()
         # Validate strictly here so a bad timestamp surfaces as a structured
@@ -433,6 +462,12 @@ def _map_submit_transport_error(exc: HttpTransportError) -> HeyGenAdapterError:
         return HeyGenAdapterError(code=exc.code, retryable=False,
             submission_certainty="not_sent",
             message=f"transport error: {exc}")
+    # A malformed response after a send is never blindly retryable (a retry
+    # risks duplication); route to reconciliation instead.
+    if exc.code == "malformed_response":
+        return HeyGenAdapterError(code="malformed_response", retryable=False,
+            submission_certainty="maybe_sent",
+            message=f"transport error: {exc}")
     return HeyGenAdapterError(code=_stable_code(exc.code), retryable=True,
         submission_certainty="maybe_sent",
         message=f"transport error: {exc}")
@@ -484,9 +519,13 @@ def _map_delete_http_error(exc: HttpErrorResponse) -> DeleteAdapterError:
 
 
 def _map_get_transport_error(exc: HttpTransportError, error_cls: type):
-    """Transport errors for poll/query/delete. auth_failed → not-retryable."""
+    """Transport errors for poll/query/delete. auth_failed/validation_error →
+    not-retryable; malformed_response → not-retryable; transient → retryable."""
     if exc.code in _NOT_SENT_TRANSPORT_CODES:
         return error_cls(code=exc.code, retryable=False,
+                         message=f"transport error: {exc}")
+    if exc.code == "malformed_response":
+        return error_cls(code="malformed_response", retryable=False,
                          message=f"transport error: {exc}")
     retryable = exc.code in ("network_timeout", "connection_error", "rate_limited")
     return error_cls(code=_stable_code(exc.code), retryable=retryable,
