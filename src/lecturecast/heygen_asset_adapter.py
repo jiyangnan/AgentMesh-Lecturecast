@@ -104,6 +104,22 @@ def prepare_asset_upload(
         raise ValueError("file path escapes runtime")
     if "." in rel.parts or ".." in rel.parts:
         raise ValueError(f"path contains . or ..: {file_path}")
+    # lstat each intermediate directory to reject symlink swap.
+    _current = runtime_root
+    try:
+        _root_st = _current.lstat()
+        if stat.S_ISLNK(_root_st.st_mode):
+            raise ValueError("runtime root is a symlink")
+    except FileNotFoundError:
+        pass
+    for _part in rel.parts[:-1]:
+        _current = _current / _part
+        try:
+            _st = _current.lstat()
+            if stat.S_ISLNK(_st.st_mode):
+                raise ValueError(f"symlink in path: {_current}")
+        except FileNotFoundError:
+            pass
     # Open safely
     flags = os.O_RDONLY
     try:
