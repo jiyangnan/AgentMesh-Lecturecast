@@ -1899,6 +1899,26 @@ class OperationRepository:
         if att is not None and owner is not None and _parse_utc(lease_exp) > now:
             return AssetClaimResult(upload_id, "busy", row["lease_fence"],
                                    row["attempts"], lease_exp, None)
+        # Crash-after-send protection: a worker that died after the provider
+        # call but before apply_failure leaves the row in 'uploading' with an
+        # expired lease and no idempotency_expires_at. If the attempt started
+        # more than 24h ago, the HeyGen replay window has closed — we MUST NOT
+        # reclaim and re-upload (that could create a duplicate remote asset).
+        # Promote to manual_reconciliation_required instead.
+        if att is not None:
+            attempt_send_cutoff = _parse_utc(att) + timedelta(
+                seconds=_ASSET_IDEMPOTENCY_WINDOW_SECONDS)
+            if now >= attempt_send_cutoff:
+                conn.execute(
+                    "UPDATE heygen_asset_uploads SET "
+                    "status='manual_reconciliation_required', "
+                    "maybe_sent_at=COALESCE(maybe_sent_at, attempt_started_at), "
+                    "idempotency_expires_at=COALESCE(idempotency_expires_at, ?), "
+                    "lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
+                    "WHERE upload_id=?",
+                    (_canonical(attempt_send_cutoff), now_iso, upload_id))
+                return AssetClaimResult(upload_id, "terminal", row["lease_fence"],
+                                       row["attempts"], None, None)
         new_fence = row["lease_fence"] + 1
         new_attempts = row["attempts"] + 1
         conn.execute(

@@ -246,6 +246,27 @@ class TestAssetClaim:
         finally:
             conn.close()
 
+    def test_crash_after_send_past_window_is_manual(self):
+        # Worker claimed, called the provider, then died before apply_failure.
+        # The row sits in 'uploading' with an expired lease and no expires_at.
+        # Reclaiming 25h later MUST NOT re-upload (duplicate risk) — promote to
+        # manual_reconciliation_required.
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            _do_claim(repo, conn, now="2026-07-30T00:00:00Z")
+            reclaim = _do_claim(repo, conn, now="2026-07-31T01:00:00Z")  # 25h
+            assert reclaim.status == "terminal"
+            st = conn.execute("SELECT status, maybe_sent_at, idempotency_expires_at "
+                              "FROM heygen_asset_uploads WHERE upload_id=?",
+                              ("u1",)).fetchone()
+            assert st["status"] == "manual_reconciliation_required"
+            assert st["maybe_sent_at"] is not None
+            assert st["idempotency_expires_at"] is not None
+        finally:
+            conn.close()
+
     def test_idempotency_key_mismatch_on_replay_raises(self):
         conn, td = _db()
         try:
