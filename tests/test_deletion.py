@@ -170,7 +170,7 @@ def test_stale_fence_does_not_delete(tmp_path):
     with repo.begin_immediate() as conn:
         outcome = repo.apply_deletion_outcome_in_tx(
             conn, prepared.operation_id, rid, OWNER, claim.fence + 99, NOW,
-            DeleteResult("deleted"))
+            DeleteResult("deleted"), expected_remote_id=claim.remote_id)
     assert outcome.status == "fence_conflict"
     db = sqlite3.connect(str(tmp_path / DB_REL))
     ds = db.execute("SELECT deletion_status FROM heygen_remote_resources WHERE resource_id=?", (rid,)).fetchone()[0]

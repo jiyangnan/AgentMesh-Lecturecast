@@ -1865,54 +1865,85 @@ class OperationRepository:
         return DeletionClaim(operation_id, resource_id, "claimed", new_fence, res["remote_id"])
 
     def apply_deletion_outcome_in_tx(self, conn, operation_id, resource_id,
-                                     lease_owner, fence, now_iso, outcome,
+                                     lease_owner, fence, now_iso, outcome, *,
+                                     expected_remote_id,
                                      max_attempts=DELETION_MAX_ATTEMPTS):
         """Apply a deletion outcome (fenced on operation lease + resource
         deletion_status='deletion_pending'). Maps DeleteResult/DeleteAdapterError
-        to deleted/failed states."""
+        to deleted/failed states. ``expected_remote_id`` is the id the adapter
+        actually DELETEd (claim.remote_id); tx2 re-binds it to defend a remote_id
+        swap between the (closed) claim tx and this apply tx — mirror asset
+        apply (:2130)."""
         from lecturecast.heygen_adapter import DeleteResult, DeleteAdapterError
         self._require_tx(conn)
         conn.row_factory = sqlite3.Row
         now_c = _canonical(_parse_utc(now_iso))
         if type(max_attempts) is not int or not (1 <= max_attempts <= 10):
             raise ValueError("max_attempts must be an int in [1, 10]")
-        # Fence CAS on operation
+        # Defense against a None/empty expected_remote_id that would silently
+        # disable the remote_id re-bind below (mirror asset apply :2152-2156):
+        # a legit claimed video always carries a non-empty claim.remote_id, so a
+        # missing/blank value here is a caller bug, not a deletable row.
+        if not isinstance(expected_remote_id, str) or not expected_remote_id:
+            raise ValueError("expected_remote_id must be a non-empty string")
+        # Fence CAS on operation. download_status is read here (not just the
+        # fence) because post_download cleanup is OP-LEVEL-authorized by a
+        # verified delivery, and claim and apply are separate txs — a between-tx
+        # op download_status swap must be re-checked in tx2 (round-12 F1b).
         op = conn.execute(
-            "SELECT lease_fence FROM heygen_operations WHERE operation_id=? "
-            "AND lease_owner=? AND lease_fence=?", (operation_id, lease_owner, fence)).fetchone()
+            "SELECT lease_fence, download_status FROM heygen_operations "
+            "WHERE operation_id=? AND lease_owner=? AND lease_fence=?",
+            (operation_id, lease_owner, fence)).fetchone()
         if op is None:
             return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
-        # Re-verify FULL exclusive topology (claim and apply are separate txs).
+        # Re-verify FULL exclusive topology (claim and apply are separate txs) AND
+        # read every authorization field apply relies on in tx2: deletion_attempts
+        # (retry bookkeeping), deletion_reason (round-11 allow-set gate),
+        # retention_mode (round-12 F1a — post_download requires 'ephemeral'), and
+        # remote_id (round-12 F2 — re-bind the id the adapter actually deleted;
+        # r.remote_id=? in the WHERE makes a between-tx rename return no row). The
+        # topology SELECT confirms the row in this same tx, so reason/retention/
+        # remote_id read here are guaranteed non-None downstream.
         res = conn.execute(
-            "SELECT r.deletion_attempts FROM heygen_remote_resources r "
+            "SELECT r.deletion_attempts, r.deletion_reason, r.retention_mode, "
+            "r.remote_id FROM heygen_remote_resources r "
             "WHERE r.resource_id=? AND r.resource_kind='video' "
             "AND r.deletion_status='deletion_pending' "
             "AND r.created_by_operation_id=? "
+            "AND r.remote_id=? "
             "AND r.credential_profile_id=(SELECT o.credential_profile_id "
             "  FROM heygen_operations o WHERE o.operation_id=?) "
             "AND EXISTS (SELECT 1 FROM heygen_resource_operation_refs ref "
             "  WHERE ref.resource_id=r.resource_id AND ref.operation_id=?) "
             "AND NOT EXISTS (SELECT 1 FROM heygen_resource_operation_refs ref2 "
             "  WHERE ref2.resource_id=r.resource_id AND ref2.operation_id<>?)",
-            (resource_id, operation_id, operation_id, operation_id, operation_id)).fetchone()
+            (resource_id, operation_id, expected_remote_id, operation_id,
+             operation_id, operation_id)).fetchone()
         if res is None:
             return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
-        # Read the CURRENT reason — claim and apply are separate fenced txs, so
-        # only post_download / consent_withdrawal authorize recording a deletion.
+        # Round-11 reason gate (now read from res, no separate SELECT): only
+        # post_download / consent_withdrawal authorize recording a deletion.
         # manual_force is the operator-only integrity path: claim returns
         # not_ready and never carries a lease, so it reaches apply ONLY via a
         # reason swap between the claim tx and this apply tx. Mirror asset apply
-        # (:2206) and reject the swap before ANY outcome path (success OR
-        # failure) — never silently record a deletion nor clear the operation
-        # lease for a manual_force resource (round-11 P1). reason_row is guaranteed
-        # non-None: the topology re-verify above confirmed the row in this same tx.
-        reason_row = conn.execute(
-            "SELECT deletion_reason FROM heygen_remote_resources WHERE resource_id=?",
-            (resource_id,)).fetchone()
-        if reason_row["deletion_reason"] not in ("post_download", "consent_withdrawal"):
+        # (:2206) and reject before ANY outcome path (success OR failure) — never
+        # silently record a deletion nor clear the operation lease for a
+        # manual_force resource.
+        if res["deletion_reason"] not in ("post_download", "consent_withdrawal"):
             return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
-        if reason_row and reason_row["deletion_reason"] == "post_download"                 and not self._single_video(conn, operation_id):
-            return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
+        # Round-12 F1: post_download is OP-LEVEL-authorized by a verified delivery
+        # of a SINGLE deliverable video on an EPHEMERAL op. claim verified all
+        # three in tx1; apply MUST re-verify them in tx2 because claim's tx1 is
+        # already closed. consent_withdrawal is delivery-independent, so it is
+        # exempt from retention / download_status / single-video (confirmed by the
+        # CTRL-consent probe case). A between-tx mutation of any of the three
+        # returns fence_conflict (lease preserved) before any outcome path.
+        if res["deletion_reason"] == "post_download":
+            if (res["retention_mode"] != "ephemeral"
+                    or op["download_status"] != "verified"
+                    or not self._single_video(conn, operation_id)):
+                return DeletionOutcome(
+                    operation_id, resource_id, "fence_conflict", fence, None, None)
         # Gated UPDATE condition shared by all outcomes.
         gate = ("resource_kind='video' AND created_by_operation_id=? "
                 "AND deletion_status='deletion_pending'")
@@ -3606,7 +3637,8 @@ class DeleteProcessor:
         with self._repository.begin_immediate() as conn:
             outcome = self._repository.apply_deletion_outcome_in_tx(
                 conn, operation_id, resource_id, lease_owner, claim.fence,
-                now_iso, result, max_attempts)
+                now_iso, result, expected_remote_id=claim.remote_id,
+                max_attempts=max_attempts)
         return DeletionOnceResult(claim=claim, outcome=outcome)
 
 
