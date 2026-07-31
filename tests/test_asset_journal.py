@@ -193,6 +193,146 @@ class TestAssetConsentGuard:
             conn.close()
 
 
+class TestConsentWithdrawalCleanup:
+    """enqueue_consent_withdrawal_cleanup state machine + withdraw wiring."""
+
+    def _insert_upload(self, conn, *, upload_id, parent="op1",
+                      role="portrait_photo", status="upload_pending",
+                      remote_resource_id=None, maybe_sent_at=None,
+                      idempotency_expires_at=None, attempt_started_at=None,
+                      lease_owner=None):
+        conn.execute(
+            "INSERT INTO heygen_asset_uploads (upload_id, parent_operation_id, "
+            "asset_role, content_digest, local_ref, content_type, size_bytes, "
+            "provider_filename, idempotency_key, status, remote_resource_id, "
+            "maybe_sent_at, idempotency_expires_at, attempt_started_at, lease_owner, "
+            "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (upload_id, parent, role, D_PORT, "r/p", "image/png", 10,
+             "portrait.png", f"k_{upload_id}", status, remote_resource_id,
+             maybe_sent_at, idempotency_expires_at, attempt_started_at, lease_owner,
+             "t", "t"))
+
+    def test_uploaded_goes_cleanup_required(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            c = _do_claim(repo, conn)
+            repo.apply_asset_outcome_in_tx(conn, upload_id=_U1, asset_id="ax",
+                now_iso="2026-07-30T00:00:01Z", lease_owner=LEASE,
+                expected_fence=c.fence)  # → uploaded + resource
+            tally = repo.enqueue_consent_withdrawal_cleanup_in_tx(
+                conn, parent_operation_id="op1", now_iso="2026-07-30T00:00:10Z")
+            assert tally["cleanup_required"] == 1
+            row = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id=?",
+                (_U1,)).fetchone()
+            assert row["status"] == "cleanup_required"
+            res = conn.execute(
+                "SELECT deletion_status, deletion_reason FROM heygen_remote_resources "
+                "WHERE remote_id='ax'").fetchone()
+            assert res["deletion_status"] == "deletion_pending"
+            assert res["deletion_reason"] == "consent_withdrawal"
+        finally:
+            conn.close()
+
+    def test_upload_pending_provably_clean_is_cancelled(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            self._insert_upload(conn, upload_id="u_clean", status="upload_pending")
+            tally = repo.enqueue_consent_withdrawal_cleanup_in_tx(
+                conn, parent_operation_id="op1", now_iso="t")
+            assert tally["cancelled"] == 1
+            assert conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='u_clean'"
+            ).fetchone()[0] == "cancelled"
+        finally:
+            conn.close()
+
+    def test_upload_pending_with_maybe_sent_trace_is_manual(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            self._insert_upload(conn, upload_id="u_ms", status="upload_pending",
+                                maybe_sent_at="2026-07-30T00:00:00Z",
+                                idempotency_expires_at="2026-07-31T00:00:00Z")
+            tally = repo.enqueue_consent_withdrawal_cleanup_in_tx(
+                conn, parent_operation_id="op1", now_iso="t")
+            assert tally["manual"] == 1
+            assert conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='u_ms'"
+            ).fetchone()[0] == "manual_reconciliation_required"
+        finally:
+            conn.close()
+
+    def test_uploading_is_left_intact(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            _do_claim(repo, conn)  # status=uploading, lease active
+            tally = repo.enqueue_consent_withdrawal_cleanup_in_tx(
+                conn, parent_operation_id="op1", now_iso="t")
+            assert tally["left_uploading"] == 1
+            # row untouched — fenced apply will catch the withdraw
+            assert conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id=?",
+                (_U1,)).fetchone()[0] == "uploading"
+        finally:
+            conn.close()
+
+    def test_cleanup_required_is_idempotent(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            self._insert_upload(conn, upload_id="u_done", status="cleanup_required")
+            tally = repo.enqueue_consent_withdrawal_cleanup_in_tx(
+                conn, parent_operation_id="op1", now_iso="t")
+            assert tally["kept"] == 1
+        finally:
+            conn.close()
+
+    def test_reconciliation_without_resource_is_manual(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            self._insert_upload(conn, upload_id="u_rec", status="reconciliation_required")
+            tally = repo.enqueue_consent_withdrawal_cleanup_in_tx(
+                conn, parent_operation_id="op1", now_iso="t")
+            assert tally["manual"] == 1
+        finally:
+            conn.close()
+
+    def test_withdraw_wires_enqueue_end_to_end(self):
+        # A real granted parent (valid receipt) + uploaded asset; withdraw flips
+        # the asset to cleanup_required in the same tx.
+        td = tempfile.mkdtemp()
+        conn = init_database(Path(td))
+        conn.row_factory = sqlite3.Row
+        try:
+            op_id = _grant_parent(td, assets=[("portrait_photo", D_PORT)])
+            repo = OperationRepository(Path(td))
+            conn.execute("BEGIN")
+            c = _do_claim(repo, conn, parent=op_id, digest=D_PORT)
+            repo.apply_asset_outcome_in_tx(
+                conn, upload_id=c.upload_id, asset_id="ax",
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
+            conn.execute("COMMIT")
+            ConsentService(Path(td)).withdraw(operation_id=op_id)
+            row = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id=?",
+                (c.upload_id,)).fetchone()
+            assert row["status"] == "cleanup_required"
+        finally:
+            conn.close()
+
+
 class TestAssetApplyConsentRecheck:
     """The fenced-apply consent re-check (e5b0c3b race closure): if consent is
     no longer granted when the adapter returns, the resource is still recorded
