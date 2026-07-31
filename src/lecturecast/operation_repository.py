@@ -45,7 +45,10 @@ from lecturecast.heygen_adapter import (DeleteAdapterError, DeleteResult,
     HeyGenAdapterError, PollAdapterError, PollResult, SubmitAccepted, SubmitOutcome,
     TitleCandidate, TitleQuery, TitleQueryAdapterError, TitleQueryResult)
 from lecturecast.heygen_journal import _chmod_secure, init_database
-from lecturecast.heygen_asset_adapter import derive_asset_identity
+from lecturecast.heygen_asset_adapter import (
+    derive_asset_identity, AssetUploadCommand, AssetUploadResult,
+    AssetUploadError, AssetUploadAmbiguousError,
+)
 
 _RUNTIME_DB = Path(".lecturecast") / "runtime" / "heygen-operations.db"
 _LEASE_OWNER_RE = re.compile(r"^[A-Za-z0-9_:.\-]{3,96}$")
@@ -2231,6 +2234,146 @@ def _validate_asset_binding(
             f"asset binding resource_id={remote_resource_id} has foreign or "
             f"missing operation refs")
     return remote_resource_id
+
+
+# --- asset upload processor (§5.5e5b0c2) --------------------------------
+#
+# Orchestrates the crash-safe asset upload: guard+claim linearize in ONE
+# BEGIN IMMEDIATE tx; the adapter call runs OUTSIDE any tx; the outcome is
+# applied in a second fenced tx (lease_owner + expected_fence from the claim).
+# A stale worker cannot overwrite a newer claim; a crash at any point leaves a
+# row the next run can reclaim (or, past the 24h window, promote to manual).
+
+@dataclass(frozen=True)
+class AssetUploadClaim:
+    """Handle returned by claim_for_upload: carries the fence the worker must
+    present when applying the outcome, plus the consent proof."""
+    upload_id: str
+    fence: int
+    parent_operation_id: str
+    asset_role: str
+
+
+@dataclass(frozen=True)
+class AssetUploadOnceResult:
+    status: str  # "uploaded" | "reconciliation_required" | "failed" | "busy" | "terminal" | "retry_wait"
+    resource_id: int | None = None
+    error_code: str | None = None
+
+
+class AssetUploadProcessor:
+    """Crash-safe asset upload orchestrator. Inject the ConsentService +
+    OperationRepository via the project_dir; inject the adapter per call."""
+
+    def __init__(self, project_dir: str | Path) -> None:
+        self._project_dir = Path(project_dir)
+        self._repository = OperationRepository(self._project_dir)
+        self._consent = ConsentService(self._project_dir)
+
+    def claim_for_upload(
+        self, *, command: AssetUploadCommand,
+        lease_owner: str, now_iso: str, lease_seconds: int,
+    ) -> AssetUploadClaim:
+        """ONE transaction: consent guard → claim. If consent fails or the row
+        is not claimable, nothing is written. Returns the claim handle the
+        worker needs to apply the outcome (carrying the fence)."""
+        with self._repository.begin_immediate() as conn:
+            self._consent.validate_asset_upload_consent_in_tx(
+                conn, parent_operation_id=command.operation_id,
+                asset_role=command.asset_role,
+                content_digest=command.expected_asset_digest)
+            claim = self._repository.claim_asset_upload_in_tx(
+                conn, upload_id=command.upload_id,
+                parent_operation_id=command.operation_id,
+                asset_role=command.asset_role,
+                content_digest=command.expected_asset_digest,
+                local_ref=command.local_output_ref,
+                content_type=command.content_type,
+                size_bytes=command.file_size,
+                provider_filename=command.provider_filename,
+                idempotency_key=command.idempotency_key,
+                lease_owner=lease_owner, now_iso=now_iso,
+                lease_seconds=lease_seconds)
+        if claim.status != "claimed":
+            raise OperationStateError(
+                f"asset upload {command.upload_id!r} not claimable: {claim.status}")
+        return AssetUploadClaim(
+            upload_id=claim.upload_id, fence=claim.fence,
+            parent_operation_id=command.operation_id,
+            asset_role=command.asset_role)
+
+    def apply_outcome(
+        self, *, claim: AssetUploadClaim, asset_result: AssetUploadResult,
+        lease_owner: str, now_iso: str,
+    ) -> int:
+        """Fenced apply of a successful upload (second tx). The CAS on
+        lease_owner+fence rejects a stale worker whose lease was reclaimed."""
+        with self._repository.begin_immediate() as conn:
+            return self._repository.apply_asset_outcome_in_tx(
+                conn, upload_id=claim.upload_id,
+                asset_id=asset_result.asset_id, now_iso=now_iso,
+                lease_owner=lease_owner, expected_fence=claim.fence)
+
+    def apply_failure(
+        self, *, claim: AssetUploadClaim, error: HeyGenAdapterError,
+        lease_owner: str, now_iso: str, backoff_seconds: int = 30,
+    ) -> str:
+        """Fenced apply of a failed upload (second tx)."""
+        with self._repository.begin_immediate() as conn:
+            return self._repository.apply_asset_upload_failure_in_tx(
+                conn, upload_id=claim.upload_id, error_code=error.code,
+                submission_certainty=error.submission_certainty,
+                retryable=error.retryable, now_iso=now_iso,
+                lease_owner=lease_owner, expected_fence=claim.fence,
+                backoff_seconds=backoff_seconds)
+
+    def upload_once(
+        self, *, command: AssetUploadCommand, adapter,
+        runtime_root: Path, lease_owner: str, now_iso: str,
+        lease_seconds: int,
+    ) -> AssetUploadOnceResult:
+        """One full attempt: claim (guard+claim tx) → adapter.upload_asset
+        (outside tx) → fenced apply. Returns the terminal status. The caller
+        drives retries by inspecting the result (busy/terminal/retry_wait/
+        reconciliation_required mean do not retry blindly)."""
+        try:
+            claim = self.claim_for_upload(
+                command=command, lease_owner=lease_owner, now_iso=now_iso,
+                lease_seconds=lease_seconds)
+        except OperationStateError:
+            # Non-claimed (busy/terminal/retry_wait) — re-classify via a read.
+            return AssetUploadOnceResult(status=_classify_nonclaimable(
+                self._repository, command.upload_id))
+        try:
+            result = adapter.upload_asset(command, runtime_root=runtime_root)
+        except AssetUploadAmbiguousError as exc:
+            status = self.apply_failure(
+                claim=claim, error=exc, lease_owner=lease_owner, now_iso=now_iso)
+            return AssetUploadOnceResult(status=status, error_code=exc.code)
+        except AssetUploadError as exc:
+            status = self.apply_failure(
+                claim=claim, error=exc, lease_owner=lease_owner, now_iso=now_iso)
+            return AssetUploadOnceResult(status=status, error_code=exc.code)
+        resource_id = self.apply_outcome(
+            claim=claim, asset_result=result, lease_owner=lease_owner, now_iso=now_iso)
+        return AssetUploadOnceResult(status="uploaded", resource_id=resource_id)
+
+
+def _classify_nonclaimable(repository: OperationRepository, upload_id: str) -> str:
+    """Read-only classification of a row that claim_for_upload refused, so
+    upload_once reports a meaningful terminal status instead of 'failed'."""
+    with repository.begin_immediate() as conn:
+        row = conn.execute(
+            "SELECT status FROM heygen_asset_uploads WHERE upload_id=?",
+            (upload_id,)).fetchone()
+    if row is None:
+        return "failed"
+    st = row["status"] if row and "status" in row.keys() else None
+    if st == "uploaded":
+        return "terminal"  # already done
+    if st in ("failed", "cancelled", "manual_reconciliation_required"):
+        return "terminal"
+    return "busy"
 
 
 # --- coordinator -------------------------------------------------------
