@@ -736,6 +736,81 @@ class TestRecoverDeletions:
         finally:
             conn.close()
 
+    def test_reusable_video_does_not_authorize_default_sweep(self, tmp_path):
+        # Codex round-2 P1 regression: a reusable_avatar video must NOT act as
+        # the "has video" authorization witness for the default sweep. The outer
+        # candidate filter already excludes reusable rows, but the EXISTS
+        # witness r2 lacked the same retention filter — so an in-flight op with
+        # a reusable video + an ephemeral asset in production use was swept;
+        # the resolver skips the reusable video and releases the tail, deleting
+        # the in-use asset. The witness must carry the same retention gate.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="not_started")  # in flight
+            _add_resource(conn, op_id="opLive", kind="video", remote_id="vKeep",
+                          retention="reusable_avatar")
+            _add_asset(conn, op_id="opLive", role="synthetic_narration_audio",
+                       upload_id="uLive", remote_id="aLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            r = conn.execute(
+                "SELECT deletion_status FROM heygen_remote_resources "
+                "WHERE remote_id='aLive'").fetchone()
+            assert a["status"] == "uploaded"          # untouched
+            assert r["deletion_status"] == "not_started"
+        finally:
+            conn.close()
+
+    def test_reusable_pending_resource_does_not_authorize_default_sweep(self, tmp_path):
+        # Codex round-2 P1 mirror: a reusable resource sitting in
+        # deletion_pending must NOT act as the "in deletion pipeline" witness
+        # either. Same retention bypass on the r2.deletion_status branch — a
+        # reusable pending resource says nothing about whether sibling ephemeral
+        # assets should be deleted, so it must not authorize their sweep.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="not_started")  # in flight
+            _add_resource(conn, op_id="opLive", kind="portrait_asset",
+                          remote_id="pKeep", retention="reusable_avatar",
+                          ds="deletion_pending")
+            _add_asset(conn, op_id="opLive", role="synthetic_narration_audio",
+                       upload_id="uLive", remote_id="aLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            r = conn.execute(
+                "SELECT deletion_status FROM heygen_remote_resources "
+                "WHERE remote_id='aLive'").fetchone()
+            assert a["status"] == "uploaded"          # untouched
+            assert r["deletion_status"] == "not_started"
+        finally:
+            conn.close()
+
     def test_candidate_tx_closed_before_any_pass_runs(self, tmp_path, monkeypatch):
         # T18 / R5 — the candidate-listing tx is closed before any network
         # deletion. The open-tx counter must read 0 at every deleter/adapter call.
