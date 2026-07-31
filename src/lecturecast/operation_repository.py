@@ -1786,6 +1786,20 @@ class OperationRepository:
         if ds == "deleted":
             return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
         if ds == "not_started":
+            # manual_force is the operator-only integrity path — never
+            # auto-deleted. The deletion_pending/deletion_failed branches
+            # below both reject manual_force, and the asset claim's
+            # not_started branch raises on ANY non-NULL reason; this branch
+            # was reason-blind (round-10 P1): a schema-legal
+            # (not_started, manual_force) video, driven into the sweep by a
+            # sibling B2 asset witness (which authorizes the op while the
+            # resolver returns the not_started video as the tail gate), was
+            # claimed here and then had its marker erased to post_download at
+            # the reason-seeding line below — apply's post_download
+            # single-video recheck then passed and the operator-only resource
+            # was deleted. manual_force must be left for the operator.
+            if res["deletion_reason"] == "manual_force":
+                return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
             if res["retention_mode"] != "ephemeral" or op["download_status"] != "verified":
                 return DeletionClaim(operation_id, resource_id, "not_ready", op["lease_fence"], None)
             # Normal post-download: exactly one deliverable video per operation.

@@ -1680,6 +1680,129 @@ class TestRecoverDeletions:
         finally:
             conn.close()
 
+    def test_not_started_manual_force_video_not_auto_deleted_via_b2_witness(self, tmp_path):
+        # T17v / round-10 bypass: claim_deletion_in_tx's not_started branch was
+        # reason-blind (unlike its deletion_pending/deletion_failed siblings and
+        # the asset claim's not_started branch, which all reject manual_force).
+        # A schema-legal (not_started, manual_force) VIDEO, driven into the sweep
+        # by a sibling B2 asset witness on a verified op (the witness authorizes
+        # the op; the resolver returns the not_started video as the tail gate),
+        # was claimed and had its marker erased to post_download at the
+        # reason-seeding line (op_repository.py:1839), then deleted by apply's
+        # post_download single-video recheck — violating "manual_force never
+        # auto-deleted". After round-10 the not_started branch gates manual_force
+        # -> not_ready, so the operator-only video survives untouched.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified")
+            _add_resource(conn, op_id="opLive", kind="video", remote_id="v1",
+                          ds="not_started", reason="manual_force")
+            _add_asset(conn, op_id="opLive", role="synthetic_narration_audio",
+                       upload_id="uAud", remote_id="a1",
+                       ds="deletion_pending", asset_status="cleanup_required")
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_reason='post_download' "
+                "WHERE remote_id='a1'")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        # The op IS authorized (B2 audio witness) and driven, but the
+        # manual_force video must NOT be deleted.
+        assert agg["deleted"] == 0
+        conn = _fresh_conn(td)
+        try:
+            v = conn.execute(
+                "SELECT deletion_status, deletion_reason FROM heygen_remote_resources "
+                "WHERE remote_id='v1'").fetchone()
+            assert v["deletion_status"] == "not_started"   # survived
+            assert v["deletion_reason"] == "manual_force"  # marker intact
+            a = conn.execute(
+                "SELECT deletion_status FROM heygen_remote_resources "
+                "WHERE remote_id='a1'").fetchone()
+            assert a["deletion_status"] == "deletion_pending"  # behind tail, untouched
+        finally:
+            conn.close()
+
+    def test_deletion_pending_manual_force_video_survives_via_b2_witness(self, tmp_path):
+        # T17v-ctrl-pending / round-10 control isolating the not_started branch:
+        # identical to T17v but the video is (deletion_pending, manual_force).
+        # The deletion_pending branch already gates manual_force -> not_ready, so
+        # this passes BOTH before and after the round-10 fix. It proves the bypass
+        # was specific to the not_started branch (the one field difference from
+        # T17v) and guards the pending branch's manual_force gate from regressing.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified")
+            _add_resource(conn, op_id="opLive", kind="video", remote_id="v1",
+                          ds="deletion_pending", reason="manual_force")
+            _add_asset(conn, op_id="opLive", role="synthetic_narration_audio",
+                       upload_id="uAud", remote_id="a1",
+                       ds="deletion_pending", asset_status="cleanup_required")
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_reason='post_download' "
+                "WHERE remote_id='a1'")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["deleted"] == 0
+        conn = _fresh_conn(td)
+        try:
+            v = conn.execute(
+                "SELECT deletion_status, deletion_reason FROM heygen_remote_resources "
+                "WHERE remote_id='v1'").fetchone()
+            assert v["deletion_status"] == "deletion_pending"
+            assert v["deletion_reason"] == "manual_force"
+        finally:
+            conn.close()
+
+    def test_not_started_null_reason_video_deleted_via_b2_witness(self, tmp_path):
+        # T17v-ctrl-legit / round-10 control: identical to T17v but the video
+        # carries the normal NULL reason (the fresh post-download entry). The
+        # not_started branch must STILL legitimately delete it — round-10's
+        # manual_force gate must not regress the normal post-download path.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified")
+            _add_resource(conn, op_id="opLive", kind="video", remote_id="v1",
+                          ds="not_started", reason=None)
+            _add_asset(conn, op_id="opLive", role="synthetic_narration_audio",
+                       upload_id="uAud", remote_id="a1",
+                       ds="deletion_pending", asset_status="cleanup_required")
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_reason='post_download' "
+                "WHERE remote_id='a1'")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["deleted"] == 1                       # legit post-download delete
+        conn = _fresh_conn(td)
+        try:
+            v = conn.execute(
+                "SELECT deletion_status, deletion_reason FROM heygen_remote_resources "
+                "WHERE remote_id='v1'").fetchone()
+            assert v["deletion_status"] == "deleted"
+            assert v["deletion_reason"] == "post_download"
+        finally:
+            conn.close()
+
     def test_candidate_tx_closed_before_any_pass_runs(self, tmp_path, monkeypatch):
         # T18 / R5 — the candidate-listing tx is closed before any network
         # deletion. The open-tx counter must read 0 at every deleter/adapter call.
