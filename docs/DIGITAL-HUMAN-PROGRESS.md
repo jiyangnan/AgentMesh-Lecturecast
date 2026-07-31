@@ -45,6 +45,7 @@
 | §5.5e5b1 | HeyGen Videos v3 adapter（封闭 descriptor + 响应资源绑定 + fail-closed reconcile + token cycle 检测 + canonical title 校验；4 轮 Codex 审阅后锁定） | ✅ |
 | §5.5e5b0c1 | asset journal v5 表 + consent guard + repo 原语（canonical 身份派生 + fenced lease/apply + 冻结 24h deadline + 崩溃超窗防重传 + 完整 resource 拓扑校验 + v5 迁移契约；5 轮 Codex 审阅后锁定） | ✅ |
 | §5.5e5b0c2 | AssetUploadProcessor（guard+claim 同 tx → adapter 事务外 → fenced apply；claim 状态原样转发 + result-vs-command 校验 + 确定性双 worker/崩溃超窗契约；3 轮 Codex 审阅后锁定） | ✅ |
+| §5.5e5b0c3a | asset GET/DELETE adapter（GET 验存在+id/type 无 digest；DELETE 验回显 data.id；独立 AssetReadError + AssetProbeResult 严格不变量；2 轮 Codex 审阅后锁定） | ✅ |
 
 ## §6 跨仓 contract tests（commit bcec6f3，待 Codex 复审）
 
@@ -64,11 +65,12 @@
 
 ### 还没做
 
-- §5.5e5b0c3 asset GET/delete + consent-withdrawal + 视频完成后的 ephemeral 资源清理（**当前进行中**，e5b0c2 锁定后按 Codex 顺序开干）
+- §5.5e5b0c3b asset 删除 repo + withdrawal/in-flight-upload 竞态闭合（**当前进行中**，需先锁状态表 + journal v6：asset upload 加 cleanup_required/deleted，apply_asset_outcome fenced apply 时重检 consent）
+- §5.5e5b0c3c 正常顺序 coordinator（video verified→deleted→audio→portrait）+ maintenance 恢复接线
 - §5.5e5c/d capability wiring + doctor/canary
 - §5.5e6 RecoveryDirectiveCatalog 验签 + failure mapping + 宿主 workflow（§6 #14 依赖它）
 
-客户端 782 测试全绿。分支 `feat/digital-human-protocol-v1_1`。
+客户端 805 测试全绿。分支 `feat/digital-human-protocol-v1_1`。
 
 ## Codex 审阅工作流
 
