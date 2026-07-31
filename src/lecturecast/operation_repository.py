@@ -2004,13 +2004,17 @@ class OperationRepository:
     def apply_asset_deletion_outcome_in_tx(
         self, conn: sqlite3.Connection, *, upload_id: str, resource_id: int,
         lease_owner: str, fence: int, now_iso: str, result,
+        expected_remote_id: str,
         max_attempts: int = DELETION_MAX_ATTEMPTS,
     ) -> AssetDeletionOutcome:
         """Apply an asset-deletion outcome, fenced on the asset's OWN lease
         (status='cleanup_required' AND lease_owner AND lease_fence AND
-        attempt_started_at IS NOT NULL). Re-verifies the FULL topology +
-        resource deletion_status='deletion_pending' (claim and apply are
-        separate txs — a foreign/tampered resource between them is rejected).
+        attempt_started_at IS NOT NULL). Re-verifies the FULL topology —
+        INCLUDING the resource's remote_id against expected_remote_id (the
+        remote_id the adapter actually DELETEd, from AssetDeletionClaim) —
+        plus the correspondence matrix and resource deletion_status='deletion_pending'
+        (claim and apply are separate txs; a foreign/tampered resource OR a
+        renamed remote_id between them is rejected, never silently applied).
         Maps AssetDeleteResult→deleted (200/404 are both idempotent success),
         retryable AssetReadError→deletion_failed+backoff (asset stays
         cleanup_required for reclaim), terminal→deletion_failed + manual code."""
@@ -2039,7 +2043,11 @@ class OperationRepository:
             raise OperationIntegrityError(
                 f"asset upload {upload_id!r} held lease without remote_resource_id")
 
-        # Re-verify full topology (claim/apply gap).
+        # Re-verify full topology (claim/apply gap). expected_remote_id binds
+        # the resource's CURRENT remote_id to the one the adapter DELETEd: a
+        # rename of the resource row's remote_id between claim and apply (without
+        # touching resource_id) is rejected here, so the DELETE of the old
+        # remote_id is never recorded against the renamed row (round-2 blocker).
         op = conn.execute(
             "SELECT credential_profile_id FROM heygen_operations "
             "WHERE operation_id=?", (row["parent_operation_id"],)).fetchone()
@@ -2051,7 +2059,7 @@ class OperationRepository:
             parent_operation_id=row["parent_operation_id"],
             asset_role=row["asset_role"],
             credential_profile_id=op["credential_profile_id"],
-            expected_remote_id=None)
+            expected_remote_id=expected_remote_id)
         res = conn.execute(
             "SELECT deletion_status, deletion_reason, deletion_attempts "
             "FROM heygen_remote_resources WHERE resource_id=?",
@@ -3406,6 +3414,7 @@ class AssetDeletionProcessor:
             outcome = self._repository.apply_asset_deletion_outcome_in_tx(
                 conn, upload_id=upload_id, resource_id=claim.resource_id,
                 lease_owner=lease_owner, fence=claim.fence, now_iso=now_iso,
+                expected_remote_id=claim.remote_id,
                 result=result, max_attempts=max_attempts)
         return AssetDeletionOnceResult(claim=claim, outcome=outcome)
 

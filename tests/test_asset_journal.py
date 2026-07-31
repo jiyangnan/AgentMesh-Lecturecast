@@ -1818,6 +1818,7 @@ class TestApplyAssetDeletionOutcome:
             out = repo.apply_asset_deletion_outcome_in_tx(
                 conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
                 fence=claim.fence, now_iso="2026-07-30T00:00:30Z",
+                expected_remote_id=claim.remote_id,
                 result=AssetDeleteResult(status="deleted"))
             assert out.status == "deleted"
             a = _asset(conn); r = _resource(conn)
@@ -1842,6 +1843,7 @@ class TestApplyAssetDeletionOutcome:
             out = repo.apply_asset_deletion_outcome_in_tx(
                 conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
                 fence=claim.fence, now_iso=NOW,
+                expected_remote_id=claim.remote_id,
                 result=AssetDeleteResult(status="already_absent"))
             assert out.status == "deleted"
             assert _asset(conn)["status"] == "deleted"
@@ -1857,6 +1859,7 @@ class TestApplyAssetDeletionOutcome:
             out = repo.apply_asset_deletion_outcome_in_tx(
                 conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
                 fence=claim.fence, now_iso=NOW,
+                expected_remote_id=claim.remote_id,
                 result=AssetReadError(code="network_timeout", retryable=True))
             assert out.status == "failed"
             assert out.last_error == "network_timeout"
@@ -1880,6 +1883,7 @@ class TestApplyAssetDeletionOutcome:
             out = repo.apply_asset_deletion_outcome_in_tx(
                 conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
                 fence=claim.fence, now_iso=NOW,
+                expected_remote_id=claim.remote_id,
                 result=AssetReadError(code="validation_error", retryable=False))
             assert out.status == "failed"
             assert out.last_error == "deletion_reconciliation_required"
@@ -1903,6 +1907,7 @@ class TestApplyAssetDeletionOutcome:
             out = repo.apply_asset_deletion_outcome_in_tx(
                 conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
                 fence=claim.fence, now_iso=NOW, max_attempts=2,
+                expected_remote_id=claim.remote_id,
                 result=AssetReadError(code="network_timeout", retryable=True))
             assert out.status == "failed"
             assert out.last_error == "deletion_retry_exhausted"
@@ -1919,6 +1924,7 @@ class TestApplyAssetDeletionOutcome:
             out = repo.apply_asset_deletion_outcome_in_tx(
                 conn, upload_id=_U1, resource_id=rid, lease_owner="not-the-owner",
                 fence=claim.fence, now_iso=NOW,
+                expected_remote_id=claim.remote_id,
                 result=AssetDeleteResult(status="deleted"))
             assert out.status == "fence_conflict"
             assert _asset(conn)["status"] == "cleanup_required"
@@ -1934,6 +1940,7 @@ class TestApplyAssetDeletionOutcome:
             out = repo.apply_asset_deletion_outcome_in_tx(
                 conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
                 fence=claim.fence + 99, now_iso=NOW,
+                expected_remote_id=claim.remote_id,
                 result=AssetDeleteResult(status="deleted"))
             assert out.status == "fence_conflict"
         finally:
@@ -1954,6 +1961,7 @@ class TestApplyAssetDeletionOutcome:
             out = repo.apply_asset_deletion_outcome_in_tx(
                 conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
                 fence=claim.fence, now_iso=NOW,
+                expected_remote_id=claim.remote_id,
                 result=AssetDeleteResult(status="deleted"))
             assert out.status == "fence_conflict"
         finally:
@@ -1976,6 +1984,7 @@ class TestApplyAssetDeletionOutcome:
                 repo.apply_asset_deletion_outcome_in_tx(
                     conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
                     fence=claim.fence, now_iso=NOW,
+                    expected_remote_id=claim.remote_id,
                     result=AssetDeleteResult(status="deleted"))
         finally:
             conn.close()
@@ -1993,6 +2002,7 @@ class TestApplyAssetDeletionOutcome:
                 repo.apply_asset_deletion_outcome_in_tx(
                     conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
                     fence=claim.fence, now_iso=NOW,
+                    expected_remote_id=claim.remote_id,
                     result=AssetDeleteResult(status="deleted"))
         finally:
             conn.close()
@@ -2007,6 +2017,7 @@ class TestApplyAssetDeletionOutcome:
             out = repo.apply_asset_deletion_outcome_in_tx(
                 conn, upload_id=_U1, resource_id=99999, lease_owner=LEASE,
                 fence=claim.fence, now_iso=NOW,
+                expected_remote_id=claim.remote_id,
                 result=AssetDeleteResult(status="deleted"))
             assert out.status == "fence_conflict"
             # nothing mutated
@@ -2046,6 +2057,7 @@ class TestApplyAssetDeletionOutcome:
             out = repo.apply_asset_deletion_outcome_in_tx(
                 conn, upload_id=_U1, resource_id=orig_rid, lease_owner=LEASE,
                 fence=claim.fence, now_iso=NOW,
+                expected_remote_id=claim.remote_id,
                 result=AssetDeleteResult(status="deleted"))
             assert out.status == "fence_conflict"
             # neither resource was deleted
@@ -2073,10 +2085,42 @@ class TestApplyAssetDeletionOutcome:
                 repo.apply_asset_deletion_outcome_in_tx(
                     conn, upload_id=_U1, resource_id=claim.resource_id,
                     lease_owner=LEASE, fence=claim.fence, now_iso=NOW,
+                    expected_remote_id=claim.remote_id,
                     result=AssetDeleteResult(status="deleted"))
             # nothing applied: asset still leased cleanup_required, resource pending
             assert _asset(conn)["status"] == "cleanup_required"
             assert _resource(conn)["deletion_status"] == "deletion_pending"
+        finally:
+            conn.close()
+
+    def test_apply_rejects_remote_id_tamper(self):
+        # claim resource (remote_id='ax') → adapter DELETEs 'ax' → between txs
+        # the SAME resource row's remote_id is renamed to 'swapped' (resource_id
+        # unchanged, so the lease CAS still matches). Without binding the CURRENT
+        # remote_id to the one the adapter operated on, apply would mark the
+        # renamed row deleted — recording the DELETE of 'ax' against 'swapped'.
+        # _validate_asset_binding(expected_remote_id=claim.remote_id) catches it
+        # → integrity error, neither row state advances (round-2 blocker).
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = self._claim(repo, conn)
+            conn.execute(
+                "UPDATE heygen_remote_resources SET remote_id='swapped' "
+                "WHERE resource_id=?", (claim.resource_id,))
+            with pytest.raises(OperationIntegrityError):
+                repo.apply_asset_deletion_outcome_in_tx(
+                    conn, upload_id=_U1, resource_id=claim.resource_id,
+                    lease_owner=LEASE, fence=claim.fence, now_iso=NOW,
+                    expected_remote_id=claim.remote_id,
+                    result=AssetDeleteResult(status="deleted"))
+            # nothing applied
+            a = _asset(conn)
+            assert a["status"] == "cleanup_required"
+            assert a["lease_owner"] == LEASE  # lease still held
+            renamed = conn.execute(
+                "SELECT deletion_status FROM heygen_remote_resources "
+                "WHERE resource_id=?", (claim.resource_id,)).fetchone()
+            assert renamed["deletion_status"] == "deletion_pending"
         finally:
             conn.close()
 
