@@ -2023,6 +2023,14 @@ class OperationRepository:
         now_c = _canonical(_parse_utc(now_iso))
         if type(max_attempts) is not int or not (1 <= max_attempts <= 10):
             raise ValueError("max_attempts must be an int in [1, 10]")
+        # 'required' only prevents OMISSION; a caller can still pass None
+        # explicitly, and _validate_asset_binding treats None as "skip the
+        # remote_id check". Reject at the entry guard so the remote-identity
+        # binding (round-2 blocker) cannot be silently disabled, and so a
+        # bogus/empty id never reaches topology (round-3 blocker).
+        if (not isinstance(expected_remote_id, str)
+                or not _ASSET_REMOTE_ID_RE.fullmatch(expected_remote_id)):
+            raise ValueError("expected_remote_id must be a non-empty asset id")
         # Fence CAS on the asset's own lease columns. remote_resource_id is
         # bound to the claim's resource_id: if the asset's remote_resource_id is
         # swapped between claim and apply (to a topology-valid sibling), the CAS
