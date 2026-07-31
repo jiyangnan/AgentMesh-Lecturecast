@@ -1803,6 +1803,133 @@ class TestRecoverDeletions:
         finally:
             conn.close()
 
+    def test_apply_rejects_reason_swap_to_manual_force_between_claim_and_apply(self, tmp_path):
+        # T17w / round-11 bypass: the fenced claim and fenced apply are SEPARATE
+        # transactions (the adapter call runs outside any tx between them).
+        # claim_deletion_in_tx seeds deletion_reason='post_download' and flips a
+        # not_started/NULL video to deletion_pending/post_download (tx1, then
+        # COMMITted). Between tx1 and the fenced apply (tx2), a schema-legal
+        # UPDATE flips deletion_reason='manual_force' (status stays
+        # deletion_pending). Before round-11, video apply
+        # (apply_deletion_outcome_in_tx) re-checked single-video ONLY when the
+        # current reason == 'post_download' (so the recheck was skipped once the
+        # reason flipped), and the gated success UPDATE neither read nor wrote
+        # deletion_reason — so the mutated manual_force marker persisted and the
+        # row became deleted/manual_force, violating "manual_force never
+        # auto-deleted". Asset apply (:2206) was already defended; video apply
+        # was not. The seam is driven DIRECTLY (not via recover_deletions)
+        # because the mutation must land between the claim tx and the apply tx.
+        td = _db()
+        rid = _setup_full_op(td, video_ds="not_started")  # verified op + v1 not_started/NULL
+        repo = OperationRepository(td)
+        with repo.begin_immediate() as conn:
+            claim = repo.claim_deletion_in_tx(
+                conn, "op1", rid, OWNER, NOW, LEASE_SECONDS)
+        assert claim.status == "claimed"
+        # Claim seeded deletion_pending/post_download in the (now closed) tx1.
+        conn = _fresh_conn(td)
+        try:
+            pre = conn.execute(
+                "SELECT deletion_status, deletion_reason FROM heygen_remote_resources "
+                "WHERE resource_id=?", (rid,)).fetchone()
+            assert pre["deletion_status"] == "deletion_pending"
+            assert pre["deletion_reason"] == "post_download"
+        finally:
+            conn.close()
+        # TOCTOU seam: a SEPARATE connection flips only the reason marker while
+        # the sweep sits between its claim tx and its apply tx.
+        conn = _fresh_conn(td)
+        try:
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_reason='manual_force' "
+                "WHERE resource_id=?", (rid,))
+            conn.commit()
+        finally:
+            conn.close()
+        with repo.begin_immediate() as conn:
+            outcome = repo.apply_deletion_outcome_in_tx(
+                conn, "op1", rid, OWNER, claim.fence, NOW, DeleteResult("deleted"))
+        # The reason swap must be rejected BEFORE any outcome path — no deletion,
+        # no lease clear.
+        assert outcome.status == "fence_conflict"
+        conn = _fresh_conn(td)
+        try:
+            v = conn.execute(
+                "SELECT deletion_status, deletion_reason FROM heygen_remote_resources "
+                "WHERE resource_id=?", (rid,)).fetchone()
+            assert v["deletion_status"] == "deletion_pending"  # survived
+            assert v["deletion_reason"] == "manual_force"      # marker intact
+            # The operation lease is preserved (apply returned before
+            # _clear_operation_lease) — the sweep did not silently release it.
+            op = conn.execute(
+                "SELECT lease_owner, lease_expires_at FROM heygen_operations "
+                "WHERE operation_id='op1'").fetchone()
+            assert op["lease_owner"] == OWNER
+            assert op["lease_expires_at"] is not None
+        finally:
+            conn.close()
+
+    def test_apply_deletes_post_download_video_without_reason_swap(self, tmp_path):
+        # T17w-ctrl-legit / round-11 control: identical to T17w but NO reason
+        # swap between claim and apply. The legit post_download path must STILL
+        # delete — round-11's reason gate must not regress the normal sweep.
+        td = _db()
+        rid = _setup_full_op(td, video_ds="not_started")
+        repo = OperationRepository(td)
+        with repo.begin_immediate() as conn:
+            claim = repo.claim_deletion_in_tx(
+                conn, "op1", rid, OWNER, NOW, LEASE_SECONDS)
+        assert claim.status == "claimed"
+        # No mutation between the two fenced txs.
+        with repo.begin_immediate() as conn:
+            outcome = repo.apply_deletion_outcome_in_tx(
+                conn, "op1", rid, OWNER, claim.fence, NOW, DeleteResult("deleted"))
+        assert outcome.status == "deleted"
+        conn = _fresh_conn(td)
+        try:
+            v = conn.execute(
+                "SELECT deletion_status, deletion_reason FROM heygen_remote_resources "
+                "WHERE resource_id=?", (rid,)).fetchone()
+            assert v["deletion_status"] == "deleted"
+            assert v["deletion_reason"] == "post_download"
+        finally:
+            conn.close()
+
+    def test_apply_deletes_video_swapped_to_consent_withdrawal(self, tmp_path):
+        # T17w-ctrl-consent / round-11 control: identical to T17w but the
+        # between-tx swap is to consent_withdrawal, which is delivery-independent
+        # and legitimately deletable. The round-11 gate accepts exactly
+        # {post_download, consent_withdrawal}; this guards it does NOT over-block
+        # by rejecting consent_withdrawal alongside manual_force.
+        td = _db()
+        rid = _setup_full_op(td, video_ds="not_started")
+        repo = OperationRepository(td)
+        with repo.begin_immediate() as conn:
+            claim = repo.claim_deletion_in_tx(
+                conn, "op1", rid, OWNER, NOW, LEASE_SECONDS)
+        assert claim.status == "claimed"
+        conn = _fresh_conn(td)
+        try:
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_reason='consent_withdrawal' "
+                "WHERE resource_id=?", (rid,))
+            conn.commit()
+        finally:
+            conn.close()
+        with repo.begin_immediate() as conn:
+            outcome = repo.apply_deletion_outcome_in_tx(
+                conn, "op1", rid, OWNER, claim.fence, NOW, DeleteResult("deleted"))
+        assert outcome.status == "deleted"
+        conn = _fresh_conn(td)
+        try:
+            v = conn.execute(
+                "SELECT deletion_status, deletion_reason FROM heygen_remote_resources "
+                "WHERE resource_id=?", (rid,)).fetchone()
+            assert v["deletion_status"] == "deleted"
+            assert v["deletion_reason"] == "consent_withdrawal"
+        finally:
+            conn.close()
+
     def test_candidate_tx_closed_before_any_pass_runs(self, tmp_path, monkeypatch):
         # T18 / R5 — the candidate-listing tx is closed before any network
         # deletion. The open-tx counter must read 0 at every deleter/adapter call.
