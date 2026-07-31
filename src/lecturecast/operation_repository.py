@@ -2156,6 +2156,103 @@ class OperationRepository:
                 f"(owner={lease_owner!r}, fence={expected_fence})")
         return status
 
+    # === consent-withdrawal cleanup enqueue (§5.5e5b0c3b) =================
+
+    def enqueue_consent_withdrawal_cleanup_in_tx(
+        self, conn: sqlite3.Connection, *, parent_operation_id: str, now_iso: str,
+    ) -> dict[str, int]:
+        """Idempotent, DB-only (NO network): mark every asset upload for this
+        parent for consent-withdrawal cleanup, per the locked state machine:
+          cleanup_required/deleted/cancelled → kept (idempotent)
+          uploading                          → left intact (its fenced apply
+                                              re-checks consent → cleanup_required;
+                                              never re-send multipart after withdraw)
+          reconciliation_required w/ resource → cleanup_required
+          reconciliation_required w/o asset_id → manual (ambiguous, no re-send)
+          upload_pending/failed, PROVABLY no remote side-effect → cancelled
+          upload_pending/failed w/ any maybe-sent trace → manual
+          uploaded                           → cleanup_required
+        Returns a tally of actions taken. Network deletion runs in a later
+        maintenance pass; this only flips journal state."""
+        self._require_tx(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT upload_id, status, remote_resource_id, maybe_sent_at, "
+            "idempotency_expires_at, attempt_started_at, lease_owner "
+            "FROM heygen_asset_uploads WHERE parent_operation_id=?",
+            (parent_operation_id,),
+        ).fetchall()
+        tally = {"cancelled": 0, "cleanup_required": 0, "manual": 0,
+                 "kept": 0, "left_uploading": 0}
+        for row in rows:
+            st = row["status"]
+            if st in ("cleanup_required", "deleted", "cancelled"):
+                tally["kept"] += 1
+            elif st == "uploading":
+                tally["left_uploading"] += 1   # fenced apply will catch the withdraw
+            elif st == "uploaded":
+                self._mark_asset_cleanup_in_tx(
+                    conn, row=row, reason="consent_withdrawal", now_iso=now_iso)
+                tally["cleanup_required"] += 1
+            elif st == "reconciliation_required":
+                if row["remote_resource_id"] is not None:
+                    self._mark_asset_cleanup_in_tx(
+                        conn, row=row, reason="consent_withdrawal", now_iso=now_iso)
+                    tally["cleanup_required"] += 1
+                else:
+                    self._to_manual_in_tx(conn, upload_id=row["upload_id"],
+                                          now_iso=now_iso)
+                    tally["manual"] += 1
+            elif st in ("upload_pending", "failed"):
+                # Cancel ONLY if we can PROVE no remote side-effect ever happened.
+                provably_clean = (
+                    row["remote_resource_id"] is None
+                    and row["maybe_sent_at"] is None
+                    and row["idempotency_expires_at"] is None
+                    and row["attempt_started_at"] is None
+                    and row["lease_owner"] is None)
+                if provably_clean:
+                    conn.execute(
+                        "UPDATE heygen_asset_uploads SET status='cancelled', "
+                        "lease_owner=NULL, lease_expires_at=NULL, attempt_started_at=NULL, "
+                        "next_retry_at=NULL, updated_at=? WHERE upload_id=?",
+                        (now_iso, row["upload_id"]))
+                    tally["cancelled"] += 1
+                else:
+                    self._to_manual_in_tx(conn, upload_id=row["upload_id"],
+                                          now_iso=now_iso)
+                    tally["manual"] += 1
+            else:
+                # manual_reconciliation_required or anything unexpected → keep.
+                tally["kept"] += 1
+        return tally
+
+    def _mark_asset_cleanup_in_tx(
+        self, conn, *, row, reason: str, now_iso: str,
+    ) -> None:
+        """Flip an asset upload to cleanup_required and mark its bound resource
+        deletion_pending with the given reason (no error code on the asset for a
+        clean consent_withdrawal)."""
+        rid = row["remote_resource_id"]
+        if rid is not None:
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_status='deletion_pending', "
+                "deletion_reason=?, updated_at=? WHERE resource_id=?",
+                (reason, now_iso, rid))
+        conn.execute(
+            "UPDATE heygen_asset_uploads SET status='cleanup_required', "
+            "lease_owner=NULL, lease_expires_at=NULL, attempt_started_at=NULL, "
+            "next_retry_at=NULL, last_error_code=NULL, updated_at=? WHERE upload_id=?",
+            (now_iso, row["upload_id"]))
+
+    @staticmethod
+    def _to_manual_in_tx(conn, *, upload_id: str, now_iso: str) -> None:
+        conn.execute(
+            "UPDATE heygen_asset_uploads SET status='manual_reconciliation_required', "
+            "lease_owner=NULL, lease_expires_at=NULL, attempt_started_at=NULL, "
+            "next_retry_at=NULL, updated_at=? WHERE upload_id=?",
+            (now_iso, upload_id))
+
 
 def _output_ref(operation_id: str) -> str:
     return f"outputs/heygen/{operation_id}.mp4"

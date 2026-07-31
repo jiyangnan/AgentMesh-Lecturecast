@@ -595,6 +595,13 @@ class ConsentService:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 result = self._withdraw_in_tx(conn, operation_id)
+                # Enqueue consent-withdrawal cleanup for any bound assets, in the
+                # SAME tx (DB-only; network deletion runs in a later maintenance
+                # pass). Deferred import avoids a consent↔operation_repository cycle.
+                from lecturecast.operation_repository import OperationRepository
+                OperationRepository(self._project_dir).enqueue_consent_withdrawal_cleanup_in_tx(
+                    conn, parent_operation_id=operation_id,
+                    now_iso=result.withdrawn_at)
                 conn.execute("COMMIT")
             except Exception:
                 _rollback(conn)
