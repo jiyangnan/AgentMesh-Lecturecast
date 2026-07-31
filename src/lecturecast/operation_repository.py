@@ -33,6 +33,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from lecturecast.consent import (
+    ConsentError,
     ConsentService,
     CreativeBriefV1_1,
     OrchestrationPlanV1_1,
@@ -2029,6 +2030,9 @@ class OperationRepository:
                 asset_role=row["asset_role"],
                 credential_profile_id=credential_profile_id,
                 expected_remote_id=remote_id)
+            # Strict asset-status ↔ resource-deletion correspondence (blocker #3).
+            _check_asset_resource_consistency(
+                row["status"], res["deletion_status"])
             return AssetApplyOutcome(
                 status=_outcome_status_for_resource_deletion(res["deletion_status"]),
                 resource_id=row["remote_resource_id"])
@@ -2036,12 +2040,25 @@ class OperationRepository:
             raise OperationStateError(
                 f"asset upload {upload_id!r} status {row['status']!r} not applyable")
 
-        # Re-check consent at fenced-apply time (the race closure).
-        receipt = conn.execute(
-            "SELECT status FROM heygen_consent_receipts WHERE operation_id = ?",
+        # Re-check consent at fenced-apply time, with FULL receipt integrity
+        # (a tampered digest/binding must not be trusted as granted → integrity
+        # path records the remote asset + docks manual). The remote asset is
+        # ALWAYS recorded, even on integrity failure (never orphaned).
+        op_row = conn.execute(
+            "SELECT * FROM heygen_operations WHERE operation_id = ?",
             (row["parent_operation_id"],),
         ).fetchone()
-        consent, asset_error_code = _classify_apply_consent(receipt)
+        receipt = conn.execute(
+            "SELECT * FROM heygen_consent_receipts WHERE operation_id = ?",
+            (row["parent_operation_id"],),
+        ).fetchone()
+        try:
+            if op_row is None or receipt is None:
+                raise ConsentError("missing operation or receipt")
+            ConsentService._validate_existing_integrity(receipt, op_row, conn)
+            consent, asset_error_code = _classify_apply_consent(receipt)
+        except ConsentError:
+            consent, asset_error_code = "integrity", _CONSENT_INTEGRITY_ERROR_CODE
         if consent == "granted":
             resource_deletion = "not_started"
             deletion_reason = None
@@ -2176,9 +2193,38 @@ class OperationRepository:
         maintenance pass; this only flips journal state."""
         self._require_tx(conn)
         conn.row_factory = sqlite3.Row
+        # Verify the parent receipt is GENUINELY withdrawn (full integrity +
+        # pointer cleared + correct binding) before touching any asset — an
+        # internal mis-call on a still-granted operation must not enqueue.
+        op = conn.execute(
+            "SELECT * FROM heygen_operations WHERE operation_id=?",
+            (parent_operation_id,)).fetchone()
+        receipt = conn.execute(
+            "SELECT * FROM heygen_consent_receipts WHERE operation_id=?",
+            (parent_operation_id,)).fetchone()
+        if op is None:
+            raise OperationStateError(f"no parent operation {parent_operation_id!r}")
+        if receipt is None:
+            raise OperationStateError(
+                f"no consent receipt for {parent_operation_id!r}")
+        try:
+            ConsentService._validate_existing_integrity(receipt, op, conn)
+        except ConsentError as exc:
+            raise OperationStateError(
+                f"receipt for {parent_operation_id!r} failed integrity: {exc}") from None
+        if receipt["status"] != "withdrawn":
+            raise OperationStateError(
+                f"receipt for {parent_operation_id!r} is {receipt['status']!r}, "
+                f"not withdrawn — will not enqueue cleanup")
+        if op["consent_receipt_digest"] is not None:
+            raise OperationStateError(
+                f"withdrawn receipt for {parent_operation_id!r} still has an "
+                f"active consent pointer")
+        now = _parse_utc(now_iso)   # validates tz-aware canonical ISO (blocker #5)
         rows = conn.execute(
-            "SELECT upload_id, status, remote_resource_id, maybe_sent_at, "
-            "idempotency_expires_at, attempt_started_at, lease_owner "
+            "SELECT upload_id, parent_operation_id, asset_role, status, "
+            "remote_resource_id, maybe_sent_at, idempotency_expires_at, "
+            "attempt_started_at, lease_owner, lease_expires_at "
             "FROM heygen_asset_uploads WHERE parent_operation_id=?",
             (parent_operation_id,),
         ).fetchall()
@@ -2189,7 +2235,21 @@ class OperationRepository:
             if st in ("cleanup_required", "deleted", "cancelled"):
                 tally["kept"] += 1
             elif st == "uploading":
-                tally["left_uploading"] += 1   # fenced apply will catch the withdraw
+                # Active lease → left intact (fenced apply will catch the
+                # withdraw). Expired lease (worker crashed) → manual. Half-lease
+                # / uploading-without-attempt → integrity error (blocker #5).
+                owner, lexp = row["lease_owner"], row["lease_expires_at"]
+                if (owner is None) != (lexp is None):
+                    raise OperationIntegrityError(
+                        f"asset upload {row['upload_id']!r} half lease on withdraw")
+                if row["attempt_started_at"] is None:
+                    raise OperationIntegrityError(
+                        f"asset upload {row['upload_id']!r} uploading w/o attempt")
+                if owner is not None and _parse_utc(lexp) > now:
+                    tally["left_uploading"] += 1   # active lease, fenced apply catches it
+                else:
+                    self._to_manual_in_tx(conn, upload_id=row["upload_id"], now_iso=now_iso)
+                    tally["manual"] += 1
             elif st == "uploaded":
                 self._mark_asset_cleanup_in_tx(
                     conn, row=row, reason="consent_withdrawal", now_iso=now_iso)
@@ -2231,14 +2291,35 @@ class OperationRepository:
         self, conn, *, row, reason: str, now_iso: str,
     ) -> None:
         """Flip an asset upload to cleanup_required and mark its bound resource
-        deletion_pending with the given reason (no error code on the asset for a
-        clean consent_withdrawal)."""
+        deletion_pending with the given reason. The resource UPDATE is GATED on
+        its current deletion_status (only not_started is accepted — never revive
+        a deleted/deletion_failed resource) and its rowcount checked; identity
+        topology is re-verified so a foreign resource_id cannot be touched."""
         rid = row["remote_resource_id"]
-        if rid is not None:
-            conn.execute(
-                "UPDATE heygen_remote_resources SET deletion_status='deletion_pending', "
-                "deletion_reason=?, updated_at=? WHERE resource_id=?",
-                (reason, now_iso, rid))
+        if rid is None:
+            raise OperationIntegrityError(
+                f"asset upload {row['upload_id']!r} has no remote_resource_id")
+        # Re-verify identity topology before touching the resource.
+        op = conn.execute(
+            "SELECT credential_profile_id FROM heygen_operations "
+            "WHERE operation_id=?", (row["parent_operation_id"],)).fetchone()
+        if op is None:
+            raise OperationIntegrityError(
+                f"parent op missing for {row['upload_id']!r}")
+        _validate_asset_binding(
+            conn, remote_resource_id=rid,
+            parent_operation_id=row["parent_operation_id"],
+            asset_role=row["asset_role"],
+            credential_profile_id=op["credential_profile_id"],
+            expected_remote_id=None)
+        cur = conn.execute(
+            "UPDATE heygen_remote_resources SET deletion_status='deletion_pending', "
+            "deletion_reason=?, updated_at=? WHERE resource_id=? "
+            "AND deletion_status='not_started'",
+            (reason, now_iso, rid))
+        if cur.rowcount != 1:
+            raise OperationIntegrityError(
+                f"resource_id={rid} not in not_started (cannot mark cleanup)")
         conn.execute(
             "UPDATE heygen_asset_uploads SET status='cleanup_required', "
             "lease_owner=NULL, lease_expires_at=NULL, attempt_started_at=NULL, "
@@ -2412,14 +2493,45 @@ def _classify_apply_consent(receipt_row) -> tuple[str, str | None]:
     return ("integrity", _CONSENT_INTEGRITY_ERROR_CODE)
 
 
+_OUTCOME_FOR_DELETION = {
+    "not_started": "uploaded",
+    "deleted": "deleted",
+    "deletion_pending": "cleanup_required",
+    "deletion_failed": "cleanup_required",
+}
+
+
 def _outcome_status_for_resource_deletion(deletion_status: str) -> str:
     """Map a resource's deletion_status to the AssetApplyOutcome.status that
-    faithfully reports it (idempotent replay)."""
-    if deletion_status == "not_started":
-        return "uploaded"
-    if deletion_status == "deleted":
-        return "deleted"
-    return "cleanup_required"  # deletion_pending / deletion_failed
+    faithfully reports it (idempotent replay). Unknown values raise — never a
+    silent catch-all (blocker #3)."""
+    try:
+        return _OUTCOME_FOR_DELETION[deletion_status]
+    except KeyError:
+        raise OperationIntegrityError(
+            f"unknown resource deletion_status: {deletion_status!r}") from None
+
+
+# Strict asset-status ↔ resource-deletion matrix. A mismatch (e.g. asset
+# uploaded but resource deletion_pending) is an integrity error, never silently
+# "corrected" (blocker #3).
+_ASSET_STATUS_FOR_DELETION = {
+    "not_started": "uploaded",
+    "deletion_pending": "cleanup_required",
+    "deletion_failed": "cleanup_required",
+    "deleted": "deleted",
+}
+
+
+def _check_asset_resource_consistency(asset_status: str, deletion_status: str) -> None:
+    expected = _ASSET_STATUS_FOR_DELETION.get(deletion_status)
+    if expected is None:
+        raise OperationIntegrityError(
+            f"unknown resource deletion_status: {deletion_status!r}")
+    if asset_status != expected:
+        raise OperationIntegrityError(
+            f"asset status {asset_status!r} != resource deletion_status "
+            f"{deletion_status!r} correspondence")
 
 
 # --- asset upload processor (§5.5e5b0c2) --------------------------------

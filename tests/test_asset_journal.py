@@ -17,7 +17,7 @@ from lecturecast.heygen_journal import init_database
 from lecturecast.consent import (
     CANONICAL_AGENTMESH_NON_PROCESSOR_DISCLOSURE,
     CANONICAL_PROVIDER_COST_DISCLOSURE,
-    ConsentService, ConsentConflictError, ConsentStateError,
+    ConsentService, ConsentConflictError, ConsentStateError, sha256_digest,
     DisclosedAsset, HeyGenOperationIdentity, ThirdPartyTransferDisclosure,
     prepare_operation,
 )
@@ -51,16 +51,40 @@ def _add_parent_op(conn, op_id="op1"):
         (op_id, "video", "/v3/videos", "gen", "sha256:m", "sha256:r",
          f"idem-{op_id}", f"lc:{op_id}", "heygen_env_default", "t", "t"),
     )
-    # Default-grant a receipt so the fenced-apply consent re-check sees granted.
+    # Default-grant a receipt with a CORRECT digest + set the op's consent
+    # pointer so the full receipt-integrity validator passes at fenced apply.
     conn.execute(
         "INSERT INTO heygen_consent_receipts (receipt_digest, operation_id,"
         " disclosure_version, generation_id, request_digest, creative_brief_digest,"
         " provider, operation_kind, disclosed_assets_json, data_categories_json,"
         " provider_cost_disclosure, agentmesh_non_processor_disclosure, status,"
         " consented_at, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (f"rd-{op_id}", op_id, "heygen-transfer-2026-07-27", "gen", "sha256:r",
-         "sha256:b", "heygen", "video", "[]", "[]", "cost", "nonproc",
-         "granted", "t", "t"))
+        (f"placeholder-{op_id}", op_id, "heygen-transfer-2026-07-27", "gen",
+         "sha256:r", "sha256:b", "heygen", "video", "[]", "[]", "cost",
+         "nonproc", "granted", "2026-07-29T00:00:00Z", "t"))
+    row = conn.execute(
+        "SELECT * FROM heygen_consent_receipts WHERE operation_id=?",
+        (op_id,)).fetchone()
+    stored = ConsentService._stored_content_no_time(row)
+    stored["decision_at"] = row["consented_at"] or ""
+    digest = sha256_digest(stored)
+    conn.execute(
+        "UPDATE heygen_consent_receipts SET receipt_digest=? WHERE operation_id=?",
+        (digest, op_id))
+    conn.execute(
+        "UPDATE heygen_operations SET consent_receipt_digest=? WHERE operation_id=?",
+        (digest, op_id))
+
+
+def _withdraw_op(conn, op_id="op1"):
+    """Simulate ConsentService.withdraw's DB effect: receipt → withdrawn, op
+    consent pointer cleared (so the enqueue entry verification passes)."""
+    conn.execute(
+        "UPDATE heygen_consent_receipts SET status='withdrawn' "
+        "WHERE operation_id=?", (op_id,))
+    conn.execute(
+        "UPDATE heygen_operations SET consent_receipt_digest=NULL "
+        "WHERE operation_id=?", (op_id,))
 
 
 def _grant_parent(td, assets=(("portrait_photo", D_PORT),), decision="granted"):
@@ -210,9 +234,13 @@ class TestAssetConsentGuard:
                 now_iso="2026-07-30T00:00:01Z",
                 lease_owner=LEASE, expected_fence=c.fence)
             conn.execute("COMMIT")
-            # crash window: flip the receipt withdrawn WITHOUT enqueue
+            # crash window: flip the receipt withdrawn WITHOUT enqueue (real
+            # withdraw also clears the pointer; simulate that committed)
             conn.execute(
                 "UPDATE heygen_consent_receipts SET status='withdrawn' "
+                "WHERE operation_id=?", (op_id,))
+            conn.execute(
+                "UPDATE heygen_operations SET consent_receipt_digest=NULL "
                 "WHERE operation_id=?", (op_id,))
             conn.commit()
             assert conn.execute(
@@ -279,6 +307,7 @@ class TestConsentWithdrawalCleanup:
             repo.apply_asset_outcome_in_tx(conn, upload_id=_U1, asset_id="ax",
                 now_iso="2026-07-30T00:00:01Z", lease_owner=LEASE,
                 expected_fence=c.fence)  # → uploaded + resource
+            _withdraw_op(conn)
             tally = repo.enqueue_consent_withdrawal_cleanup_in_tx(
                 conn, parent_operation_id="op1", now_iso="2026-07-30T00:00:10Z")
             assert tally["cleanup_required"] == 1
@@ -300,8 +329,9 @@ class TestConsentWithdrawalCleanup:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
             self._insert_upload(conn, upload_id="u_clean", status="upload_pending")
+            _withdraw_op(conn)
             tally = repo.enqueue_consent_withdrawal_cleanup_in_tx(
-                conn, parent_operation_id="op1", now_iso="t")
+                conn, parent_operation_id="op1", now_iso=NOW)
             assert tally["cancelled"] == 1
             assert conn.execute(
                 "SELECT status FROM heygen_asset_uploads WHERE upload_id='u_clean'"
@@ -317,8 +347,9 @@ class TestConsentWithdrawalCleanup:
             self._insert_upload(conn, upload_id="u_ms", status="upload_pending",
                                 maybe_sent_at="2026-07-30T00:00:00Z",
                                 idempotency_expires_at="2026-07-31T00:00:00Z")
+            _withdraw_op(conn)
             tally = repo.enqueue_consent_withdrawal_cleanup_in_tx(
-                conn, parent_operation_id="op1", now_iso="t")
+                conn, parent_operation_id="op1", now_iso=NOW)
             assert tally["manual"] == 1
             assert conn.execute(
                 "SELECT status FROM heygen_asset_uploads WHERE upload_id='u_ms'"
@@ -332,8 +363,9 @@ class TestConsentWithdrawalCleanup:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
             _do_claim(repo, conn)  # status=uploading, lease active
+            _withdraw_op(conn)
             tally = repo.enqueue_consent_withdrawal_cleanup_in_tx(
-                conn, parent_operation_id="op1", now_iso="t")
+                conn, parent_operation_id="op1", now_iso=NOW)
             assert tally["left_uploading"] == 1
             # row untouched — fenced apply will catch the withdraw
             assert conn.execute(
@@ -348,8 +380,9 @@ class TestConsentWithdrawalCleanup:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
             self._insert_upload(conn, upload_id="u_done", status="cleanup_required")
+            _withdraw_op(conn)
             tally = repo.enqueue_consent_withdrawal_cleanup_in_tx(
-                conn, parent_operation_id="op1", now_iso="t")
+                conn, parent_operation_id="op1", now_iso=NOW)
             assert tally["kept"] == 1
         finally:
             conn.close()
@@ -360,8 +393,9 @@ class TestConsentWithdrawalCleanup:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
             self._insert_upload(conn, upload_id="u_rec", status="reconciliation_required")
+            _withdraw_op(conn)
             tally = repo.enqueue_consent_withdrawal_cleanup_in_tx(
-                conn, parent_operation_id="op1", now_iso="t")
+                conn, parent_operation_id="op1", now_iso=NOW)
             assert tally["manual"] == 1
         finally:
             conn.close()
@@ -418,8 +452,13 @@ class TestAssetApplyConsentRecheck:
         conn, td = _db()
         try:
             conn.execute("BEGIN"); _add_parent_op(conn)
+            # Real withdrawn state: status=withdrawn + consent pointer cleared
+            # (ConsentService.withdraw clears the pointer).
             conn.execute(
                 "UPDATE heygen_consent_receipts SET status='withdrawn' "
+                "WHERE operation_id='op1'")
+            conn.execute(
+                "UPDATE heygen_operations SET consent_receipt_digest=NULL "
                 "WHERE operation_id='op1'")
             repo = OperationRepository(Path(td))
             c = self._claim(repo, conn)
