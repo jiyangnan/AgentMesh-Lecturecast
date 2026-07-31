@@ -179,36 +179,52 @@ def test_apply_outcome_validates_result_matches_command():
 
 
 def test_concurrent_workers_one_reaches_adapter():
-    # Two workers release simultaneously; exactly one claims + reaches the
-    # adapter, the other gets 'busy'. No duplicate upload (blocker #3).
+    # Deterministic dual-worker: the winner holds the adapter (lease active) so
+    # the loser provably classifies 'busy'. Futures surface any worker exception
+    # (blocker #3: both workers must return, exactly one adapter call).
     import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
     with tempfile.TemporaryDirectory() as td:
         command, _op, runtime = _prepare(td)
         proc = AssetUploadProcessor(td)
-        adapter = _FakeAdapter(result=AssetUploadResult(
-            asset_id="ax", remote_url="u", mime_type=command.content_type,
-            size_bytes=command.file_size))
-        barrier = threading.Barrier(2)
+        winner_in_adapter = threading.Event()
+        release_winner = threading.Event()
+
+        class _BlockingAdapter:
+            def __init__(self):
+                self.calls = 0
+            def upload_asset(self, command, *, runtime_root):
+                self.calls += 1
+                winner_in_adapter.set()
+                release_winner.wait(timeout=10)   # hold the lease
+                return AssetUploadResult(
+                    asset_id="ax", remote_url="u",
+                    mime_type=command.content_type, size_bytes=command.file_size)
+        adapter = _BlockingAdapter()
         results: dict[str, str] = {}
 
         def worker(name):
-            barrier.wait(timeout=5)
             r = proc.upload_once(command=command, adapter=adapter,
                                  runtime_root=runtime, lease_owner=name,
                                  now_iso="2026-07-30T00:00:00Z", lease_seconds=60)
             results[name] = r.status
 
-        threads = [threading.Thread(target=worker, args=(f"worker-{i}",)) for i in range(2)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=10)
-        # No duplicate upload: the adapter is reached exactly once. Outcomes are
-        # a subset of {uploaded (winner), busy (loser) | uploaded (idempotent
-        # replay if the loser claims after the winner already applied)}.
-        assert adapter.calls == 1
-        assert "uploaded" in results.values()
-        assert all(v in ("uploaded", "busy") for v in results.values())
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            futs = [ex.submit(worker, f"worker-{i}") for i in range(2)]
+            assert winner_in_adapter.wait(timeout=10), "winner never reached adapter"
+            # Wait for the loser to record busy while the winner holds the lease.
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if any(v == "busy" for v in results.values()):
+                    break
+                time.sleep(0.01)
+            release_winner.set()
+            for f in futs:
+                f.result(timeout=10)   # raises if a worker threw
+        assert len(results) == 2                        # both workers returned
+        assert adapter.calls == 1                       # no duplicate upload
+        assert sorted(results.values()) == ["busy", "uploaded"]
 
 
 def test_unexpected_adapter_exception_preserves_lease_and_recovers():
@@ -240,6 +256,35 @@ def test_unexpected_adapter_exception_preserves_lease_and_recovers():
                              lease_seconds=60)
         assert r.status == "uploaded"
         assert good.calls == 1
+
+
+def test_unexpected_exception_past_24h_goes_manual_no_provider():
+    # t0 unexpected RuntimeError (lease preserved); t0+25h the frozen 24h window
+    # has closed → processor returns terminal WITHOUT touching the adapter, and
+    # the row is manual_reconciliation_required (blocker #3 gap).
+    with tempfile.TemporaryDirectory() as td:
+        command, _op, runtime = _prepare(td)
+        proc = AssetUploadProcessor(td)
+        blow = _FakeAdapter(error=RuntimeError("adapter exploded"))
+        with pytest.raises(RuntimeError):
+            proc.upload_once(command=command, adapter=blow, runtime_root=runtime,
+                             lease_owner=LEASE, now_iso="2026-07-30T00:00:00Z",
+                             lease_seconds=60)
+        later = _FakeAdapter(result=AssetUploadResult(
+            asset_id="ax", remote_url="u", mime_type=command.content_type,
+            size_bytes=command.file_size))
+        r = proc.upload_once(command=command, adapter=later, runtime_root=runtime,
+                             lease_owner=LEASE, now_iso="2026-07-31T01:00:00Z",
+                             lease_seconds=60)  # 25h later
+        assert r.status == "terminal"
+        assert later.calls == 0  # provider NOT reached past the window
+        from lecturecast.heygen_journal import init_database
+        conn = init_database(Path(td))
+        st = conn.execute(
+            "SELECT status FROM heygen_asset_uploads WHERE upload_id=?",
+            (command.upload_id,)).fetchone()[0]
+        conn.close()
+        assert st == "manual_reconciliation_required"
 
 
 def test_stale_fence_apply_is_rejected():
