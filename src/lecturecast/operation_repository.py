@@ -1875,68 +1875,94 @@ class OperationRepository:
             if row[col] != val:
                 raise OperationIntegrityError(
                     f"asset upload {col} mismatch on replay for {upload_id!r}")
-        if row["status"] == "uploaded":
+        status = row["status"]
+        owner, lease_exp, att = (row["lease_owner"], row["lease_expires_at"],
+                                 row["attempt_started_at"])
+        maybe_sent, idem_exp = row["maybe_sent_at"], row["idempotency_expires_at"]
+
+        # --- topology integrity (blocker #2) ---
+        if (owner is None) != (lease_exp is None):
+            raise OperationIntegrityError(
+                f"asset upload {upload_id!r} has a half lease state")
+        if owner is not None and att is None:
+            raise OperationIntegrityError(
+                f"asset upload {upload_id!r} has a lease without an attempt")
+        if status == "uploading" and att is None:
+            raise OperationIntegrityError(
+                f"asset upload {upload_id!r} is uploading without an attempt")
+        if status == "reconciliation_required" and (maybe_sent is None or idem_exp is None):
+            raise OperationIntegrityError(
+                f"asset upload {upload_id!r} reconciliation_required is missing "
+                f"maybe_sent_at/idempotency_expires_at")
+
+        if status == "uploaded":
             if row["remote_resource_id"] is None:
                 raise OperationIntegrityError(
                     f"uploaded asset upload {upload_id!r} has no remote_resource_id")
+            parent = conn.execute(
+                "SELECT credential_profile_id FROM heygen_operations "
+                "WHERE operation_id=?", (parent_operation_id,),
+            ).fetchone()
+            if parent is None or not parent["credential_profile_id"]:
+                raise OperationStateError(
+                    f"parent operation {parent_operation_id!r} has no credential")
+            _validate_asset_binding(
+                conn, remote_resource_id=row["remote_resource_id"],
+                parent_operation_id=parent_operation_id, asset_role=asset_role,
+                credential_profile_id=parent["credential_profile_id"],
+                expected_remote_id=None)  # claim has no asset_id; topology only
             return AssetClaimResult(upload_id, "done", row["lease_fence"],
                                    row["attempts"], None, row["remote_resource_id"])
-        if row["status"] in ("failed", "cancelled", "manual_reconciliation_required"):
+        if status in ("failed", "cancelled", "manual_reconciliation_required"):
             return AssetClaimResult(upload_id, "terminal", row["lease_fence"],
                                    row["attempts"], None, None)
-        # reconciliation_required past the 24h replay window → promote to manual
-        # (terminal) BEFORE attempting any provider call (no blind retransmit).
-        if row["status"] == "reconciliation_required":
-            exp = row["idempotency_expires_at"]
-            if exp is not None and _parse_utc(exp) <= now:
-                conn.execute(
-                    "UPDATE heygen_asset_uploads SET "
-                    "status='manual_reconciliation_required', updated_at=? "
-                    "WHERE upload_id=?", (now_iso, upload_id))
-                return AssetClaimResult(upload_id, "terminal", row["lease_fence"],
-                                       row["attempts"], None, None)
+
+        # --- frozen 24h replay deadline (blocker #1) ---
+        # Anchor the deadline at the FIRST possible-send attempt. Once set it is
+        # never recomputed: a reclaim resets attempt_started_at to now, but the
+        # deadline stays anchored to the original send so repeated crashes cannot
+        # extend HeyGen's 24h replay window (t0 send → t23 reclaim → t46 must
+        # still be past the t0+24h deadline).
+        if idem_exp is None and att is not None:
+            idem_exp = _canonical(_parse_utc(att) + timedelta(
+                seconds=_ASSET_IDEMPOTENCY_WINDOW_SECONDS))
+            maybe_sent = maybe_sent or att
+        if idem_exp is not None and _parse_utc(idem_exp) <= now:
+            # Past the frozen deadline (reconciliation_required OR a crashed
+            # uploading attempt) → manual, never re-touch the provider.
+            conn.execute(
+                "UPDATE heygen_asset_uploads SET "
+                "status='manual_reconciliation_required', "
+                "maybe_sent_at=COALESCE(maybe_sent_at, ?), "
+                "idempotency_expires_at=COALESCE(idempotency_expires_at, ?), "
+                "lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
+                "WHERE upload_id=?",
+                (maybe_sent, idem_exp, now_iso, upload_id))
+            return AssetClaimResult(upload_id, "terminal", row["lease_fence"],
+                                   row["attempts"], None, None)
+
         # Retry-backoff gate.
         nr = row["next_retry_at"]
         if nr is not None and _parse_utc(nr) > now:
             return AssetClaimResult(upload_id, "retry_wait", row["lease_fence"],
                                    row["attempts"], None, None)
-        # Half lease → corrupt topology, fail closed.
-        owner, lease_exp, att = (row["lease_owner"], row["lease_expires_at"],
-                                 row["attempt_started_at"])
-        if (owner is None) != (lease_exp is None):
-            raise OperationIntegrityError(
-                f"asset upload {upload_id!r} has a half lease state")
+        # Active lease → busy.
         if att is not None and owner is not None and _parse_utc(lease_exp) > now:
             return AssetClaimResult(upload_id, "busy", row["lease_fence"],
                                    row["attempts"], lease_exp, None)
-        # Crash-after-send protection: a worker that died after the provider
-        # call but before apply_failure leaves the row in 'uploading' with an
-        # expired lease and no idempotency_expires_at. If the attempt started
-        # more than 24h ago, the HeyGen replay window has closed — we MUST NOT
-        # reclaim and re-upload (that could create a duplicate remote asset).
-        # Promote to manual_reconciliation_required instead.
-        if att is not None:
-            attempt_send_cutoff = _parse_utc(att) + timedelta(
-                seconds=_ASSET_IDEMPOTENCY_WINDOW_SECONDS)
-            if now >= attempt_send_cutoff:
-                conn.execute(
-                    "UPDATE heygen_asset_uploads SET "
-                    "status='manual_reconciliation_required', "
-                    "maybe_sent_at=COALESCE(maybe_sent_at, attempt_started_at), "
-                    "idempotency_expires_at=COALESCE(idempotency_expires_at, ?), "
-                    "lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
-                    "WHERE upload_id=?",
-                    (_canonical(attempt_send_cutoff), now_iso, upload_id))
-                return AssetClaimResult(upload_id, "terminal", row["lease_fence"],
-                                       row["attempts"], None, None)
+        # Reclaim: bump fence + attempts, set a fresh lease, and PRESERVE the
+        # frozen maybe_sent_at + idempotency_expires_at (COALESCE) so the next
+        # crash classification uses the original deadline, not the new attempt.
         new_fence = row["lease_fence"] + 1
         new_attempts = row["attempts"] + 1
         conn.execute(
             "UPDATE heygen_asset_uploads SET status='uploading', attempts=?, "
             "lease_owner=?, lease_expires_at=?, lease_fence=?, attempt_started_at=?, "
-            "next_retry_at=NULL, updated_at=? WHERE upload_id=?",
-            (new_attempts, lease_owner, expires_iso, new_fence, now_iso, now_iso,
-             upload_id),
+            "next_retry_at=NULL, maybe_sent_at=COALESCE(maybe_sent_at, ?), "
+            "idempotency_expires_at=COALESCE(idempotency_expires_at, ?), updated_at=? "
+            "WHERE upload_id=?",
+            (new_attempts, lease_owner, expires_iso, new_fence, now_iso,
+             maybe_sent, idem_exp, now_iso, upload_id),
         )
         return AssetClaimResult(upload_id, "claimed", new_fence, new_attempts,
                                expires_iso, None)
@@ -1983,18 +2009,13 @@ class OperationRepository:
         remote_id = asset_id.strip()
 
         if row["status"] == "uploaded":
-            # Validate the full binding topology on replay, not just the id.
-            existing = conn.execute(
-                "SELECT remote_id, resource_kind, created_by_operation_id, "
-                "credential_profile_id, deletion_status FROM heygen_remote_resources "
-                "WHERE resource_id=?", (row["remote_resource_id"],),
-            ).fetchone()
-            if (existing is None or existing["remote_id"] != remote_id
-                    or existing["resource_kind"] != resource_kind
-                    or existing["created_by_operation_id"] != row["parent_operation_id"]
-                    or existing["credential_profile_id"] != credential_profile_id):
-                raise OperationIntegrityError(
-                    f"asset upload {upload_id!r} bound resource topology changed")
+            # Validate the full binding topology on replay (shared check).
+            _validate_asset_binding(
+                conn, remote_resource_id=row["remote_resource_id"],
+                parent_operation_id=row["parent_operation_id"],
+                asset_role=row["asset_role"],
+                credential_profile_id=credential_profile_id,
+                expected_remote_id=remote_id)
             return row["remote_resource_id"]
 
         try:
@@ -2167,6 +2188,49 @@ def _asset_retention_mode(asset_role: str) -> str:
     if asset_role not in _ASSET_ROLE_TO_RESOURCE_KIND:
         raise OperationIntegrityError(f"no retention mapping for {asset_role!r}")
     return "ephemeral"
+
+
+def _validate_asset_binding(
+    conn: sqlite3.Connection, *, remote_resource_id: int,
+    parent_operation_id: str, asset_role: str, credential_profile_id: str,
+    expected_remote_id: str | None,
+) -> int:
+    """Shared fail-closed topology check for an already-uploaded asset binding,
+    used by both claim's 'done' path and apply's idempotent replay. Validates
+    remote_id (when expected_remote_id given), resource_kind, created_by,
+    credential_profile, retention_mode, deletion_status, and that exactly the
+    parent operation references the resource (no foreign refs). Returns the
+    resource_id or raises OperationIntegrityError."""
+    conn.row_factory = sqlite3.Row
+    res = conn.execute(
+        "SELECT remote_id, resource_kind, created_by_operation_id, "
+        "credential_profile_id, retention_mode, deletion_status "
+        "FROM heygen_remote_resources WHERE resource_id=?",
+        (remote_resource_id,),
+    ).fetchone()
+    if res is None:
+        raise OperationIntegrityError(
+            f"asset binding resource_id={remote_resource_id} missing")
+    expected_kind = _asset_resource_kind(asset_role)
+    expected_retention = _asset_retention_mode(asset_role)
+    if (res["resource_kind"] != expected_kind
+            or res["created_by_operation_id"] != parent_operation_id
+            or res["credential_profile_id"] != credential_profile_id
+            or res["retention_mode"] != expected_retention
+            or res["deletion_status"] != "not_started"
+            or (expected_remote_id is not None
+                and res["remote_id"] != expected_remote_id)):
+        raise OperationIntegrityError(
+            f"asset binding resource_id={remote_resource_id} topology changed")
+    refs = conn.execute(
+        "SELECT operation_id FROM heygen_resource_operation_refs "
+        "WHERE resource_id=?", (remote_resource_id,),
+    ).fetchall()
+    if len(refs) != 1 or refs[0]["operation_id"] != parent_operation_id:
+        raise OperationIntegrityError(
+            f"asset binding resource_id={remote_resource_id} has foreign or "
+            f"missing operation refs")
+    return remote_resource_id
 
 
 # --- coordinator -------------------------------------------------------
