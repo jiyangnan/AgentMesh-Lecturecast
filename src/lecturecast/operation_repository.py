@@ -1897,10 +1897,20 @@ class OperationRepository:
             (resource_id, operation_id, operation_id, operation_id, operation_id)).fetchone()
         if res is None:
             return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
-        # If the resource's deletion_reason is post_download, re-check single-video.
+        # Read the CURRENT reason — claim and apply are separate fenced txs, so
+        # only post_download / consent_withdrawal authorize recording a deletion.
+        # manual_force is the operator-only integrity path: claim returns
+        # not_ready and never carries a lease, so it reaches apply ONLY via a
+        # reason swap between the claim tx and this apply tx. Mirror asset apply
+        # (:2206) and reject the swap before ANY outcome path (success OR
+        # failure) — never silently record a deletion nor clear the operation
+        # lease for a manual_force resource (round-11 P1). reason_row is guaranteed
+        # non-None: the topology re-verify above confirmed the row in this same tx.
         reason_row = conn.execute(
             "SELECT deletion_reason FROM heygen_remote_resources WHERE resource_id=?",
             (resource_id,)).fetchone()
+        if reason_row["deletion_reason"] not in ("post_download", "consent_withdrawal"):
+            return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
         if reason_row and reason_row["deletion_reason"] == "post_download"                 and not self._single_video(conn, operation_id):
             return DeletionOutcome(operation_id, resource_id, "fence_conflict", fence, None, None)
         # Gated UPDATE condition shared by all outcomes.
