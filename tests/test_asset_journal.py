@@ -1626,13 +1626,44 @@ class TestAssetDeletionClaim:
         finally:
             conn.close()
 
-    def test_not_ready_for_deleted_resource(self):
+    def test_not_ready_when_asset_already_deleted(self):
+        # Legal terminal state (asset+resource both deleted): the asset status
+        # gate returns not_ready before any state mutation. (A deleted resource
+        # can only pair matrix-validly with a deleted asset, which this gate
+        # already catches — so there is no separate resource-deleted branch.)
         conn, td, repo = _setup_uploaded_for_delete()
         try:
             _force_state(conn, asset_status="deleted", ds="deleted", reason="post_download")
             claim = repo.claim_asset_deletion_in_tx(
                 conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
             assert claim.status == "not_ready"
+        finally:
+            conn.close()
+
+    def test_claim_matrix_rejects_resource_deleted_with_live_asset(self):
+        # A resource at 'deleted' paired with a still-live asset
+        # (cleanup_required) is a matrix violation — claim fails closed rather
+        # than silently "fixing" or resurrecting it (round-1 blocker #2).
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            _force_state(conn, asset_status="cleanup_required", ds="deleted",
+                         reason="post_download")
+            with pytest.raises(OperationIntegrityError):
+                repo.claim_asset_deletion_in_tx(
+                    conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
+        finally:
+            conn.close()
+
+    def test_claim_matrix_rejects_illegal_uploaded_pending(self):
+        # uploaded must pair with not_started; uploaded+deletion_pending is a
+        # silent-corruption vector — claim rejects it, never "advances" it.
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            _force_state(conn, asset_status="uploaded", ds="deletion_pending",
+                         reason="post_download")
+            with pytest.raises(OperationIntegrityError):
+                repo.claim_asset_deletion_in_tx(
+                    conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
         finally:
             conn.close()
 
@@ -1909,9 +1940,31 @@ class TestApplyAssetDeletionOutcome:
             conn.close()
 
     def test_apply_fence_conflict_when_resource_not_pending(self):
-        # resource flipped to deleted between claim and apply → the lease CAS
-        # row read still matches (asset still cleanup_required+leased), but the
-        # gated resource UPDATE matches 0 rows → fence_conflict (never resurrect).
+        # resource flipped to deletion_failed between claim and apply. The asset
+        # is still cleanup_required+leased (CAS matches), and cleanup_required↔
+        # deletion_failed is matrix-valid, but the resource is no longer
+        # deletion_pending → fence_conflict (never blindly re-advance it).
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = self._claim(repo, conn)
+            rid = claim.resource_id
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_status='deletion_failed', "
+                "deletion_reason='post_download' WHERE remote_id='ax'")
+            out = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
+                fence=claim.fence, now_iso=NOW,
+                result=AssetDeleteResult(status="deleted"))
+            assert out.status == "fence_conflict"
+        finally:
+            conn.close()
+
+    def test_apply_rejects_resource_deleted_tamper(self):
+        # resource flipped to 'deleted' between claim and apply while the asset
+        # is still cleanup_required+leased. cleanup_required↔deleted is a matrix
+        # violation (a legitimate apply would have flipped the asset to deleted
+        # in the same tx and cleared the lease) → fail-closed integrity error,
+        # never a silent fence_conflict that hides the corruption (round-1 #2).
         conn, td, repo = _setup_uploaded_for_delete()
         try:
             claim = self._claim(repo, conn)
@@ -1919,11 +1972,11 @@ class TestApplyAssetDeletionOutcome:
             conn.execute(
                 "UPDATE heygen_remote_resources SET deletion_status='deleted', "
                 "deletion_reason='post_download' WHERE remote_id='ax'")
-            out = repo.apply_asset_deletion_outcome_in_tx(
-                conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
-                fence=claim.fence, now_iso=NOW,
-                result=AssetDeleteResult(status="deleted"))
-            assert out.status == "fence_conflict"
+            with pytest.raises(OperationIntegrityError):
+                repo.apply_asset_deletion_outcome_in_tx(
+                    conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
+                    fence=claim.fence, now_iso=NOW,
+                    result=AssetDeleteResult(status="deleted"))
         finally:
             conn.close()
 
@@ -1941,6 +1994,89 @@ class TestApplyAssetDeletionOutcome:
                     conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
                     fence=claim.fence, now_iso=NOW,
                     result=AssetDeleteResult(status="deleted"))
+        finally:
+            conn.close()
+
+    def test_apply_rejects_wrong_resource_id(self):
+        # The claim's resource_id is bound into the lease CAS; an apply with a
+        # different resource_id cannot record the DELETE against the wrong row
+        # (round-1 blocker #1).
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = self._claim(repo, conn)
+            out = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id=_U1, resource_id=99999, lease_owner=LEASE,
+                fence=claim.fence, now_iso=NOW,
+                result=AssetDeleteResult(status="deleted"))
+            assert out.status == "fence_conflict"
+            # nothing mutated
+            assert _asset(conn)["status"] == "cleanup_required"
+            assert _resource(conn)["deletion_status"] == "deletion_pending"
+        finally:
+            conn.close()
+
+    def test_apply_rejects_sibling_resource_swap(self):
+        # Swap the asset's remote_resource_id to a topology-valid sibling
+        # between claim and apply. _validate_asset_binding would pass for the
+        # sibling (it only proves B is currently valid, not B==A), so the lease
+        # CAS — which binds remote_resource_id to the claim's resource_id — is
+        # what catches the swap: it no longer matches → fence_conflict, and the
+        # sibling is never touched (round-1 blocker #1).
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = self._claim(repo, conn)
+            orig_rid = claim.resource_id
+            conn.execute(
+                "INSERT INTO heygen_remote_resources ("
+                "  credential_profile_id, resource_kind, remote_id, retention_mode,"
+                "  created_by_operation_id, deletion_status, created_at, updated_at"
+                ") VALUES ('heygen_env_default','portrait_asset','sib','ephemeral','op1',"
+                "          'not_started','t','t')")
+            sib_rid = conn.execute(
+                "SELECT resource_id FROM heygen_remote_resources WHERE remote_id='sib'"
+                ).fetchone()[0]
+            conn.execute(
+                "INSERT INTO heygen_resource_operation_refs "
+                "(resource_id, operation_id, created_at) VALUES (?, 'op1', 't')",
+                (sib_rid,))
+            # rebind the asset row to the sibling (the attack)
+            conn.execute(
+                "UPDATE heygen_asset_uploads SET remote_resource_id=? "
+                "WHERE upload_id=?", (sib_rid, _U1))
+            out = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id=_U1, resource_id=orig_rid, lease_owner=LEASE,
+                fence=claim.fence, now_iso=NOW,
+                result=AssetDeleteResult(status="deleted"))
+            assert out.status == "fence_conflict"
+            # neither resource was deleted
+            assert _resource(conn)["deletion_status"] == "deletion_pending"
+            sib = conn.execute(
+                "SELECT deletion_status FROM heygen_remote_resources "
+                "WHERE remote_id='sib'").fetchone()
+            assert sib["deletion_status"] == "not_started"
+        finally:
+            conn.close()
+
+    def test_apply_rejects_reason_swap_to_manual_force(self):
+        # claim (post_download) → between txs the resource reason is flipped to
+        # manual_force while the asset's last_error_code stays NULL → apply's
+        # matrix check fails closed (manual_force requires the integrity marker),
+        # never auto-deleting an integrity-path record nor clearing the marker
+        # (round-1 blocker #2).
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = self._claim(repo, conn)
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_reason='manual_force' "
+                "WHERE remote_id='ax'")
+            with pytest.raises(OperationIntegrityError):
+                repo.apply_asset_deletion_outcome_in_tx(
+                    conn, upload_id=_U1, resource_id=claim.resource_id,
+                    lease_owner=LEASE, fence=claim.fence, now_iso=NOW,
+                    result=AssetDeleteResult(status="deleted"))
+            # nothing applied: asset still leased cleanup_required, resource pending
+            assert _asset(conn)["status"] == "cleanup_required"
+            assert _resource(conn)["deletion_status"] == "deletion_pending"
         finally:
             conn.close()
 
