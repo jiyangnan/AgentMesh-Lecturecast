@@ -2145,6 +2145,10 @@ class TestApplyAssetDeletionOutcome:
             a = _asset(conn)
             assert a["status"] == "cleanup_required"
             assert a["lease_owner"] == LEASE
+            renamed = conn.execute(
+                "SELECT deletion_status FROM heygen_remote_resources "
+                "WHERE resource_id=?", (claim.resource_id,)).fetchone()
+            assert renamed["deletion_status"] == "deletion_pending"
         finally:
             conn.close()
 
