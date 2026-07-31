@@ -3897,6 +3897,29 @@ class DeletionCoordinator:
                 # +NULL and not_started+reason (both anomalous). Same threat model
                 # as round-4: schema-legal corrupt/直插 states, not just
                 # producer-reachable ones.
+                # FULL-TOPOLOGY mirror (Codex round-6 P1): the state matrix still
+                # admitted a DELETED witness whose claim invariants were never
+                # re-checked anywhere — a deleted video is skipped by the resolver
+                # (never re-claimed), so it escapes topology / op-lease / single-
+                # video / download_status re-verification, and the released tail
+                # is deleted by the asset claim (which does NOT re-gate on op.lease).
+                # An empirical + workflow enumeration found SIX bypass classes, one
+                # per un-mirrored claim invariant: (a) topology (missing/foreign
+                # ref, credential mismatch), (b) asset upload-binding (a bare 直插
+                # resource with no heygen_asset_uploads row), (c) download_status
+                # (deleted/post_download video on an unverified op), (d) op-lease
+                # (active/half op lease — the video claim's mutual-exclusion gate),
+                # (e) resource_kind (avatar_look/avatar_group have no processor, so
+                # a corrupt row is never re-verified), (f) single-video count
+                # (COUNT(video)==1 — the claim/apply gate a double-video op refuses).
+                # The witness is split into two branches: (A) a NON-DELETED video
+                # is a SAFE witness (the resolver gates the tail behind it and the
+                # video claim re-checks everything); (B) a DELETED video or a NON-
+                # VIDEO asset is a TAIL-RELEASING witness and must mirror the FULL
+                # claim topology — op clean-idle, credential match, exactly-one own
+                # ref, and (B1) for a deleted video count==1+verified (post_download
+                # only; consent cleanup is delivery-independent) or (B2) for a non-
+                # video asset a real upload binding on an audio/portrait kind.
                 rows = conn.execute(
                     "SELECT DISTINCT r.created_by_operation_id AS op_id "
                     "FROM heygen_remote_resources r "
@@ -3905,21 +3928,74 @@ class DeletionCoordinator:
                     "AND r.created_by_operation_id IS NOT NULL "
                     "AND EXISTS ("
                     " SELECT 1 FROM heygen_remote_resources r2 "
+                    " JOIN heygen_operations o"
+                    "   ON o.operation_id = r2.created_by_operation_id "
                     " WHERE r2.created_by_operation_id = r.created_by_operation_id "
                     " AND r2.retention_mode != 'reusable_avatar' "
                     " AND ("
-                    "  (r2.deletion_status = 'not_started'"
-                    "   AND r2.deletion_reason IS NULL)"
-                    "  OR (r2.deletion_status IN ('deletion_pending',"
-                    "                            'deletion_failed',"
-                    "                            'deleted')"
-                    "      AND r2.deletion_reason IN ('post_download',"
-                    "                                'consent_withdrawal')))"
-                    " AND (r2.resource_kind = 'video'"
-                    "      OR (r2.deletion_status IN ('deletion_pending',"
+                    # (A) SAFE video witness — a NON-DELETED video. The resolver
+                    # gates the tail behind it (returns only the video this pass)
+                    # and the video claim re-checks topology / download_status /
+                    # single-video / op-lease, so only the (status, reason) state
+                    # matrix + kind are needed here.
+                    "  (r2.resource_kind = 'video'"
+                    "   AND ((r2.deletion_status = 'not_started'"
+                    "         AND r2.deletion_reason IS NULL)"
+                    "        OR (r2.deletion_status IN ('deletion_pending',"
+                    "                                  'deletion_failed')"
+                    "            AND r2.deletion_reason IN ('post_download',"
+                    "                                      'consent_withdrawal'))))"
+                    "  OR"
+                    # (B) TAIL-RELEASING witness — a DELETED video or a NON-VIDEO
+                    # asset. The resolver skips a deleted video and, finding no
+                    # non-deleted video, releases the tail to the asset claim,
+                    # which does NOT re-check op.lease and runs after the witness
+                    # video is already gone. A DELETED witness therefore escapes
+                    # ALL downstream re-verification, so EVERY claim invariant the
+                    # live-video path would have enforced is restated here as a
+                    # full topology (round-6: topology / op-lease / single-video /
+                    # download_status / kind / upload-binding — 6 bypass classes,
+                    # one per un-mirrored invariant).
+                    "  (o.lease_owner IS NULL AND o.lease_expires_at IS NULL"
+                    "   AND r2.credential_profile_id = o.credential_profile_id"
+                    "   AND EXISTS (SELECT 1 FROM heygen_resource_operation_refs ref"
+                    "    WHERE ref.resource_id = r2.resource_id"
+                    "    AND ref.operation_id = r2.created_by_operation_id)"
+                    "   AND NOT EXISTS (SELECT 1 FROM heygen_resource_operation_refs"
+                    "    ref2 WHERE ref2.resource_id = r2.resource_id"
+                    "    AND ref2.operation_id <> r2.created_by_operation_id)"
+                    "   AND ("
+                    #  (B1) deleted video: count(video)==1 + op.download_status
+                    #  verified — but ONLY for post_download (consent_withdrawal
+                    #  cleanup is delivery-independent: legit on unverified ops).
+                    "    (r2.resource_kind = 'video'"
+                    "     AND r2.deletion_status = 'deleted'"
+                    "     AND r2.deletion_reason IN ('post_download',"
+                    "                               'consent_withdrawal')"
+                    "     AND (r2.deletion_reason != 'post_download'"
+                    "          OR o.download_status = 'verified')"
+                    "     AND (r2.deletion_reason != 'post_download'"
+                    "          OR 1 = (SELECT COUNT(*) FROM heygen_remote_resources rv"
+                    "            JOIN heygen_resource_operation_refs refv"
+                    "              ON refv.resource_id = rv.resource_id"
+                    "            WHERE refv.operation_id = r2.created_by_operation_id"
+                    "            AND rv.resource_kind = 'video')))"
+                    "    OR"
+                    #  (B2) non-video pending/failed asset: kind restricted to
+                    #  audio_asset/portrait_asset (the only kinds with real upload
+                    #  bindings; avatar_look/group route to skipped_unknown_kind
+                    #  with no claim), and the binding must exist (a bare 直插
+                    #  resource with no heygen_asset_uploads row cannot witness).
+                    "    (r2.resource_kind IN ('audio_asset','portrait_asset')"
+                    "     AND r2.deletion_status IN ('deletion_pending',"
                     "                               'deletion_failed')"
-                    "          AND r2.deletion_reason IN ('post_download',"
-                    "                                    'consent_withdrawal')))"
+                    "     AND r2.deletion_reason IN ('post_download',"
+                    "                               'consent_withdrawal')"
+                    "     AND EXISTS (SELECT 1 FROM heygen_asset_uploads u"
+                    "      WHERE u.remote_resource_id = r2.resource_id"
+                    "      AND u.parent_operation_id = r2.created_by_operation_id))"
+                    "   ))"
+                    " )"
                     ") ORDER BY r.created_by_operation_id").fetchall()
         op_ids = [r["op_id"] for r in rows]
 

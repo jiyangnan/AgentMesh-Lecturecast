@@ -986,6 +986,302 @@ class TestRecoverDeletions:
         finally:
             conn.close()
 
+    def test_deleted_video_missing_ref_does_not_authorize_default_sweep(self, tmp_path):
+        # Codex round-6 P1 regression (topology dimension): a schema-legal
+        # deleted/post_download video that LACKS the operation's exclusive ref
+        # still passes the (status,reason) matrix witness — it matched only on
+        # created_by_operation_id. Because the resolver skips a deleted video
+        # and the video claim therefore never re-runs to re-verify the exclusive-
+        # ref topology, this broken-topology deleted video falsely authorizes
+        # the op, releasing the tail and deleting the sibling asset. The witness
+        # must self-verify the SAME exclusive-ref topology the claim enforces
+        # (own ref + no foreign ref + credential match).
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified")
+            _add_resource(conn, op_id="opLive", kind="video", remote_id="vDel",
+                          retention="ephemeral", ds="deleted", reason="post_download")
+            # strip the ref _add_resource created → topology-invalid
+            conn.execute(
+                "DELETE FROM heygen_resource_operation_refs WHERE resource_id IN "
+                "(SELECT resource_id FROM heygen_remote_resources WHERE remote_id='vDel')")
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] != "deleted"          # sibling untouched
+        finally:
+            conn.close()
+
+    def test_deleted_video_foreign_ref_does_not_authorize_default_sweep(self, tmp_path):
+        # round-6 topology mirror: a deleted video carrying a FOREIGN ref (claims
+        # to also belong to another op) must not authorize the sweep. The video
+        # claim raises OperationIntegrityError on a foreign ref, but a deleted
+        # video skips the claim — so the witness must enforce no-foreign-ref.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified")
+            _add_op(conn, "opOther", download_status="verified")
+            _add_resource(conn, op_id="opLive", kind="video", remote_id="vDel",
+                          retention="ephemeral", ds="deleted", reason="post_download")
+            rid = conn.execute(
+                "SELECT resource_id FROM heygen_remote_resources WHERE remote_id='vDel'"
+                ).fetchone()[0]
+            conn.execute(
+                "INSERT INTO heygen_resource_operation_refs "
+                "(resource_id, operation_id, created_at) VALUES (?,?,?)",
+                (rid, "opOther", "t"))
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+
+    def test_deleted_video_credential_mismatch_does_not_authorize_default_sweep(self, tmp_path):
+        # round-6 topology mirror: a deleted video whose credential_profile_id
+        # does NOT match its op's credential must not authorize. The video claim
+        # raises on credential mismatch; a deleted video skips the claim.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified",
+                    credential="heygen_env_default")
+            _add_op(conn, "opOther", download_status="verified",
+                    credential="heygen_other")
+            _add_resource(conn, op_id="opLive", kind="video", remote_id="vDel",
+                          retention="ephemeral", ds="deleted", reason="post_download",
+                          credential="heygen_other")  # mismatched credential
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+
+    def test_bare_pending_asset_no_upload_does_not_authorize_default_sweep(self, tmp_path):
+        # round-6 asset-binding dimension: a pending/post_download audio resource
+        # with NO heygen_asset_uploads row (a bare resource — schema-legal) still
+        # passes the witness (it only needs pending/failed + auto-recoverable
+        # reason). It authorizes the op; the resolver scopes the sibling asset
+        # (no non-deleted video to gate the tail) and the asset claim's
+        # not_started branch does not re-gate on download_status → sibling
+        # deleted. The asset witness must be BOUND to this op's asset upload.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified")
+            # bare pending/pd audio resource — NO upload row
+            _add_resource(conn, op_id="opLive", kind="audio_asset", remote_id="aBare",
+                          retention="ephemeral", ds="deletion_pending",
+                          reason="post_download")
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] != "deleted"          # sibling untouched
+        finally:
+            conn.close()
+
+    def test_deleted_video_valid_topology_unverified_op_does_not_authorize_default_sweep(self, tmp_path):
+        # round-6 download_status dimension (a dimension Codex round-6 did NOT
+        # flag — found by empirical enumeration). A deleted/post_download video
+        # with FULLY VALID topology (own ref + no foreign + matching credential)
+        # on an UNVERIFIED op (download_status='not_started') still authorizes
+        # tail release: the legit path to 'deleted' goes through the not_started
+        # → deletion_pending claim, which gates on download_status='verified',
+        # but a deleted video is never re-claimed so that gate is skipped. A
+        # corrupt 直插 deleted video on an unverified op must not release the
+        # tail. The deleted-video witness branch must additionally require the op
+        # to be verified. (Asset/consent witnesses must NOT require verified —
+        # consent_withdrawal cleanup is delivery-independent — so the gate is
+        # specific to the deleted-video-tail path, not a blanket op filter.)
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="not_started")  # NOT verified
+            _add_resource(conn, op_id="opLive", kind="video", remote_id="vDel",
+                          retention="ephemeral", ds="deleted", reason="post_download")
+            # topology is valid (default _add_resource ref + matching credential)
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] != "deleted"          # sibling untouched
+        finally:
+            conn.close()
+
+    def test_deleted_video_active_lease_does_not_authorize_default_sweep(self, tmp_path):
+        # round-6 op-lease dimension (workflow-confirmed). The video claim gates
+        # on the OP lease (active lease held by another owner → busy; half lease
+        # → OperationIntegrityError), enforcing op-level mutual exclusion. But a
+        # deleted-video witness is skipped by the resolver (never re-claimed), so
+        # that gate is bypassed; the resolver then releases the tail (no
+        # non-deleted video) and the asset claim checks only the ASSET's own
+        # lease, never op.lease_* — so a sibling asset is deleted while another
+        # worker actively holds the op. The deleted-video witness branch must
+        # require the op to be clean-idle (mirror the video claim's lease gate).
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified")
+            _add_resource(conn, op_id="opLive", kind="video", remote_id="vDel",
+                          retention="ephemeral", ds="deleted", reason="post_download")
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            # Another worker actively holds the op lease (future expiry).
+            conn.execute(
+                "UPDATE heygen_operations SET lease_owner='other-worker', "
+                "lease_expires_at='2026-08-15T00:00:00Z' "
+                "WHERE operation_id='opLive'")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] != "deleted"          # sibling untouched
+        finally:
+            conn.close()
+
+    def test_avatar_look_pending_does_not_authorize_default_sweep(self, tmp_path):
+        # round-6 resource_kind dimension (workflow-confirmed). The witness
+        # non-video kind clause admitted ANY non-video kind, but avatar_look /
+        # avatar_group have NO deletion processor (coordinator routes them to
+        # skipped_unknown_kind) — so a corrupt 直插 avatar_look row
+        # (deletion_pending/post_download, wrong credential, no ref) acts as an
+        # entirely unverified witness: it authorizes the op, the resolver
+        # (no non-deleted video) releases the tail, and the sibling asset is
+        # deleted. The tail-releasing witness branch must restrict to
+        # audio_asset/portrait_asset (the kinds with real upload bindings).
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified")
+            _add_resource(conn, op_id="opLive", kind="avatar_look", remote_id="al1",
+                          retention="ephemeral", ds="deletion_pending",
+                          reason="post_download", credential="WRONG_CRED")
+            # strip the avatar's ref (corrupt topology); no upload can bind it
+            conn.execute(
+                "DELETE FROM heygen_resource_operation_refs WHERE resource_id IN "
+                "(SELECT resource_id FROM heygen_remote_resources WHERE remote_id='al1')")
+            _add_asset(conn, op_id="opLive", role="synthetic_narration_audio",
+                       upload_id="uLive", remote_id="aLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] != "deleted"          # sibling untouched
+        finally:
+            conn.close()
+
+    def test_double_deleted_video_does_not_authorize_default_sweep(self, tmp_path):
+        # round-6 single-video-count dimension (workflow-confirmed). The video
+        # claim enforces _single_video (COUNT(video refs)==1) on every
+        # post_download path and apply re-checks it — so NO video can legit-
+        # imately reach 'deleted' in a count>=2 op (claim returns not_ready,
+        # apply returns fence_conflict). But the deleted-video witness has no
+        # count check, so a 直插 op with TWO deleted/post_download videos (each
+        # valid topology, verified op) is admitted; the resolver skips both
+        # deleted videos → tail released → sibling asset deleted. The
+        # deleted-video witness branch must require count(video)==1 (mirroring
+        # the claim/apply gate) for post_download.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified")
+            _add_resource(conn, op_id="opLive", kind="video", remote_id="v1",
+                          retention="ephemeral", ds="deleted", reason="post_download")
+            _add_resource(conn, op_id="opLive", kind="video", remote_id="v2",
+                          retention="ephemeral", ds="deleted", reason="post_download")
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] != "deleted"          # sibling untouched
+        finally:
+            conn.close()
+
     def test_candidate_tx_closed_before_any_pass_runs(self, tmp_path, monkeypatch):
         # T18 / R5 — the candidate-listing tx is closed before any network
         # deletion. The open-tx counter must read 0 at every deleter/adapter call.
