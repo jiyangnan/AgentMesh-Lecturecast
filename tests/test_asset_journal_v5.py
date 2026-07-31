@@ -25,14 +25,10 @@ def _fresh_conn():
     return conn, td
 
 
-def test_schema_version_is_five():
-    assert _SCHEMA_VERSION == 5
-
-
 def test_fresh_init_creates_asset_uploads_table():
     conn, _ = _fresh_conn()
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == _SCHEMA_VERSION
         tables = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert "heygen_asset_uploads" in tables
@@ -212,7 +208,7 @@ def test_populated_v4_migrates_to_v5_with_data_preserved():
     try:
         assert "heygen_asset_uploads" not in _tables(conn)
         journal._migrate(conn, 4)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == _SCHEMA_VERSION
         assert "heygen_asset_uploads" in _tables(conn)
         # v4-era data preserved across the upgrade.
         assert conn.execute(
