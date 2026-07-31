@@ -2124,6 +2124,45 @@ class TestApplyAssetDeletionOutcome:
         finally:
             conn.close()
 
+    def test_apply_rejects_null_expected_remote_id(self):
+        # 'required kwarg' only prevents OMISSION; a caller can still pass None
+        # explicitly, and _validate_asset_binding treats None as "skip". The
+        # entry guard must reject it before any state mutation so the
+        # remote-identity binding cannot be silently disabled (round-3 blocker).
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = self._claim(repo, conn)
+            conn.execute(
+                "UPDATE heygen_remote_resources SET remote_id='swapped' "
+                "WHERE resource_id=?", (claim.resource_id,))
+            with pytest.raises(ValueError):
+                repo.apply_asset_deletion_outcome_in_tx(
+                    conn, upload_id=_U1, resource_id=claim.resource_id,
+                    lease_owner=LEASE, fence=claim.fence, now_iso=NOW,
+                    expected_remote_id=None,
+                    result=AssetDeleteResult(status="deleted"))
+            # nothing applied: lease still held, resource still pending
+            a = _asset(conn)
+            assert a["status"] == "cleanup_required"
+            assert a["lease_owner"] == LEASE
+        finally:
+            conn.close()
+
+    def test_apply_rejects_empty_expected_remote_id(self):
+        # An empty / malformed id is rejected by the same guard.
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = self._claim(repo, conn)
+            with pytest.raises(ValueError):
+                repo.apply_asset_deletion_outcome_in_tx(
+                    conn, upload_id=_U1, resource_id=claim.resource_id,
+                    lease_owner=LEASE, fence=claim.fence, now_iso=NOW,
+                    expected_remote_id="",
+                    result=AssetDeleteResult(status="deleted"))
+            assert _asset(conn)["status"] == "cleanup_required"
+        finally:
+            conn.close()
+
 
 class _FakeAdapter:
     def __init__(self, *, result=None, exc=None):
