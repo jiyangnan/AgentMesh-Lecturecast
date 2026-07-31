@@ -1539,9 +1539,18 @@ class TestRecoverDeletions:
         assert agg["ops_driven"] == 1               # consent cleanup is delivery-free
         conn = _fresh_conn(td)
         try:
-            a = conn.execute(
+            abad = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uBad'").fetchone()
+            alive = conn.execute(
                 "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
-            assert a["status"] == "deleted"          # sibling cleaned (consent)
+            # round-13 refinement: consent_withdrawal is PER-RESOURCE. The consent
+            # witness (aBad) IS deleted on the unverified op (delivery-independent).
+            # But the unreasoneoned not_started sibling (pLive) defaults to
+            # post_download, which REQUIRES a verified delivery (F3) — so pLive is
+            # correctly NOT swept. Consent authorizes the op (ops_driven=1) without
+            # cascading a post_download deletion onto an unreasoneoned sibling.
+            assert abad["status"] == "deleted"       # consent resource cleaned
+            assert alive["status"] != "deleted"      # post_download sibling gated (F3)
         finally:
             conn.close()
 
@@ -1674,9 +1683,18 @@ class TestRecoverDeletions:
         assert agg["ops_driven"] == 1               # consent cleanup is structure-free
         conn = _fresh_conn(td)
         try:
-            a = conn.execute(
+            abad = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uBad'").fetchone()
+            alive = conn.execute(
                 "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
-            assert a["status"] == "deleted"          # sibling cleaned (consent)
+            # round-13 refinement: consent_withdrawal is PER-RESOURCE. The consent
+            # witness (aBad) IS deleted on the double-video op (structure-independent).
+            # But the unreasoneoned not_started sibling (pLive) defaults to
+            # post_download, which REQUIRES a single-video op (F4) — so pLive is
+            # correctly NOT swept on this corrupt COUNT==2 op. Consent authorizes
+            # the op (ops_driven=1) without cascading onto an unreasoneoned sibling.
+            assert abad["status"] == "deleted"       # consent resource cleaned
+            assert alive["status"] != "deleted"      # post_download sibling gated (F4)
         finally:
             conn.close()
 
@@ -2069,6 +2087,234 @@ class TestRecoverDeletions:
             assert op["lease_expires_at"] is not None
         finally:
             conn.close()
+
+    def test_asset_apply_rejects_download_status_swap_between_claim_and_apply(self, tmp_path):
+        # T19a / round-13 F3 (asset mirror of T18b). A post_download ASSET is
+        # op-level-authorized by a VERIFIED delivery exactly like a video. The
+        # witness B2 + resolver authorize candidacy/order in an already-closed tx;
+        # the asset claim/apply fence on the asset's OWN lease and historically
+        # read NEITHER op.download_status NOR the video topology. Between asset
+        # claim (tx1) and apply (tx2) a schema-legal UPDATE flips
+        # op.download_status='not_started' (reason stays post_download, no video
+        # so F4/F5 stay clean). Before round-13 the asset was still auto-deleted
+        # on the now-un-verified op. Round-13 makes the asset apply re-verify
+        # op.download_status='verified' (post_download only) against CURRENT state.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "op1", download_status="verified")
+            rid = _add_asset(conn, op_id="op1", role="synthetic_narration_audio",
+                             upload_id="u1", remote_id="a1")
+            conn.commit()
+        finally:
+            conn.close()
+        repo = OperationRepository(td)
+        with repo.begin_immediate() as conn:
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id="u1", lease_owner=OWNER, now_iso=NOW,
+                lease_seconds=LEASE_SECONDS)
+        assert claim.status == "claimed"
+        conn = _fresh_conn(td)
+        try:
+            conn.execute(
+                "UPDATE heygen_operations SET download_status='not_started' "
+                "WHERE operation_id='op1'")
+            conn.commit()
+        finally:
+            conn.close()
+        with repo.begin_immediate() as conn:
+            outcome = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id="u1", resource_id=rid, lease_owner=OWNER,
+                fence=claim.fence, now_iso=NOW, expected_remote_id=claim.remote_id,
+                result=AssetDeleteResult("deleted"))
+        assert outcome.status == "fence_conflict"
+        conn = _fresh_conn(td)
+        try:
+            r = conn.execute(
+                "SELECT deletion_status, deletion_reason FROM heygen_remote_resources "
+                "WHERE resource_id=?", (rid,)).fetchone()
+            assert r["deletion_status"] == "deletion_pending"  # survived
+            assert r["deletion_reason"] == "post_download"
+            u = conn.execute(
+                "SELECT lease_owner FROM heygen_asset_uploads WHERE upload_id='u1'"
+            ).fetchone()
+            assert u["lease_owner"] == OWNER  # asset lease NOT cleared
+        finally:
+            conn.close()
+
+    def test_asset_apply_rejects_double_video_insert_between_claim_and_apply(self, tmp_path):
+        # T19b / round-13 F4. The op starts with ONE deleted video (so F5 stays
+        # clean — no live video — and F4 COUNT==1 passes at claim). Between asset
+        # claim and apply a schema-legal 2nd DELETED video is inserted (COUNT 1->2,
+        # both deleted so F5 still clean). Before round-13 the asset apply never
+        # re-checked COUNT(video), so an asset was auto-deleted on a structurally-
+        # corrupt double-video op (the round-9 invariant the witness B2 enforces).
+        # Round-13 re-verifies COUNT(video)<=1 (NOT ==1, so 0-video ops stay
+        # sweepable) against CURRENT state.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "op1", download_status="verified")
+            _add_resource(conn, op_id="op1", kind="video", remote_id="vseed",
+                          ds="deleted", reason="post_download")
+            rid = _add_asset(conn, op_id="op1", role="synthetic_narration_audio",
+                             upload_id="u1", remote_id="a1")
+            conn.commit()
+        finally:
+            conn.close()
+        repo = OperationRepository(td)
+        with repo.begin_immediate() as conn:
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id="u1", lease_owner=OWNER, now_iso=NOW,
+                lease_seconds=LEASE_SECONDS)
+        assert claim.status == "claimed"
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_resource(conn, op_id="op1", kind="video", remote_id="v2",
+                          ds="deleted", reason="post_download")  # COUNT 1->2
+            conn.commit()
+        finally:
+            conn.close()
+        with repo.begin_immediate() as conn:
+            outcome = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id="u1", resource_id=rid, lease_owner=OWNER,
+                fence=claim.fence, now_iso=NOW, expected_remote_id=claim.remote_id,
+                result=AssetDeleteResult("deleted"))
+        assert outcome.status == "fence_conflict"
+        conn = _fresh_conn(td)
+        try:
+            r = conn.execute(
+                "SELECT deletion_status FROM heygen_remote_resources "
+                "WHERE resource_id=?", (rid,)).fetchone()
+            assert r["deletion_status"] == "deletion_pending"  # survived
+            u = conn.execute(
+                "SELECT lease_owner FROM heygen_asset_uploads WHERE upload_id='u1'"
+            ).fetchone()
+            assert u["lease_owner"] == OWNER  # asset lease NOT cleared
+        finally:
+            conn.close()
+
+    def test_asset_apply_rejects_live_video_appearance_between_claim_and_apply(self, tmp_path):
+        # T19c / round-13 F5. The op starts with ZERO videos (F4 COUNT==0 clean,
+        # F5 clean at claim). Between asset claim and apply a schema-legal LIVE
+        # (not_started) video is inserted (COUNT 0->1 so F4 stays clean, but a
+        # non-deleted video now exists). The resolver releases the asset tail ONLY
+        # when no non-deleted video is present; that decision does not survive its
+        # closed tx. Before round-13 the asset apply never re-checked, so an asset
+        # was auto-deleted while a deliverable video was live (§3.5 order broken).
+        # Round-13 re-verifies "no non-deleted non-reusable video" against CURRENT
+        # state. (Reusable videos are excluded to match the resolver's skip.)
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "op1", download_status="verified")
+            rid = _add_asset(conn, op_id="op1", role="synthetic_narration_audio",
+                             upload_id="u1", remote_id="a1")
+            conn.commit()
+        finally:
+            conn.close()
+        repo = OperationRepository(td)
+        with repo.begin_immediate() as conn:
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id="u1", lease_owner=OWNER, now_iso=NOW,
+                lease_seconds=LEASE_SECONDS)
+        assert claim.status == "claimed"
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_resource(conn, op_id="op1", kind="video", remote_id="vlive",
+                          ds="not_started", reason=None)  # live video appears
+            conn.commit()
+        finally:
+            conn.close()
+        with repo.begin_immediate() as conn:
+            outcome = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id="u1", resource_id=rid, lease_owner=OWNER,
+                fence=claim.fence, now_iso=NOW, expected_remote_id=claim.remote_id,
+                result=AssetDeleteResult("deleted"))
+        assert outcome.status == "fence_conflict"
+        conn = _fresh_conn(td)
+        try:
+            r = conn.execute(
+                "SELECT deletion_status FROM heygen_remote_resources "
+                "WHERE resource_id=?", (rid,)).fetchone()
+            assert r["deletion_status"] == "deletion_pending"  # survived
+            u = conn.execute(
+                "SELECT lease_owner FROM heygen_asset_uploads WHERE upload_id='u1'"
+            ).fetchone()
+            assert u["lease_owner"] == OWNER  # asset lease NOT cleared
+        finally:
+            conn.close()
+
+    def test_asset_op_level_check_exempts_consent_withdrawal(self, tmp_path):
+        # T19-ctrl-consent / round-13: consent_withdrawal cleanup is delivery- AND
+        # structure-independent (a hard constraint since round-4). A consent asset
+        # on an UNVERIFIED op must STILL delete even though F3 (download_status)
+        # would block a post_download asset — the op-level re-check's
+        # `reason == 'post_download'` short-circuit keeps consent exempt. Guards
+        # against the round-13 fix over-blocking consent.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "op1", download_status="not_started")
+            rid = _add_asset(conn, op_id="op1", role="synthetic_narration_audio",
+                             upload_id="u1", remote_id="a1",
+                             ds="deletion_pending", asset_status="cleanup_required")
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_reason='consent_withdrawal' "
+                "WHERE resource_id=?", (rid,))
+            conn.commit()
+        finally:
+            conn.close()
+        repo = OperationRepository(td)
+        with repo.begin_immediate() as conn:
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id="u1", lease_owner=OWNER, now_iso=NOW,
+                lease_seconds=LEASE_SECONDS)
+        assert claim.status == "claimed"  # consent exempt at claim
+        with repo.begin_immediate() as conn:
+            outcome = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id="u1", resource_id=rid, lease_owner=OWNER,
+                fence=claim.fence, now_iso=NOW, expected_remote_id=claim.remote_id,
+                result=AssetDeleteResult("deleted"))
+        assert outcome.status == "deleted"  # consent exempt at apply
+
+    def test_asset_op_level_check_exempts_force_sweep(self, tmp_path):
+        # T19-ctrl-force / round-13: force (§3.5 privacy emergency) is an explicit
+        # operator override of the video-first order AND the delivery gate. An
+        # asset on an UNVERIFIED op with a LIVE video — which F3 and F5 would both
+        # block in normal mode — must STILL claim+delete when force=True is threaded
+        # through the asset lifecycle. Guards against the round-13 fix over-blocking
+        # the force-cleanup path.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "op1", download_status="not_started")
+            _add_resource(conn, op_id="op1", kind="video", remote_id="vlive",
+                          ds="not_started", reason=None)  # live video present
+            rid = _add_asset(conn, op_id="op1", role="synthetic_narration_audio",
+                             upload_id="u1", remote_id="a1")
+            conn.commit()
+        finally:
+            conn.close()
+        repo = OperationRepository(td)
+        with repo.begin_immediate() as conn:
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id="u1", lease_owner=OWNER, now_iso=NOW,
+                lease_seconds=LEASE_SECONDS, force=True)
+        assert claim.status == "claimed"  # force bypasses F3+F5 at claim
+        with repo.begin_immediate() as conn:
+            outcome = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id="u1", resource_id=rid, lease_owner=OWNER,
+                fence=claim.fence, now_iso=NOW, expected_remote_id=claim.remote_id,
+                result=AssetDeleteResult("deleted"), force=True)
+        assert outcome.status == "deleted"  # force bypasses F3+F5 at apply
 
     def test_candidate_tx_closed_before_any_pass_runs(self, tmp_path, monkeypatch):
         # T18 / R5 — the candidate-listing tx is closed before any network

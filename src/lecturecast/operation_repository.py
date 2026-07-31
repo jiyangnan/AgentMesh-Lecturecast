@@ -2001,6 +2001,7 @@ class OperationRepository:
         self, conn: sqlite3.Connection, *, upload_id: str,
         lease_owner: str, now_iso: str, lease_seconds: int,
         max_attempts: int = DELETION_MAX_ATTEMPTS,
+        force: bool = False,
     ) -> AssetDeletionClaim:
         """Claim an asset-deletion lease on the asset's own lease columns.
         Eligibility: asset status ∈ {uploaded, cleanup_required} AND resource
@@ -2014,6 +2015,12 @@ class OperationRepository:
         _require_lease_owner(lease_owner)
         if type(max_attempts) is not int or not (1 <= max_attempts <= 10):
             raise ValueError("max_attempts must be an int in [1, 10]")
+        # force is the §3.5 operator emergency override (bypasses the video-first
+        # order + delivery gate); a truthy non-bool would silently skip the
+        # round-13 op-level re-check, so reject it (never coerce / branch on
+        # truthiness). Threaded from the coordinator's already-guarded force.
+        if type(force) is not bool:
+            raise ValueError("force must be a bool")
         now = _parse_utc(now_iso)
         now_c = _canonical(now)
         _check_lease_seconds(lease_seconds)
@@ -2043,7 +2050,7 @@ class OperationRepository:
         # belongs to this upload's parent, single-referenced, matching
         # kind/credential/retention. A foreign/tampered resource_id is rejected.
         op = conn.execute(
-            "SELECT credential_profile_id FROM heygen_operations "
+            "SELECT credential_profile_id, download_status FROM heygen_operations "
             "WHERE operation_id=?", (row["parent_operation_id"],)).fetchone()
         if op is None:
             raise OperationIntegrityError(
@@ -2117,6 +2124,23 @@ class OperationRepository:
             raise OperationIntegrityError(
                 f"resource {rid} unknown deletion_status {ds!r}")
 
+        # round-13 op-level eligibility (F3/F4/F5). The asset claim is the
+        # eligibility authority for the asset lifecycle; the witness B2 + resolver
+        # authorize candidacy/order in an already-closed tx, so a between-tx
+        # download_status->not_started / double-video insert / live-video appear
+        # must be re-checked HERE (before the adapter is ever called) against
+        # CURRENT state. post_download is determined from ds/reason (a not_started
+        # resource seeds post_download at the UPDATE below; a pending/failed
+        # resource carries it). consent_withdrawal is delivery-/structure-
+        # independent and stays exempt. not_ready mirrors the video claim. force
+        # (§3.5 privacy emergency) is an explicit operator override of the
+        # video-first order AND the delivery gate, so it skips this re-check.
+        if not force and ((ds == "not_started") or (reason == "post_download")) \
+                and not self._asset_post_download_op_level_ok(
+                    conn, row["parent_operation_id"], op["download_status"]):
+            return AssetDeletionClaim(upload_id, rid, "not_ready",
+                                      row["lease_fence"], None)
+
         # Half lease → integrity error (never trust a half-state).
         owner = row["lease_owner"]; exp = row["lease_expires_at"]
         att = row["attempt_started_at"]
@@ -2163,6 +2187,7 @@ class OperationRepository:
         lease_owner: str, fence: int, now_iso: str, result,
         expected_remote_id: str,
         max_attempts: int = DELETION_MAX_ATTEMPTS,
+        force: bool = False,
     ) -> AssetDeletionOutcome:
         """Apply an asset-deletion outcome, fenced on the asset's OWN lease
         (status='cleanup_required' AND lease_owner AND lease_fence AND
@@ -2180,6 +2205,10 @@ class OperationRepository:
         now_c = _canonical(_parse_utc(now_iso))
         if type(max_attempts) is not int or not (1 <= max_attempts <= 10):
             raise ValueError("max_attempts must be an int in [1, 10]")
+        # Mirror the claim's force guard: a truthy non-bool would skip the
+        # round-13 op-level re-check. Threaded from the coordinator's force.
+        if type(force) is not bool:
+            raise ValueError("force must be a bool")
         # 'required' only prevents OMISSION; a caller can still pass None
         # explicitly, and _validate_asset_binding treats None as "skip the
         # remote_id check". Reject at the entry guard so the remote-identity
@@ -2214,7 +2243,7 @@ class OperationRepository:
         # touching resource_id) is rejected here, so the DELETE of the old
         # remote_id is never recorded against the renamed row (round-2 blocker).
         op = conn.execute(
-            "SELECT credential_profile_id FROM heygen_operations "
+            "SELECT credential_profile_id, download_status FROM heygen_operations "
             "WHERE operation_id=?", (row["parent_operation_id"],)).fetchone()
         if op is None:
             raise OperationIntegrityError(
@@ -2248,6 +2277,20 @@ class OperationRepository:
             return AssetDeletionOutcome(upload_id, rid, "fence_conflict",
                                         fence, None, None)
         if res["deletion_status"] != "deletion_pending":
+            return AssetDeletionOutcome(upload_id, rid, "fence_conflict",
+                                        fence, None, None)
+        # round-13 op-level cross-tx re-verify (F3/F4/F5). The claim (tx1) CLOSED
+        # before this apply (tx2) opened; the op-level authorization the witness B2
+        # + resolver seeded is NOT carried across the boundary. A between-tx
+        # download_status->not_started / double-video insert / live-video appear
+        # must fence_conflict HERE (lease preserved, never recorded 'deleted'),
+        # mirroring the VIDEO apply's post_download block (round-12). consent is
+        # exempt (delivery-/structure-independent). force (§3.5 privacy emergency)
+        # is an operator override of the order + delivery gate, so it skips this.
+        # Sits before the outcome branch so it gates success + retryable + exhausted.
+        if not force and res["deletion_reason"] == "post_download" and not \
+                self._asset_post_download_op_level_ok(
+                    conn, row["parent_operation_id"], op["download_status"]):
             return AssetDeletionOutcome(upload_id, rid, "fence_conflict",
                                         fence, None, None)
 
@@ -2417,6 +2460,46 @@ class OperationRepository:
             "WHERE ref.operation_id=? AND r.resource_kind='video'",
             (operation_id,)).fetchone()[0]
         return count == 1
+
+    @staticmethod
+    def _asset_post_download_op_level_ok(conn, operation_id, download_status):
+        """round-13 cross-tx op-level re-verify for a post_download ASSET. The
+        asset lifecycle (claim_asset_deletion_in_tx / apply_asset_deletion_outcome_in_tx)
+        fences on the asset's OWN lease and historically read NEITHER
+        op.download_status NOR the video topology — every op-level invariant lived
+        only in the witness B2 / resolver, which close EARLIEST in the sweep. Between
+        that closed tx and the asset claim/apply, a separate connection can mutate
+        op.download_status -> 'not_started' (F3), insert a 2nd video (F4), or
+        appear/resurrect a non-deleted video (F5). claim and apply must re-verify
+        all three against CURRENT state, exactly as the VIDEO claim/apply do (rounds
+        8/9/12). consent_withdrawal never calls this (delivery-/structure-independent).
+
+        F3: op.download_status='verified' — a post_download asset is explicitly
+            delivery-authorized (c1's "asset processor is delivery-agnostic" layering
+            is NOT a boundary once post_download ties cleanup to a verified delivery).
+        F4: COUNT(video) <= 1 — B2's `1 >= COUNT` mirror, NOT _single_video's `==1`:
+            a legit 0-video op (video row hard-purged post-delivery, or a consent
+            cleanup) must stay sweepable; `==1` would wrongly freeze it (round-9).
+        F5: no non-deleted non-reusable video — the resolver releases the tail only
+            when video_entry is None; a between-tx appearing/resurrected video must
+            re-gate the tail (the resolver's ordering decision does not survive its
+            closed tx). Reusable videos are excluded to match the resolver's skip.
+        Returns True iff all three hold (fail-closed on NULL/missing op state)."""
+        if download_status != "verified":
+            return False
+        row = conn.execute(
+            "SELECT (SELECT COUNT(*) FROM heygen_remote_resources rv"
+            " JOIN heygen_resource_operation_refs refv ON refv.resource_id=rv.resource_id"
+            " WHERE refv.operation_id=? AND rv.resource_kind='video') AS video_count,"
+            " (SELECT 1 FROM heygen_remote_resources rv"
+            " JOIN heygen_resource_operation_refs refv ON refv.resource_id=rv.resource_id"
+            " WHERE refv.operation_id=? AND rv.resource_kind='video'"
+            " AND rv.deletion_status!='deleted'"
+            " AND rv.retention_mode!='reusable_avatar' LIMIT 1) AS live_video",
+            (operation_id, operation_id)).fetchone()
+        if row is None:
+            return False
+        return row["video_count"] <= 1 and row["live_video"] is None
 
     @staticmethod
     def _clear_operation_lease(conn, operation_id, now_c):
@@ -3656,11 +3739,11 @@ class AssetDeletionProcessor:
         self._repository = OperationRepository(self._project_dir)
 
     def delete_once(self, *, upload_id, lease_owner, adapter, now_iso, lease_seconds,
-                    max_attempts=DELETION_MAX_ATTEMPTS):
+                    max_attempts=DELETION_MAX_ATTEMPTS, force: bool = False):
         with self._repository.begin_immediate() as conn:
             claim = self._repository.claim_asset_deletion_in_tx(
                 conn, upload_id=upload_id, lease_owner=lease_owner, now_iso=now_iso,
-                lease_seconds=lease_seconds, max_attempts=max_attempts)
+                lease_seconds=lease_seconds, max_attempts=max_attempts, force=force)
         if claim.status != "claimed":
             return AssetDeletionOnceResult(claim=claim, outcome=None)
         # Adapter call OUTSIDE any tx; an AssetReadError is captured as the
@@ -3676,7 +3759,7 @@ class AssetDeletionProcessor:
                 conn, upload_id=upload_id, resource_id=claim.resource_id,
                 lease_owner=lease_owner, fence=claim.fence, now_iso=now_iso,
                 expected_remote_id=claim.remote_id,
-                result=result, max_attempts=max_attempts)
+                result=result, max_attempts=max_attempts, force=force)
         return AssetDeletionOnceResult(claim=claim, outcome=outcome)
 
 
@@ -3737,7 +3820,7 @@ class DeletionCoordinator:
                 operation_id=plan.operation_id, entry=entry,
                 deleter=deleter, adapter=adapter, lease_owner=lease_owner,
                 now_iso=now_iso, lease_seconds=lease_seconds,
-                max_attempts=max_attempts)
+                max_attempts=max_attempts, force=force)
             for entry in plan.entries)
         return DeletionPassResult(
             operation_id=plan.operation_id, force=plan.force,
@@ -3745,7 +3828,7 @@ class DeletionCoordinator:
 
     def _attempt_entry(self, *, operation_id, entry, deleter, adapter,
                        lease_owner, now_iso, lease_seconds,
-                       max_attempts) -> DeletionEntryAttempt:
+                       max_attempts, force) -> DeletionEntryAttempt:
         """Route one frozen plan entry strictly by resource_kind. The kind
         dispatch is the ONLY routing authority here — never guess a route for
         an unknown kind, and never hand an asset without upload_id to the
@@ -3769,7 +3852,7 @@ class DeletionCoordinator:
             return self._drive_asset(
                 entry=entry, adapter=adapter, lease_owner=lease_owner,
                 now_iso=now_iso, lease_seconds=lease_seconds,
-                max_attempts=max_attempts)
+                max_attempts=max_attempts, force=force)
         # Unexpected ephemeral kind (order_key 9) — surfaced, not dropped.
         return DeletionEntryAttempt(
             entry=entry, routed="skipped_unknown_kind",
@@ -3815,12 +3898,12 @@ class DeletionCoordinator:
         return self._attempt_from_video(entry, res)
 
     def _drive_asset(self, *, entry, adapter, lease_owner, now_iso, lease_seconds,
-                     max_attempts) -> DeletionEntryAttempt:
+                     max_attempts, force) -> DeletionEntryAttempt:
         try:
             res = self._asset_processor.delete_once(
                 upload_id=entry.upload_id, lease_owner=lease_owner,
                 adapter=adapter, now_iso=now_iso, lease_seconds=lease_seconds,
-                max_attempts=max_attempts)
+                max_attempts=max_attempts, force=force)
         except Exception:
             # Same certainty-unknowable contract as the asset processor: a
             # non-AssetReadError raise leaves the result unknowable. The

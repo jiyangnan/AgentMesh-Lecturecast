@@ -1524,6 +1524,14 @@ def _setup_uploaded_for_delete():
     with an open BEGIN tx."""
     conn, td = _db()
     conn.execute("BEGIN"); _add_parent_op(conn)
+    # round-13: the asset claim/apply now re-verifies op.download_status='verified'
+    # for post_download (F3). These are POST-DELIVERY deletion tests, so stamp the
+    # op verified — the real coordinator only ever drives the asset lifecycle after
+    # the resolver confirms a verified, video-clean op (and these fixtures carry no
+    # video, so F4 COUNT<=1 and F5 no-live-video hold). Tests needing a different
+    # download_status (e.g. the resolver-advisory tests) UPDATE it after this helper.
+    conn.execute(
+        "UPDATE heygen_operations SET download_status='verified' WHERE operation_id='op1'")
     repo = OperationRepository(Path(td))
     c = _do_claim(repo, conn)
     repo.apply_asset_outcome_in_tx(
