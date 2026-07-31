@@ -193,6 +193,64 @@ class TestAssetConsentGuard:
             conn.close()
 
 
+    def test_recover_picks_up_crashed_enqueue(self):
+        # Simulate: receipt flipped to withdrawn but the enqueue did NOT run
+        # (withdraw crashed between commit and enqueue). recover must still
+        # enqueue the uploaded asset → cleanup_required.
+        td = tempfile.mkdtemp()
+        conn = init_database(Path(td))
+        conn.row_factory = sqlite3.Row
+        try:
+            op_id = _grant_parent(td, assets=[("portrait_photo", D_PORT)])
+            repo = OperationRepository(Path(td))
+            conn.execute("BEGIN")
+            c = _do_claim(repo, conn, parent=op_id, digest=D_PORT)
+            repo.apply_asset_outcome_in_tx(
+                conn, upload_id=c.upload_id, asset_id="ax",
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
+            conn.execute("COMMIT")
+            # crash window: flip the receipt withdrawn WITHOUT enqueue
+            conn.execute(
+                "UPDATE heygen_consent_receipts SET status='withdrawn' "
+                "WHERE operation_id=?", (op_id,))
+            conn.commit()
+            assert conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id=?",
+                (c.upload_id,)).fetchone()[0] == "uploaded"  # not yet enqueued
+            tally = repo.recover_withdrawn_asset_cleanups(now_iso="2026-07-30T00:05:00Z")
+            assert tally["cleanup_required"] == 1
+            assert conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id=?",
+                (c.upload_id,)).fetchone()[0] == "cleanup_required"
+        finally:
+            conn.close()
+
+    def test_recover_is_idempotent_across_runs(self):
+        td = tempfile.mkdtemp()
+        conn = init_database(Path(td))
+        conn.row_factory = sqlite3.Row
+        try:
+            op_id = _grant_parent(td, assets=[("portrait_photo", D_PORT)])
+            repo = OperationRepository(Path(td))
+            conn.execute("BEGIN")
+            c = _do_claim(repo, conn, parent=op_id, digest=D_PORT)
+            repo.apply_asset_outcome_in_tx(
+                conn, upload_id=c.upload_id, asset_id="ax",
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
+            conn.execute("COMMIT")
+            ConsentService(Path(td)).withdraw(operation_id=op_id)
+            first = repo.recover_withdrawn_asset_cleanups(now_iso="2026-07-30T00:05:00Z")
+            second = repo.recover_withdrawn_asset_cleanups(now_iso="2026-07-30T00:06:00Z")
+            # withdraw already enqueued; both recover runs see it kept (idempotent)
+            assert first["cleanup_required"] == 0
+            assert second["cleanup_required"] == 0
+            assert first["kept"] >= 1 and second["kept"] >= 1
+        finally:
+            conn.close()
+
+
 class TestConsentWithdrawalCleanup:
     """enqueue_consent_withdrawal_cleanup state machine + withdraw wiring."""
 
