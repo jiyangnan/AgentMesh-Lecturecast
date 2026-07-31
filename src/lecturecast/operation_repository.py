@@ -3822,17 +3822,24 @@ class DeletionCoordinator:
         consent_withdrawal do (the two reasons a pending/failed resource is
         claim-eligible).
 
-        Finally, manual_force is excluded from the witness in EVERY branch via
-        a COMMON reason gate (Codex round-4 blocker): ``(deletion_reason IS NULL
-        OR deletion_reason IN ('post_download','consent_withdrawal'))``. This
-        closes the video branch, which otherwise carried no reason restriction.
-        The subsystem fails closed against schema-legal anomalous states
-        (topology/matrix/retention all do); a deleted/manual_force video is
-        schema-legal even though the current producer never makes one, and as a
-        witness it would release the tail (resolver skips a deleted video). A
-        not_started video (NULL reason) remains a legit witness — the resolver
-        gates the tail behind a non-deleted video and the video claim gates on
-        download_status."""
+        Finally, the witness is gated on the full (status, reason) STATE MATRIX
+        (Codex round-4 + round-5 blockers), not on reason alone. manual_force is
+        excluded from EVERY branch (round-4): the subsystem fails closed against
+        schema-legal anomalous states (topology/matrix/retention all do); a
+        deleted/manual_force video is schema-legal even though the current
+        producer never makes one, and as a witness it would release the tail
+        (resolver skips a deleted video). And the NULL-reason branch is
+        restricted to not_started (round-5, Option B): a deleted/NULL-reason
+        video is the same schema-legal anomalous state (corrupt/直插 — the legit
+        flow never produces one: video apply inherits the claim's non-NULL
+        reason), and as a witness it would release the tail just like a
+        deleted/manual_force video. The admitted witness states are exactly:
+        ``not_started+NULL`` (in-flight, never claimed → no reason) OR
+        ``(pending/failed/deleted) + (post_download/consent_withdrawal)``. This
+        also fail-closes pending/failed+NULL and not_started+reason (both
+        anomalous). A not_started video (NULL reason) remains a legit witness —
+        the resolver gates the tail behind a non-deleted video and the video
+        claim gates on download_status."""
         if type(force) is not bool:
             raise ValueError("force must be a bool")
         _require_lease_owner(lease_owner)
@@ -3874,10 +3881,22 @@ class DeletionCoordinator:
                 # deleted/manual_force video is schema-legal even though the
                 # current producer never makes one, and as a witness it would
                 # release the tail (resolver skips a deleted video) → sibling
-                # deleted. (reason IS NULL OR reason IN auto-recoverable) is the
-                # fail-closed boundary; not_started (NULL reason) is still a
-                # legit video witness — the resolver gates the tail behind a
-                # non-deleted video and the video claim gates on download_status.
+                # deleted.
+                # STATE-MATRIX gate (Codex round-5 P1, Option B): the round-4
+                # reason-only gate (reason IS NULL OR reason IN auto-recoverable)
+                # was still too permissive — it admitted a deleted/NULL-reason
+                # video as a witness (NULL branch), which the resolver skips just
+                # like a deleted/manual_force video → same tail release. The only
+                # legit NULL-reason witness is a not_started video (in-flight,
+                # never claimed → no reason); a deleted video must carry a non-
+                # NULL auto-recoverable reason (video apply inherits the claim's
+                # reason; claim from not_started always sets post_download). So
+                # the witness is gated on the full (status, reason) STATE MATRIX,
+                # not on reason alone: not_started+NULL OR (pending/failed/deleted
+                # + auto-recoverable reason). This also fail-closes pending/failed
+                # +NULL and not_started+reason (both anomalous). Same threat model
+                # as round-4: schema-legal corrupt/直插 states, not just
+                # producer-reachable ones.
                 rows = conn.execute(
                     "SELECT DISTINCT r.created_by_operation_id AS op_id "
                     "FROM heygen_remote_resources r "
@@ -3888,9 +3907,14 @@ class DeletionCoordinator:
                     " SELECT 1 FROM heygen_remote_resources r2 "
                     " WHERE r2.created_by_operation_id = r.created_by_operation_id "
                     " AND r2.retention_mode != 'reusable_avatar' "
-                    " AND (r2.deletion_reason IS NULL"
-                    "      OR r2.deletion_reason IN ('post_download',"
-                    "                               'consent_withdrawal'))"
+                    " AND ("
+                    "  (r2.deletion_status = 'not_started'"
+                    "   AND r2.deletion_reason IS NULL)"
+                    "  OR (r2.deletion_status IN ('deletion_pending',"
+                    "                            'deletion_failed',"
+                    "                            'deleted')"
+                    "      AND r2.deletion_reason IN ('post_download',"
+                    "                                'consent_withdrawal')))"
                     " AND (r2.resource_kind = 'video'"
                     "      OR (r2.deletion_status IN ('deletion_pending',"
                     "                               'deletion_failed')"
