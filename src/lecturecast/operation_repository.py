@@ -3813,7 +3813,14 @@ class DeletionCoordinator:
         reusable video is skipped, leaving the tail ungated) nor as a
         "deletion pipeline" witness. Only a NON-reusable video (any status — a
         deleted ephemeral video still legitimates tail cleanup) or a
-        NON-reusable pending/failed resource counts as authorization."""
+        NON-reusable pending/failed resource counts as authorization.
+
+        The "deletion pipeline" witness is further restricted to AUTO-RECOVERABLE
+        reasons (Codex round-3 blocker): manual_force is the operator-only
+        integrity path (c1 claims it not_ready, never auto-deleted), so it must
+        not authorize sweeping a sibling either — only post_download /
+        consent_withdrawal do (the two reasons a pending/failed resource is
+        claim-eligible)."""
         if type(force) is not bool:
             raise ValueError("force must be a bool")
         _require_lease_owner(lease_owner)
@@ -3839,6 +3846,15 @@ class DeletionCoordinator:
                 # "video present" witness (a reusable video is skipped, leaving
                 # the tail ungated) nor as a "deletion pipeline" witness (a
                 # reusable pending/failed resource says nothing about siblings).
+                # The "deletion pipeline" witness is further restricted to
+                # AUTO-RECOVERABLE reasons (Codex round-3 P1): manual_force is
+                # the operator-only integrity path — c1 claims it not_ready and
+                # it must NEVER be auto-deleted, so it cannot authorize sweep-
+                # ing a sibling either (else the manual_force asset wedges the
+                # op into the candidate set and the resolver-released tail gets
+                # deleted by the asset claim, which does not re-gate on
+                # download_status). post_download / consent_withdrawal are the
+                # only reasons a pending/failed resource is claim-eligible.
                 rows = conn.execute(
                     "SELECT DISTINCT r.created_by_operation_id AS op_id "
                     "FROM heygen_remote_resources r "
@@ -3850,8 +3866,10 @@ class DeletionCoordinator:
                     " WHERE r2.created_by_operation_id = r.created_by_operation_id "
                     " AND r2.retention_mode != 'reusable_avatar' "
                     " AND (r2.resource_kind = 'video'"
-                    "      OR r2.deletion_status IN ('deletion_pending',"
-                    "                               'deletion_failed'))"
+                    "      OR (r2.deletion_status IN ('deletion_pending',"
+                    "                               'deletion_failed')"
+                    "          AND r2.deletion_reason IN ('post_download',"
+                    "                                    'consent_withdrawal')))"
                     ") ORDER BY r.created_by_operation_id").fetchall()
         op_ids = [r["op_id"] for r in rows]
 
