@@ -156,6 +156,63 @@ def test_populated_v5_upgrades_to_v6_data_preserved():
         conn.close()
 
 
+def test_v6_rebuild_preserves_fk_unique_index():
+    # The rebuild must retain FK, UNIQUE, and indexes — verify via pragmas +
+    # actual constraint violations after a populated v5→v6 upgrade.
+    conn, _ = _fresh()
+    try:
+        conn.execute("DROP TABLE heygen_asset_uploads")
+        conn.execute(_V5_ASSET_DDL)
+        conn.commit()
+        conn.execute("PRAGMA user_version = 5")
+        _migrate(conn, 5)
+
+        # FK retained + enforced: a bogus parent_operation_id is rejected.
+        conn.execute(
+            "INSERT INTO heygen_operations (operation_id, kind, endpoint, "
+            "generation_id, manifest_digest, request_digest, idempotency_key, "
+            "heygen_title, credential_profile_id, created_at, updated_at) "
+            "VALUES ('op_f','video','/v3/videos','g','sha256:m','sha256:r',"
+            "'i_f','lc:op_f','heygen_env_default','t','t')")
+        conn.execute("PRAGMA foreign_keys=ON")
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO heygen_asset_uploads (upload_id, parent_operation_id, "
+                "asset_role, content_digest, local_ref, content_type, size_bytes, "
+                "provider_filename, idempotency_key, status, created_at, updated_at) "
+                "VALUES ('u_fk','NONEXISTENT','portrait_photo','d','r','c',1,'f',"
+                "'kfk','upload_pending','t','t')")
+        # indexes recreated
+        idx_names = {i[1] for i in conn.execute(
+            "PRAGMA index_list(heygen_asset_uploads)").fetchall()}
+        assert "idx_asset_uploads_parent" in idx_names
+        assert "idx_asset_uploads_status" in idx_names
+
+        # functional UNIQUE: op_f already inserted above; violate UNIQUE(parent, role).
+        conn.execute(
+            "INSERT INTO heygen_asset_uploads (upload_id, parent_operation_id, "
+            "asset_role, content_digest, local_ref, content_type, size_bytes, "
+            "provider_filename, idempotency_key, status, created_at, updated_at) "
+            "VALUES ('u1','op_f','portrait_photo','d','r','c',1,'f','k1',"
+            "'upload_pending','t','t')")
+        with pytest.raises(sqlite3.IntegrityError):   # same (parent, role)
+            conn.execute(
+                "INSERT INTO heygen_asset_uploads (upload_id, parent_operation_id, "
+                "asset_role, content_digest, local_ref, content_type, size_bytes, "
+                "provider_filename, idempotency_key, status, created_at, updated_at) "
+                "VALUES ('u2','op_f','portrait_photo','d2','r','c',1,'f','k2',"
+                "'upload_pending','t','t')")
+        with pytest.raises(sqlite3.IntegrityError):   # duplicate idempotency_key
+            conn.execute(
+                "INSERT INTO heygen_asset_uploads (upload_id, parent_operation_id, "
+                "asset_role, content_digest, local_ref, content_type, size_bytes, "
+                "provider_filename, idempotency_key, status, created_at, updated_at) "
+                "VALUES ('u3','op_f2','portrait_photo','d3','r','c',1,'f','k1',"
+                "'upload_pending','t','t')")
+    finally:
+        conn.close()
+
+
 def test_rebuild_failure_rolls_back_to_v5():
     import lecturecast.heygen_journal as journal
     calls = {"n": 0}
