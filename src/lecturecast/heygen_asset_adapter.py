@@ -159,6 +159,22 @@ class AssetProbeResult:
     asset_id: str = ""
     asset_type: str = ""
 
+    def __post_init__(self) -> None:
+        if type(self.exists) is not bool:
+            raise TypeError("exists must be a bool")
+        if self.exists:
+            # Must carry a valid id + a non-empty, whitespace-free type.
+            if not _ASSET_ID_RE.fullmatch(self.asset_id or ""):
+                raise ValueError("exists=True requires a valid asset_id")
+            if not self.asset_type or self.asset_type != self.asset_type.strip():
+                raise ValueError(
+                    "exists=True requires a non-empty asset_type with no "
+                    "leading/trailing whitespace")
+        else:
+            # Absent probes carry no resource info.
+            if self.asset_id or self.asset_type:
+                raise ValueError("exists=False must carry no asset info")
+
 
 @dataclass(frozen=True)
 class AssetDeleteResult:
@@ -444,10 +460,10 @@ class HeyGenAssetAdapter:
             raise AssetReadError(code="malformed_response", retryable=False,
                                  message="get-asset response id does not match")
         atype = data.get("type")
-        if not isinstance(atype, str) or not atype.strip():
+        if not isinstance(atype, str) or not atype or atype != atype.strip():
             raise AssetReadError(code="malformed_response", retryable=False,
-                                 message="get-asset response missing type")
-        return AssetProbeResult(exists=True, asset_id=rid, asset_type=atype.strip())
+                                 message="get-asset response missing or padded type")
+        return AssetProbeResult(exists=True, asset_id=rid, asset_type=atype)
 
     def delete_asset(self, asset_id: str) -> AssetDeleteResult:
         """DELETE /v3/assets/{id}. 404 → already_absent (idempotent). A 200 must

@@ -56,6 +56,37 @@ def _single(body=None, status=200):
     return lambda: (status, raw)
 
 
+# === AssetProbeResult invariants (blocker: dataclass is public, must be closed)
+
+def test_probe_result_rejects_non_bool_exists():
+    with pytest.raises(TypeError):
+        AssetProbeResult(exists="false")  # type: ignore[arg-type]
+
+
+def test_probe_result_rejects_exists_true_with_empty_fields():
+    with pytest.raises(ValueError):
+        AssetProbeResult(exists=True, asset_id="", asset_type="image")
+    with pytest.raises(ValueError):
+        AssetProbeResult(exists=True, asset_id="bad id", asset_type="image")
+    with pytest.raises(ValueError):
+        AssetProbeResult(exists=True, asset_id="asset_1", asset_type="")
+    with pytest.raises(ValueError):
+        AssetProbeResult(exists=True, asset_id="asset_1", asset_type=" image ")  # padded
+
+
+def test_probe_result_rejects_exists_false_with_resource_info():
+    with pytest.raises(ValueError):
+        AssetProbeResult(exists=False, asset_id="asset_1")
+    with pytest.raises(ValueError):
+        AssetProbeResult(exists=False, asset_type="image")
+
+
+def test_get_asset_rejects_padded_type_not_silent_strip():
+    t, _ = _transport(_single({"data": {"id": "asset_1", "type": " image "}}))
+    with pytest.raises(AssetReadError, match="padded"):
+        HeyGenAssetAdapter(t).get_asset("asset_1")
+
+
 # === get_asset =============================================================
 
 def test_get_asset_exists():
@@ -81,7 +112,7 @@ def test_get_asset_id_mismatch_malformed():
 
 def test_get_asset_missing_type_malformed():
     t, _ = _transport(_single({"data": {"id": "asset_1"}}))
-    with pytest.raises(AssetReadError, match="missing type"):
+    with pytest.raises(AssetReadError, match="padded"):
         HeyGenAssetAdapter(t).get_asset("asset_1")
 
 
