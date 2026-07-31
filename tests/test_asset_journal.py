@@ -24,9 +24,12 @@ from lecturecast.consent import (
 from lecturecast.operation_repository import (
     OperationRepository,
     OperationIntegrityError,
+    OperationStateError,
     _check_asset_resource_consistency,
     _CONSENT_INTEGRITY_ERROR_CODE,
     AssetDeletionProcessor,
+    DeletionPlan,
+    DeletionPlanEntry,
 )
 from lecturecast.heygen_asset_adapter import AssetDeleteResult, AssetReadError
 
@@ -2288,3 +2291,314 @@ class TestAssetDeletionProcessor:
         assert a["status"] == "cleanup_required"
         assert a["lease_owner"] == LEASE
         conn2.close()
+
+
+# === §5.5e5b0c3c-c2: resolve_deletion_plan_in_tx =========================
+# Pure read-only §3.5 planner. Owns cross-resource ORDER + structural scope +
+# the video→audio→portrait sequencing gate; eligibility (verified /
+# manual_force / retry / matrix / topology) stays in the claim, NOT here.
+
+def _insert_resource(conn, *, op_id, kind, remote_id, retention="ephemeral",
+                     ds="not_started", reason=None,
+                     upload_id=None, asset_role=None,
+                     credential="heygen_env_default"):
+    """Insert a remote resource row (and optionally a linked asset upload row)
+    for resolver tests. Returns the integer resource_id. Bypasses the full
+    claim/apply pipeline because the resolver is read-only and indifferent to
+    lease state."""
+    cur = conn.execute(
+        "INSERT INTO heygen_remote_resources "
+        "(credential_profile_id, resource_kind, remote_id, retention_mode, "
+        "created_by_operation_id, deletion_status, deletion_reason, "
+        "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (credential, kind, remote_id, retention, op_id, ds, reason, "t", "t"))
+    rid = cur.lastrowid
+    if upload_id is not None:
+        assert asset_role is not None, "asset_role required when upload_id given"
+        conn.execute(
+            "INSERT INTO heygen_asset_uploads "
+            "(upload_id, parent_operation_id, asset_role, content_digest, "
+            "local_ref, content_type, size_bytes, provider_filename, "
+            "idempotency_key, remote_resource_id, status, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (upload_id, op_id, asset_role, "sha256:" + remote_id, "loc",
+             "application/octet-stream", 1, remote_id + ".bin",
+             "idem-" + upload_id, rid, "uploaded", "t", "t"))
+    return rid
+
+
+class TestResolveDeletionPlan:
+    def _plan(self, conn, td, op_id="op1", force=False):
+        repo = OperationRepository(Path(td))
+        return repo.resolve_deletion_plan_in_tx(
+            conn, operation_id=op_id, force=force)
+
+    # --- normal mode: a non-deleted video gates audio/portrait (§3.5) ---
+
+    def test_normal_returns_only_video_when_present(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            _insert_resource(conn, op_id="op1", kind="video", remote_id="v1")
+            _insert_resource(conn, op_id="op1", kind="audio_asset", remote_id="a1",
+                             upload_id="u_a", asset_role="synthetic_narration_audio")
+            _insert_resource(conn, op_id="op1", kind="portrait_asset", remote_id="p1",
+                             upload_id="u_p", asset_role="portrait_photo")
+            plan = self._plan(conn, td)
+            assert plan.force is False
+            assert plan.video_download_status == "not_started"
+            assert [e.resource_kind for e in plan.entries] == ["video"]
+            assert plan.entries[0].upload_id is None      # video has no asset upload
+            assert plan.entries[0].order_key == 0
+            assert plan.entries[0].retention_mode == "ephemeral"
+        finally:
+            conn.close()
+
+    def test_normal_returns_audio_portrait_when_video_deleted(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            _insert_resource(conn, op_id="op1", kind="video", remote_id="v1", ds="deleted")
+            _insert_resource(conn, op_id="op1", kind="audio_asset", remote_id="a1",
+                             upload_id="u_a", asset_role="synthetic_narration_audio")
+            _insert_resource(conn, op_id="op1", kind="portrait_asset", remote_id="p1",
+                             upload_id="u_p", asset_role="portrait_photo")
+            plan = self._plan(conn, td)
+            assert [e.resource_kind for e in plan.entries] == ["audio_asset", "portrait_asset"]
+            assert [e.order_key for e in plan.entries] == [1, 2]
+            assert [e.upload_id for e in plan.entries] == ["u_a", "u_p"]
+        finally:
+            conn.close()
+
+    def test_normal_returns_audio_portrait_when_no_video(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            _insert_resource(conn, op_id="op1", kind="audio_asset", remote_id="a1",
+                             upload_id="u_a", asset_role="synthetic_narration_audio")
+            _insert_resource(conn, op_id="op1", kind="portrait_asset", remote_id="p1",
+                             upload_id="u_p", asset_role="portrait_photo")
+            plan = self._plan(conn, td)
+            assert [e.resource_kind for e in plan.entries] == ["audio_asset", "portrait_asset"]
+        finally:
+            conn.close()
+
+    # --- force mode: video excluded entirely (§3.5 force-cleanup) ---
+
+    def test_force_excludes_video(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            _insert_resource(conn, op_id="op1", kind="video", remote_id="v1")
+            _insert_resource(conn, op_id="op1", kind="audio_asset", remote_id="a1",
+                             upload_id="u_a", asset_role="synthetic_narration_audio")
+            _insert_resource(conn, op_id="op1", kind="portrait_asset", remote_id="p1",
+                             upload_id="u_p", asset_role="portrait_photo")
+            plan = self._plan(conn, td, force=True)
+            assert plan.force is True
+            assert [e.resource_kind for e in plan.entries] == ["audio_asset", "portrait_asset"]
+        finally:
+            conn.close()
+
+    def test_force_empty_when_only_video(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            _insert_resource(conn, op_id="op1", kind="video", remote_id="v1")
+            plan = self._plan(conn, td, force=True)
+            assert plan.entries == ()
+        finally:
+            conn.close()
+
+    # --- structural scope filters ---
+
+    def test_reusable_avatar_skipped(self):
+        # retention_mode='reusable_avatar' is skipped in BOTH modes (retention:
+        # revocation is via the HeyGen dashboard, never auto-deleted).
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            _insert_resource(conn, op_id="op1", kind="video", remote_id="v1")
+            _insert_resource(conn, op_id="op1", kind="portrait_asset", remote_id="p1",
+                             retention="reusable_avatar",
+                             upload_id="u_p", asset_role="portrait_photo")
+            _insert_resource(conn, op_id="op1", kind="audio_asset", remote_id="a1",
+                             upload_id="u_a", asset_role="synthetic_narration_audio")
+            plan = self._plan(conn, td)
+            # normal: only video (reusable portrait NOT in plan, audio gated)
+            assert [e.resource_kind for e in plan.entries] == ["video"]
+            plan_f = self._plan(conn, td, force=True)
+            # force: video excluded + reusable portrait excluded → only audio
+            assert [e.resource_kind for e in plan_f.entries] == ["audio_asset"]
+        finally:
+            conn.close()
+
+    def test_reusable_video_also_skipped(self):
+        # The retention filter is authoritative for ALL kinds, including video
+        # (blind forecast #7: a reusable-tagged video is skipped, unified rule).
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            _insert_resource(conn, op_id="op1", kind="video", remote_id="v1",
+                             retention="reusable_avatar")
+            _insert_resource(conn, op_id="op1", kind="audio_asset", remote_id="a1",
+                             upload_id="u_a", asset_role="synthetic_narration_audio")
+            plan = self._plan(conn, td)
+            # reusable video skipped → no video gate → audio available now
+            assert [e.resource_kind for e in plan.entries] == ["audio_asset"]
+        finally:
+            conn.close()
+
+    def test_already_deleted_skipped(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            _insert_resource(conn, op_id="op1", kind="video", remote_id="v1", ds="deleted")
+            _insert_resource(conn, op_id="op1", kind="audio_asset", remote_id="a1", ds="deleted",
+                             upload_id="u_a", asset_role="synthetic_narration_audio")
+            _insert_resource(conn, op_id="op1", kind="portrait_asset", remote_id="p1",
+                             upload_id="u_p", asset_role="portrait_photo")
+            plan = self._plan(conn, td)
+            # video deleted (gate open) + audio deleted (skipped) → only portrait
+            assert [e.resource_kind for e in plan.entries] == ["portrait_asset"]
+        finally:
+            conn.close()
+
+    def test_only_reusable_resources_yields_empty(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            _insert_resource(conn, op_id="op1", kind="portrait_asset", remote_id="p1",
+                             retention="reusable_avatar",
+                             upload_id="u_p", asset_role="portrait_photo")
+            _insert_resource(conn, op_id="op1", kind="avatar_look", remote_id="av1",
+                             retention="reusable_avatar")
+            plan = self._plan(conn, td, force=True)
+            assert plan.entries == ()
+        finally:
+            conn.close()
+
+    # --- empty / error paths ---
+
+    def test_unknown_op_returns_empty_plan(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            plan = self._plan(conn, td, op_id="no-such-op")
+            assert plan.entries == ()
+            assert plan.video_download_status is None
+            assert plan.force is False
+        finally:
+            conn.close()
+
+    def test_op_with_no_resources_returns_empty(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            plan = self._plan(conn, td)
+            assert plan.entries == ()
+            # op exists → download_status surfaced (advisory), not None
+            assert plan.video_download_status == "not_started"
+        finally:
+            conn.close()
+
+    def test_invalid_operation_id_raises(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            with pytest.raises(ValueError):
+                repo.resolve_deletion_plan_in_tx(conn, operation_id="", force=False)
+            with pytest.raises(ValueError):
+                repo.resolve_deletion_plan_in_tx(conn, operation_id=None, force=False)  # type: ignore[arg-type]
+        finally:
+            conn.close()
+
+    def test_requires_active_transaction(self):
+        conn, td = _db()
+        try:
+            _add_parent_op(conn)   # autocommit; no active tx
+            repo = OperationRepository(Path(td))
+            with pytest.raises(OperationStateError):
+                repo.resolve_deletion_plan_in_tx(conn, operation_id="op1")
+        finally:
+            conn.close()
+
+    # --- determinism + advisory context ---
+
+    def test_deterministic_order_multiple_audio_portrait(self):
+        # Two audio resources (only one carries an upload row; the other is a
+        # bare resource) + two portrait resources. Order must be deterministic:
+        # audio bucket before portrait, intra-bucket by (upload_id, resource_id).
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            _insert_resource(conn, op_id="op1", kind="video", remote_id="v1", ds="deleted")
+            ra_bare = _insert_resource(conn, op_id="op1", kind="audio_asset", remote_id="a_bare")
+            ra_up = _insert_resource(conn, op_id="op1", kind="audio_asset", remote_id="a_up",
+                                     upload_id="u_aa", asset_role="synthetic_narration_audio")
+            rp_bare = _insert_resource(conn, op_id="op1", kind="portrait_asset", remote_id="p_bare")
+            rp_up = _insert_resource(conn, op_id="op1", kind="portrait_asset", remote_id="p_up",
+                                     upload_id="u_pp", asset_role="portrait_photo")
+            plan = self._plan(conn, td)
+            assert [e.resource_kind for e in plan.entries] == [
+                "audio_asset", "audio_asset", "portrait_asset", "portrait_asset"]
+            # bare (upload_id None → "") sorts before the uploaded one in each bucket
+            audio = [e for e in plan.entries if e.resource_kind == "audio_asset"]
+            assert [e.resource_id for e in audio] == [ra_bare, ra_up]
+            assert [e.upload_id for e in audio] == [None, "u_aa"]
+            portrait = [e for e in plan.entries if e.resource_kind == "portrait_asset"]
+            assert [e.resource_id for e in portrait] == [rp_bare, rp_up]
+        finally:
+            conn.close()
+
+    def test_video_download_status_surfaced_not_gating(self):
+        # An unverified video (download_status='downloading') STILL appears in
+        # the normal plan — the verified gate is the video claim's job, not the
+        # resolver's. The resolver only surfaces download_status as advisory.
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            conn.execute(
+                "UPDATE heygen_operations SET download_status='downloading' "
+                "WHERE operation_id='op1'")
+            _insert_resource(conn, op_id="op1", kind="video", remote_id="v1")
+            plan = self._plan(conn, td)
+            assert plan.video_download_status == "downloading"
+            assert [e.resource_kind for e in plan.entries] == ["video"]
+        finally:
+            conn.close()
+
+    def test_foreign_op_resources_excluded(self):
+        # Resources created by a different op must not leak into this op's plan.
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn, "op1"); _add_parent_op(conn, "op2")
+            _insert_resource(conn, op_id="op1", kind="video", remote_id="v1", ds="deleted")
+            _insert_resource(conn, op_id="op1", kind="audio_asset", remote_id="a1",
+                             upload_id="u_a1", asset_role="synthetic_narration_audio")
+            _insert_resource(conn, op_id="op2", kind="audio_asset", remote_id="a2",
+                             upload_id="u_a2", asset_role="synthetic_narration_audio")
+            _insert_resource(conn, op_id="op2", kind="portrait_asset", remote_id="p2",
+                             upload_id="u_p2", asset_role="portrait_photo")
+            plan = self._plan(conn, td, op_id="op1")
+            assert [e.resource_kind for e in plan.entries] == ["audio_asset"]
+            assert plan.entries[0].upload_id == "u_a1"
+        finally:
+            conn.close()
+
+    def test_plan_and_entries_are_frozen(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            _insert_resource(conn, op_id="op1", kind="video", remote_id="v1")
+            plan = self._plan(conn, td)
+            assert isinstance(plan, DeletionPlan)
+            assert isinstance(plan.entries, tuple)
+            assert isinstance(plan.entries[0], DeletionPlanEntry)
+            with pytest.raises(Exception):
+                plan.entries = ()                              # type: ignore[misc]
+            with pytest.raises(Exception):
+                plan.entries[0].resource_kind = "audio_asset"  # type: ignore[misc]
+        finally:
+            conn.close()
