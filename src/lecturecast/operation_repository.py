@@ -3906,20 +3906,29 @@ class DeletionCoordinator:
                 # An empirical + workflow enumeration found SIX bypass classes, one
                 # per un-mirrored claim invariant: (a) topology (missing/foreign
                 # ref, credential mismatch), (b) asset upload-binding (a bare 直插
-                # resource with no heygen_asset_uploads row), (c) download_status
+                #  resource with no heygen_asset_uploads row), (c) download_status
                 # (deleted/post_download video on an unverified op), (d) op-lease
                 # (active/half op lease — the video claim's mutual-exclusion gate),
                 # (e) resource_kind (avatar_look/avatar_group have no processor, so
                 # a corrupt row is never re-verified), (f) single-video count
                 # (COUNT(video)==1 — the claim/apply gate a double-video op refuses).
-                # The witness is split into two branches: (A) a NON-DELETED video
-                # is a SAFE witness (the resolver gates the tail behind it and the
-                # video claim re-checks everything); (B) a DELETED video or a NON-
-                # VIDEO asset is a TAIL-RELEASING witness and must mirror the FULL
-                # claim topology — op clean-idle, credential match, exactly-one own
-                # ref, and (B1) for a deleted video count==1+verified (post_download
-                # only; consent cleanup is delivery-independent) or (B2) for a non-
-                # video asset a real upload binding on an audio/portrait kind.
+                # Round-7 P1 closed the LAST two un-mirrored invariants the same
+                # way: (g) the apply TERMINAL PROOF for a deleted video (deleted_at
+                # NOT NULL + deletion_attempts>=1 + next_retry/error NULL — a state
+                # only apply_deletion_outcome_in_tx can produce), and (h) the FULL
+                # asset binding for a non-video witness (the asset↔resource matrix
+                # deletion_pending<->cleanup_required AND the asset_role↔kind pair
+                # the claim's _validate_asset_binding checks — a bare "upload
+                # exists" still witnessed an inconsistent/mismatched pair whose own
+                # claim would raise). The witness is split into two branches: (A) a
+                # NON-DELETED video is a SAFE witness (the resolver gates the tail
+                # behind it and the video claim re-checks everything); (B) a DELETED
+                # video or a NON-VIDEO asset is a TAIL-RELEASING witness and must
+                # mirror the FULL claim topology — op clean-idle, credential match,
+                # exactly-one own ref, and (B1) for a deleted video terminal-proof +
+                # count==1+verified (post_download only; consent cleanup is delivery-
+                # independent) or (B2) for a non-video asset a real, matrix-
+                # consistent, role-kind-paired upload binding on an audio/portrait.
                 rows = conn.execute(
                     "SELECT DISTINCT r.created_by_operation_id AS op_id "
                     "FROM heygen_remote_resources r "
@@ -3968,10 +3977,22 @@ class DeletionCoordinator:
                     #  (B1) deleted video: count(video)==1 + op.download_status
                     #  verified — but ONLY for post_download (consent_withdrawal
                     #  cleanup is delivery-independent: legit on unverified ops).
+                    #  Round-7 P1: also require the apply TERMINAL PROOF — a real
+                    #  successful video delete (apply_deletion_outcome_in_tx) always
+                    #  sets deleted_at NOT NULL + deletion_attempts>=1 (the claim
+                    #  bumps it before apply) + deletion_next_retry_at IS NULL +
+                    #  last_deletion_error IS NULL. A 直插 'deleted' row with
+                    #  deleted_at=NULL/attempts=0 is schema-legal but unreachable
+                    #  via apply; without this gate it falsely releases the tail.
+                    #  Applies to BOTH reasons (apply sets deleted_at regardless).
                     "    (r2.resource_kind = 'video'"
                     "     AND r2.deletion_status = 'deleted'"
                     "     AND r2.deletion_reason IN ('post_download',"
                     "                               'consent_withdrawal')"
+                    "     AND r2.deleted_at IS NOT NULL"
+                    "     AND r2.deletion_attempts >= 1"
+                    "     AND r2.deletion_next_retry_at IS NULL"
+                    "     AND r2.last_deletion_error IS NULL"
                     "     AND (r2.deletion_reason != 'post_download'"
                     "          OR o.download_status = 'verified')"
                     "     AND (r2.deletion_reason != 'post_download'"
@@ -3984,8 +4005,15 @@ class DeletionCoordinator:
                     #  (B2) non-video pending/failed asset: kind restricted to
                     #  audio_asset/portrait_asset (the only kinds with real upload
                     #  bindings; avatar_look/group route to skipped_unknown_kind
-                    #  with no claim), and the binding must exist (a bare 直插
-                    #  resource with no heygen_asset_uploads row cannot witness).
+                    #  with no claim). Round-6 required the binding to EXIST; round-
+                    #  7 P1 requires the FULL binding the asset claim enforces —
+                    #  the asset↔resource matrix (deletion_pending <-> upload
+                    #  cleanup_required) AND the asset_role↔resource_kind pair the
+                    #  claim's _validate_asset_binding checks. A deletion_pending
+                    #  resource with an `uploaded` or role-mismatched upload is a
+                    #  matrix inconsistency the claim would raise on; without these
+                    #  gates it witnesses the op and the coordinator's dumb iterator
+                    #  deletes the sibling while the witness's own claim alerts.
                     "    (r2.resource_kind IN ('audio_asset','portrait_asset')"
                     "     AND r2.deletion_status IN ('deletion_pending',"
                     "                               'deletion_failed')"
@@ -3993,7 +4021,12 @@ class DeletionCoordinator:
                     "                               'consent_withdrawal')"
                     "     AND EXISTS (SELECT 1 FROM heygen_asset_uploads u"
                     "      WHERE u.remote_resource_id = r2.resource_id"
-                    "      AND u.parent_operation_id = r2.created_by_operation_id))"
+                    "      AND u.parent_operation_id = r2.created_by_operation_id"
+                    "      AND u.status = 'cleanup_required'"
+                    "      AND ((r2.resource_kind = 'audio_asset'"
+                    "            AND u.asset_role = 'synthetic_narration_audio')"
+                    "           OR (r2.resource_kind = 'portrait_asset'"
+                    "            AND u.asset_role = 'portrait_photo'))))"
                     "   ))"
                     " )"
                     ") ORDER BY r.created_by_operation_id").fetchall()
