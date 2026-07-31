@@ -2219,6 +2219,13 @@ class OperationRepository:
         conn.row_factory = sqlite3.Row
         if not isinstance(operation_id, str) or not operation_id:
             raise ValueError("operation_id must be a non-empty string")
+        # Strict bool guard: Python treats "false" / 1 / [] as truthy, which
+        # would silently enter the force branch, exclude video, and release
+        # audio/portrait ahead of the §3.5 order. force is this resolver's OWN
+        # scope/order authorization (not eligibility the claim re-checks), so a
+        # truthy non-bool cannot be recovered downstream — reject it here.
+        if type(force) is not bool:
+            raise ValueError("force must be a bool")
         op = conn.execute(
             "SELECT download_status FROM heygen_operations WHERE operation_id=?",
             (operation_id,)).fetchone()

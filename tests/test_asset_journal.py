@@ -2514,6 +2514,42 @@ class TestResolveDeletionPlan:
         finally:
             conn.close()
 
+    @pytest.mark.parametrize("bad_force", [None, 0, 1, "false", "true", [], 1.0])
+    def test_invalid_force_type_raises(self, bad_force):
+        # force is the resolver's OWN scope/order authorization — a truthy
+        # non-bool ("false"/1/[]) would silently enter the force branch,
+        # exclude video, and release audio/portrait ahead of the §3.5 order,
+        # which no downstream claim can recover. Reject at the entry guard.
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            _insert_resource(conn, op_id="op1", kind="video", remote_id="v1")
+            _insert_resource(conn, op_id="op1", kind="audio_asset", remote_id="a1",
+                             upload_id="u_a", asset_role="synthetic_narration_audio")
+            repo = OperationRepository(Path(td))
+            with pytest.raises(ValueError):
+                repo.resolve_deletion_plan_in_tx(
+                    conn, operation_id="op1", force=bad_force)  # type: ignore[arg-type]
+        finally:
+            conn.close()
+
+    def test_force_string_false_does_not_release_assets(self):
+        # Explicit regression for the Codex round-1 blocker: force="false" must
+        # NOT be treated as force mode (which would exclude video and return the
+        # audio asset). It must raise before any planning.
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            _insert_resource(conn, op_id="op1", kind="video", remote_id="v1")
+            _insert_resource(conn, op_id="op1", kind="audio_asset", remote_id="a1",
+                             upload_id="u_a", asset_role="synthetic_narration_audio")
+            repo = OperationRepository(Path(td))
+            with pytest.raises(ValueError):
+                repo.resolve_deletion_plan_in_tx(
+                    conn, operation_id="op1", force="false")  # type: ignore[arg-type]
+        finally:
+            conn.close()
+
     def test_requires_active_transaction(self):
         conn, td = _db()
         try:
