@@ -208,13 +208,35 @@ def recover_deletions(self, *, deleter, adapter, lease_owner: str, now_iso: str,
     ...
     # 1) 候选 SELECT 在自己的 tx 里，然后【关 tx】（R5 核心：绝不在持 tx 时驱动网络删除）
     with self._repository.begin_immediate() as conn:
-        rows = conn.execute(
-            "SELECT DISTINCT r.created_by_operation_id AS op_id "
-            "FROM heygen_remote_resources r "
-            "WHERE r.deletion_status != 'deleted' "
-            "  AND r.retention_mode != 'reusable_avatar' "
-            "  AND r.created_by_operation_id IS NOT NULL "
-            "ORDER BY r.created_by_operation_id").fetchall()
+        if force:
+            # 显式 force-cleanup（operator 授权）：每个 non-deleted non-reusable
+            # resource 都在作用域；resolver 再排除 video、释放 tail。
+            rows = conn.execute(
+                "SELECT DISTINCT r.created_by_operation_id AS op_id "
+                "FROM heygen_remote_resources r "
+                "WHERE r.deletion_status != 'deleted' "
+                "  AND r.retention_mode != 'reusable_avatar' "
+                "  AND r.created_by_operation_id IS NOT NULL "
+                "ORDER BY r.created_by_operation_id").fetchall()
+        else:
+            # 默认 sweep：只扫【删除已授权】的 op（Codex round-1 blocker 修复）。
+            # 授权 = 有 video resource（generation 产出了交付物；video claim 再门禁
+            # download_status=verified，resolver 把 asset 挡在 video 后）OR 有资源
+            # 已进入删除管线（deletion_pending/deletion_failed——consent withdrawal/retry）。
+            # 这排除"只有 pre-video asset 在 not_started、无 video"的 in-flight op：
+            # resolver 会释放这些 asset（无 video 可挡），删掉仍在生产使用的 asset。
+            rows = conn.execute(
+                "SELECT DISTINCT r.created_by_operation_id AS op_id "
+                "FROM heygen_remote_resources r "
+                "WHERE r.deletion_status != 'deleted' "
+                "  AND r.retention_mode != 'reusable_avatar' "
+                "  AND r.created_by_operation_id IS NOT NULL "
+                "  AND EXISTS ("
+                "    SELECT 1 FROM heygen_remote_resources r2 "
+                "    WHERE r2.created_by_operation_id = r.created_by_operation_id "
+                "    AND (r2.resource_kind = 'video'"
+                "         OR r2.deletion_status IN ('deletion_pending','deletion_failed')))"
+                "ORDER BY r.created_by_operation_id").fetchall()
     op_ids = [r["op_id"] for r in rows]   # tx 已关
 
     # 2) 逐 op 驱动（每 op 独立 txs；一 op 异常 → 告警 + continue，不阻塞后续 op）
@@ -241,7 +263,11 @@ def recover_deletions(self, *, deleter, adapter, lease_owner: str, now_iso: str,
     return aggregate
 ```
 
-候选查询是**超近似**（resolver + claim 精细化）：有任意 non-deleted non-reusable resource 的 op；resolver 对无作用域的 op 返回空 plan → `ops_empty`。已完全删除的 op 不进候选（`deletion_status != 'deleted'`）。**幂等重跑安全**（T21）：已删除资源 resolver 跳过 → 空 plan → no-op。
+候选查询分两套（**Codex round-1 blocker 修复**）：
+- **默认（force=False）= 删除已授权集**：op 有 video resource（含已 deleted 的——video claim 门禁 verified，resolver 把 asset 挡在 video 后；video 已 deleted 则 tail 合法）OR 有资源已在删除管线（deletion_pending/deletion_failed）。这把"只有 pre-video asset 在 not_started、无 video"的 in-flight op 排除掉——那种 op 的 asset 仍在生产使用，resolver 会因"无 video"直接释放 tail 误删。
+- **force=True = 宽集**：任意 non-deleted non-reusable resource（显式 operator 授权的 force-cleanup）。
+
+resolver + claim 仍逐 op 精细化（无作用域的候选 op 返空 plan → `ops_empty`）。已完全删除的 op 不进候选（外层 `deletion_status != 'deleted'`）。**幂等重跑安全**（T21）：已删除资源 resolver 跳过 → 空 plan → no-op。
 
 ## 3. 盲预测（我预判 Codex 会探的点 + 我的防御）
 
@@ -256,7 +282,10 @@ def recover_deletions(self, *, deleter, adapter, lease_owner: str, now_iso: str,
 9. **blanket force sweep（R8）**：→ `recover_deletions(force=False)` 默认；force sweep 是 operator-only/audited；默认全 sweep 尊重 video-verified 门禁（T19）。
 10. **错路由（R3）**：video→asset processor 会用错 lease 列/错 fence/错 remote_id 源；upload_id=None 的 asset 进 asset processor 无效。→ 严格按 kind 分派，asset 必须有 upload_id 才进 asset processor。
 
-## 4. 12 bypass risks × 防御映射（来自 c3 调研 workflow 综合）
+> **诚实记录**：下面这条是 **Codex round-1 抓到、我盲预测 + R1–R12 都漏掉的** blocker——我原候选查询把"有任意 non-deleted non-reusable resource"当作充分条件，没意识到 sweep 语境下"无 video"的歧义（video 已 deleted 合法 tail vs video 从未创建的 in-flight 生产）。归因：盲预测聚焦在 coordinator→processor 的 fencing/tx 隔离（c1/c2 同类），没把 resolver 的"无 video → 释放 tail"规则放回 sweep 语境重新审视。教训：**单 op 显式删除时合法的 resolver 规则，搬到自动 sweep 语境会改变语义**——sweep 的候选门禁必须是独立的一道安全边界，不能继承单 op 调用的隐含前提（caller 已选择删这个 op）。
+11. **【round-1 才发现】sweep 候选门禁太宽 → 误删 in-flight asset（R13）**：默认 sweep 若把"任意 non-deleted non-reusable resource"当候选，一个 `submit_pending` + asset uploaded/not_started + 无 video 的 in-flight op 会被扫到，resolver 因"无 video"释放 tail → 删掉仍在生产使用的 asset。→ 默认候选集收紧为"删除已授权"（有 video resource OR 有 deletion_pending/deletion_failed）；force=True 保留宽集（显式授权）。回归测试：in-flight asset-only op 默认不扫 / force 扫。
+
+## 4. bypass risks × 防御映射（12 来自调研 + R13 来自 round-1）
 
 | Risk | 一句话 | 防御 | 测试 |
 |---|---|---|---|
@@ -272,8 +301,9 @@ def recover_deletions(self, *, deleter, adapter, lease_owner: str, now_iso: str,
 | R10 | now_iso 中途漂移 | 同 pass 同 now_iso | T16 |
 | R11 | upload_id=None 静默 drop | skipped_no_upload_id 告警 | T5 |
 | R12 | 复用 resolve conn 给首个 claim | resolve conn 在 with 内随退出 close | T13 |
+| **R13** | **sweep 候选门禁太宽 → 误删 in-flight asset（round-1）** | **默认候选 = 删除已授权（有 video OR pending/failed）；force 保留宽集** | **T17 + 回归×2** |
 
-## 5. 测试矩阵（21，新文件 `tests/test_deletion_coordinator.py`）
+## 5. 测试矩阵（30，新文件 `tests/test_deletion_coordinator.py`）
 
 > 跨 video+asset+routing，区别于 `test_deletion.py`（video-only）与 `test_asset_journal.py`（asset/planner）。
 > House style：`_db()` tempdir / `tmp_path`；模块级 NOW/OWNER/LEASE；**重开 fresh `sqlite3.connect` row_factory=Row 断言最终 DB**（不读同 conn）；attribute access on result；`@parametrize` 矩阵。Fakes：`_StubDeleter`（`test_deletion.py:73`）、`_FakeAdapter`（`test_asset_journal.py:2174`）、`_Boom`（`test_asset_journal.py:2278`）。
@@ -286,7 +316,7 @@ def recover_deletions(self, *, deleter, adapter, lease_owner: str, now_iso: str,
 - **T6** unknown `resource_kind`（order_key 9）→ `skipped_unknown_kind`，无 processor 调用，无 DB 写。
 - **T7** 逐资源独立：一 asset `AssetReadError(code='rate_limited', retryable=True)`，另一 deleted → 首个 failed+last_error+next_retry_at，第二个 deleted，**都 attempt 了**。
 - **T8** 非 claimed（busy）续跑：一资源 lease 被别 owner 持 → `claim_status=busy`、`outcome_status=None`、无 adapter 调用；下一 entry 仍 attempt。
-- **T9** untyped 异常（`_Boom`）→ `alerted_exception`，loop 续跑；**关键** fresh-conn 断言该资源零写入（`deletion_status` 不变、`last_error` None、`next_retry_at` None、无 `deleted_at`）——lease 过期重 claim，无 phantom。
+- **T9** untyped 异常（`_Boom`）→ `alerted_exception`，loop 续跑；fresh-conn 断言该资源**无 outcome 写入**（claim 合法写了 `deletion_pending`+lease，但 apply 没跑：`deleted_at` None、`last_deletion_error` None、`deletion_next_retry_at` None、asset 仍 `cleanup_required` 非 deleted）——lease 过期重 claim，无 phantom。（措辞按 round-1 Codex 提示精确化：claim 的合法写不算 phantom，真正保证的是"不写 outcome、不猜 deleted/failed"。）
 - **T10** force 错型入口：`force='false'`（truthy str）→ `pytest.raises(ValueError)` 在 resolver 前触发，零写入、零 deleter/adapter 调用。
 - **T11** force 错型 parametrize `[1, None, [], 0]`（int 0 也必须拒——`type(force) is not bool`），全 raise，零写入。
 - **T12** force 篡改不静默放 video：非 deleted video 在 + `force='false'` → 入口先拒，video 绝不被删（守卫先于路由）。
@@ -294,28 +324,31 @@ def recover_deletions(self, *, deleter, adapter, lease_owner: str, now_iso: str,
 - **T14** 每 pass 只 resolve 一次：计数 `resolve_deletion_plan_in_tx` 调用 → 每 `delete_pass_for_operation` 恰好 1，与 entry 数无关。
 - **T15** lease_owner 身份绑定：spy 记录每条 `delete_once` 的 `lease_owner` → 全等于 coordinator kwarg（无逐条漂移、无 plan-tx vs processor-tx owner 错位）。
 - **T16** now_iso 透传：spy 断言同 pass 每条 `delete_once` 收**同一** `now_iso`（无逐条漂移）。
-- **T17** maintenance `recover_deletions` 形状：插 3 op（一 verified-ready、一 withdrawn receipt、一已全删）→ 只候选 op 被驱动；返聚合 tally（`ops_driven`/`deleted`/`failed`/`skipped`/`alerted`/`ops_empty`）；每 driven op 独立 tx。
+- **T17** maintenance `recover_deletions` 形状：插 3 op（op_A post-download video 可删、op_B video 已 deleted→audio tail 合法、op_C 全 deleted 非候选）→ 只候选 op 被驱动；返聚合 tally（`ops_driven`/`deleted`/`failed`/`skipped`/`alerted`/`ops_empty`）；每 driven op 独立 tx。（round-1 修复：op_B 从"audio-only in-flight"改成"video 已 deleted 的合法 tail"，原 T17 固化了误删漏洞。）
+- **T17a**【round-1 回归】in-flight asset-only op（`submit_pending` + asset uploaded/not_started + 无 video）默认 sweep **不**驱动：adapter 不调，asset 仍 uploaded/not_started。
+- **T17b**【round-1 回归镜像】同 op + `force=True` **被**驱动删除（显式 operator 授权用宽候选集）。
 - **T18** maintenance 候选 SELECT tx **不**跨网络：instrument 断言候选 tx 在任何 `delete_pass_for_operation` 前已 close（R5 直接测试）。
 - **T19** maintenance `force=False` 默认全 sweep 尊重 video-verified 门禁：sweep 内任一 `download_status!='verified'` 的 op → 其 video 要么不在 plan、要么 `claim_status=not_ready`，绝不 deleted。
 - **T20** crash 中途恢复：stub 一 op 的 `delete_once` 在前面 op 成功后 `_Boom` → 前面 op 写入**已持久化**（独立 tx 已 commit），异常 op 零 phantom 写入，后续 op 仍被驱动（CONTINUE+告警）。
 - **T21** 幂等重跑/无热循环：`recover_deletions` 跑两遍 → 第二遍只驱动仍有 non-deleted 资源的 op；已删 → 空 plan/no-op，无 double-delete、无错、无死循环。
 
-## 6. Codex 问题（round-1）
+## 6. Codex 问题（round-1 → 已回复，结论标 ❑）
 
-1. **force 入口守卫是否足够**：coordinator 入口 `type(force) is not bool` + 原样透传（不 coerce、不 `if force:` 判真值），defense in depth 在 c2 resolver 同款守卫之上。你看还有没有 truthy 绕过路径（R1）？
-2. **eligibility 不重判**：coordinator verbatim 遍历冻结 entries，不重排/重筛/跳"已 deleted"/自判 verified 门禁。这是 c1 "reuse locked invariants, no parallel gate" 的延续。是否到位（R2）？
-3. **tx 隔离**：resolve 在 with 内、with 退出即 close、processor 自拥 tx、coordinator 全程不持 tx；maintenance 候选 SELECT 关 tx 后才驱动。是否守住 R4/R5/R12？
-4. **untyped 异常 = 零写入**：catch+`alerted_exception`+该资源**什么都不写**（不 apply/不标 deleted/不设 next_retry_at），lease 自然过期。是否正确遵循"远端结果不可知绝不猜"（R6）？
-5. **upload_id=None / unknown kind 不静默 drop**：分别 `skipped_no_upload_id` / `skipped_unknown_kind` 告警。是否覆盖（R3/R11）？
-6. **lease_owner / now_iso 单 pass 内恒定**：每条 `delete_once` 传同一值。是否到位（R9/R10）？
-7. **recover_deletions 的 force 语义**：默认 False；force=True 作用于每个被扫 op（operator-only/audited）。这个 sweep-force 形态是否符合 §3.5，还是你认为 maintenance 应完全无 force 参数（R8）？我倾向保留（T19 测默认尊重门禁），但想听你的。
-8. **候选查询超近似**：`deletion_status != 'deleted' AND retention_mode != 'reusable_avatar' AND created_by_operation_id IS NOT NULL`，resolver + claim 精细化。这个候选集是否合理，还是该收紧（如只扫 cleanup_required/deletion_pending/not_started 的）？
+1. ❑ **force 入口守卫**：Codex 确认 R1 正确（strict bool guard + 原样透传）。
+2. ❑ **eligibility 不重判**：Codex 确认 R2/R7 到位（plan 只 resolve 一次，冻结顺序原样遍历）。
+3. ❑ **tx 隔离**：Codex 确认 R4/R5/R12 守住（instrumentation 测试真实覆盖）。
+4. ❑ **untyped 异常**：Codex 确认 R6 实现安全；提示措辞"不写任何东西"不精确（claim 合法写了 deletion_pending+lease）→ 已精确化为"不写 outcome、不猜 deleted/failed"（T9 断言 + 代码注释同步）。
+5. ❑ **upload_id=None / unknown kind**：Codex 确认 R3/R11 覆盖。
+6. ❑ **lease_owner / now_iso 恒定**：Codex 确认 R9/R10 到位。
+7. ❑ **recover_deletions force 语义**：Codex 认可保留 force 参数（调用层保证 operator/audited），但要求默认 False 必须配 #8 的候选收紧。
+8. ✅ **候选查询**（round-1 blocker）：Codex 判定原"超近似"候选集是 **P1 blocker**——会误删 in-flight op 的生产 asset。已收紧：默认 = 删除已授权（有 video OR pending/failed）；force = 宽集。回归 T17a/T17b。
 
 ## 7. 实现顺序
 
 1. 加 `DeletionEntryAttempt` / `DeletionPassResult` dataclass（counts 派生 property）。
 2. 加 `DeletionCoordinator.__init__` + `delete_pass_for_operation` + `_attempt_entry`（路由 + per-item 异常）。
 3. 加 `DeletionCoordinator.recover_deletions`（候选 SELECT 关 tx → 逐 op 驱动）。
-4. 写 `tests/test_deletion_coordinator.py`（21 测）。
-5. 全量 `pytest`（应 921 + 21 = 942）。
-6. commit → 发 Codex round-1（resume `019fb840-a93b-73e1-b56c-a29b07a15e3d`，effort=low，`-C` 在 `resume` 前）。
+4. 写 `tests/test_deletion_coordinator.py`（30 测）。
+5. 全量 `pytest`（921 + 30 = 951 全绿）。
+6. commit → 发 Codex round-1 → **round-1 抓 1 个 P1（候选门禁太宽）→ 修 + 回归×2 → round-2 锁定复审**。
+
