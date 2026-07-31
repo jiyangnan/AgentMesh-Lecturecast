@@ -1909,10 +1909,17 @@ class OperationRepository:
 
         ds = res["deletion_status"]
         reason = res["deletion_reason"]
-        # Never resurrect a deleted resource.
-        if ds == "deleted":
-            return AssetDeletionClaim(upload_id, rid, "not_ready",
-                                      row["lease_fence"], None)
+        # Fail-closed matrix check BEFORE any eligibility branch: a tampered
+        # asset↔resource pair (e.g. uploaded+deletion_pending, or
+        # cleanup_required+deleted) is an integrity error, never silently
+        # "corrected" into a legal combo (round-1 blocker #2). A legitimately
+        # deleted resource always pairs with an asset at 'deleted', which the
+        # status gate above already returned not_ready — so a deleted resource
+        # can never reach here with a matrix-valid live asset. This supersedes
+        # the former ad-hoc "never resurrect" branch with the locked matrix.
+        _check_asset_resource_consistency(
+            status, ds, deletion_reason=reason,
+            last_error_code=row["last_error_code"])
         if ds == "deletion_pending":
             # manual_force is the integrity path's durable record — never
             # auto-delete (mirror video claim). consent_withdrawal /
@@ -2012,13 +2019,18 @@ class OperationRepository:
         now_c = _canonical(_parse_utc(now_iso))
         if type(max_attempts) is not int or not (1 <= max_attempts <= 10):
             raise ValueError("max_attempts must be an int in [1, 10]")
-        # Fence CAS on the asset's own lease columns.
+        # Fence CAS on the asset's own lease columns. remote_resource_id is
+        # bound to the claim's resource_id: if the asset's remote_resource_id is
+        # swapped between claim and apply (to a topology-valid sibling), the CAS
+        # no longer matches and the DELETE outcome cannot be recorded against
+        # the wrong resource (round-1 blocker #1).
         row = conn.execute(
-            "SELECT remote_resource_id, asset_role, parent_operation_id "
-            "FROM heygen_asset_uploads "
+            "SELECT remote_resource_id, asset_role, parent_operation_id, "
+            "last_error_code FROM heygen_asset_uploads "
             "WHERE upload_id=? AND lease_owner=? AND lease_fence=? "
-            "AND status='cleanup_required' AND attempt_started_at IS NOT NULL",
-            (upload_id, lease_owner, fence)).fetchone()
+            "AND status='cleanup_required' AND attempt_started_at IS NOT NULL "
+            "AND remote_resource_id=?",
+            (upload_id, lease_owner, fence, resource_id)).fetchone()
         if row is None:
             return AssetDeletionOutcome(upload_id, resource_id, "fence_conflict",
                                         fence, None, None)
@@ -2027,7 +2039,7 @@ class OperationRepository:
             raise OperationIntegrityError(
                 f"asset upload {upload_id!r} held lease without remote_resource_id")
 
-        # Re-verify full topology (claim/apply gap) + resource still pending.
+        # Re-verify full topology (claim/apply gap).
         op = conn.execute(
             "SELECT credential_profile_id FROM heygen_operations "
             "WHERE operation_id=?", (row["parent_operation_id"],)).fetchone()
@@ -2041,10 +2053,28 @@ class OperationRepository:
             credential_profile_id=op["credential_profile_id"],
             expected_remote_id=None)
         res = conn.execute(
-            "SELECT deletion_attempts FROM heygen_remote_resources "
-            "WHERE resource_id=? AND deletion_status='deletion_pending'",
+            "SELECT deletion_status, deletion_reason, deletion_attempts "
+            "FROM heygen_remote_resources WHERE resource_id=?",
             (rid,)).fetchone()
         if res is None:
+            raise OperationIntegrityError(
+                f"asset upload {upload_id!r} bound resource {rid} missing")
+        # Fail-closed matrix check on the CURRENT asset/resource state before
+        # persisting any outcome: a tampered reason (e.g. flipped to
+        # manual_force) or a stale error code is rejected here, never silently
+        # applied, and never has its integrity marker cleared (round-1 blocker
+        # #2). Asset status is 'cleanup_required' (enforced by the CAS above).
+        _check_asset_resource_consistency(
+            "cleanup_required", res["deletion_status"],
+            deletion_reason=res["deletion_reason"],
+            last_error_code=row["last_error_code"])
+        # Only reasons a claim can execute reach apply. manual_force is claim
+        # not_ready (so it carries no lease); defend in depth against a reason
+        # swap to manual_force between claim and apply.
+        if res["deletion_reason"] not in ("post_download", "consent_withdrawal"):
+            return AssetDeletionOutcome(upload_id, rid, "fence_conflict",
+                                        fence, None, None)
+        if res["deletion_status"] != "deletion_pending":
             return AssetDeletionOutcome(upload_id, rid, "fence_conflict",
                                         fence, None, None)
 
