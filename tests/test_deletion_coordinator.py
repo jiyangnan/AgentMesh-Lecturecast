@@ -665,12 +665,12 @@ class TestRecoverDeletions:
             _add_resource(conn, op_id="opA", kind="video", remote_id="vA")
             _add_op(conn, "opB", download_status="verified")
             _add_resource(conn, op_id="opB", kind="video", remote_id="vB",
-                          ds="deleted")  # video deleted → audio tail authorized
+                          ds="deleted", reason="post_download")  # honest lifecycle
             _add_asset(conn, op_id="opB", role="synthetic_narration_audio",
                        upload_id="uB", remote_id="aB")
             _add_op(conn, "opC", download_status="verified")
             _add_resource(conn, op_id="opC", kind="video", remote_id="vC",
-                          ds="deleted")  # fully deleted → not a candidate
+                          ds="deleted", reason="post_download")  # fully deleted
             conn.commit()
         finally:
             conn.close()
@@ -905,6 +905,44 @@ class TestRecoverDeletions:
                     "SELECT status FROM heygen_asset_uploads WHERE upload_id=?",
                     (uid,)).fetchone()
                 assert a["status"] != "deleted"      # neither asset touched
+        finally:
+            conn.close()
+
+    def test_deleted_manual_force_video_does_not_authorize_default_sweep(self, tmp_path):
+        # Codex round-4 P1 regression: a schema-legal deleted/manual_force VIDEO
+        # must not authorize the default sweep. The video branch of the witness
+        # carried no reason gate, so a deleted/manual_force video (unreachable
+        # via the current producer, but schema-legal) acted as a witness; the
+        # resolver skips a deleted video and releases the tail, deleting the
+        # sibling asset. The whole deletion subsystem fails closed against
+        # schema-legal anomalous states (topology/matrix/retention all do) —
+        # "the producer never makes one" is NOT a fail-closed boundary. The
+        # witness must exclude manual_force in EVERY branch via a common reason
+        # gate (reason IS NULL OR reason IN auto-recoverable).
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="not_started")  # in flight
+            _add_resource(conn, op_id="opLive", kind="video", remote_id="vKeep",
+                          retention="ephemeral", ds="deleted",
+                          reason="manual_force")
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] != "deleted"          # sibling untouched
         finally:
             conn.close()
 

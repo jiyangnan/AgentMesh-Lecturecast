@@ -3820,7 +3820,19 @@ class DeletionCoordinator:
         integrity path (c1 claims it not_ready, never auto-deleted), so it must
         not authorize sweeping a sibling either — only post_download /
         consent_withdrawal do (the two reasons a pending/failed resource is
-        claim-eligible)."""
+        claim-eligible).
+
+        Finally, manual_force is excluded from the witness in EVERY branch via
+        a COMMON reason gate (Codex round-4 blocker): ``(deletion_reason IS NULL
+        OR deletion_reason IN ('post_download','consent_withdrawal'))``. This
+        closes the video branch, which otherwise carried no reason restriction.
+        The subsystem fails closed against schema-legal anomalous states
+        (topology/matrix/retention all do); a deleted/manual_force video is
+        schema-legal even though the current producer never makes one, and as a
+        witness it would release the tail (resolver skips a deleted video). A
+        not_started video (NULL reason) remains a legit witness — the resolver
+        gates the tail behind a non-deleted video and the video claim gates on
+        download_status."""
         if type(force) is not bool:
             raise ValueError("force must be a bool")
         _require_lease_owner(lease_owner)
@@ -3855,6 +3867,17 @@ class DeletionCoordinator:
                 # deleted by the asset claim, which does not re-gate on
                 # download_status). post_download / consent_withdrawal are the
                 # only reasons a pending/failed resource is claim-eligible.
+                # COMMON reason gate (Codex round-4 P1): manual_force must be
+                # excluded in EVERY branch, including the video branch. The
+                # whole deletion subsystem fails closed against schema-legal
+                # anomalous states (topology/matrix/retention all do); a
+                # deleted/manual_force video is schema-legal even though the
+                # current producer never makes one, and as a witness it would
+                # release the tail (resolver skips a deleted video) → sibling
+                # deleted. (reason IS NULL OR reason IN auto-recoverable) is the
+                # fail-closed boundary; not_started (NULL reason) is still a
+                # legit video witness — the resolver gates the tail behind a
+                # non-deleted video and the video claim gates on download_status.
                 rows = conn.execute(
                     "SELECT DISTINCT r.created_by_operation_id AS op_id "
                     "FROM heygen_remote_resources r "
@@ -3865,6 +3888,9 @@ class DeletionCoordinator:
                     " SELECT 1 FROM heygen_remote_resources r2 "
                     " WHERE r2.created_by_operation_id = r.created_by_operation_id "
                     " AND r2.retention_mode != 'reusable_avatar' "
+                    " AND (r2.deletion_reason IS NULL"
+                    "      OR r2.deletion_reason IN ('post_download',"
+                    "                               'consent_withdrawal'))"
                     " AND (r2.resource_kind = 'video'"
                     "      OR (r2.deletion_status IN ('deletion_pending',"
                     "                               'deletion_failed')"
