@@ -2244,21 +2244,43 @@ def _validate_asset_binding(
 # A stale worker cannot overwrite a newer claim; a crash at any point leaves a
 # row the next run can reclaim (or, past the 24h window, promote to manual).
 
+_ASSET_REMOTE_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,128}$")
+
+
 @dataclass(frozen=True)
 class AssetUploadClaim:
-    """Handle returned by claim_for_upload: carries the fence the worker must
-    present when applying the outcome, plus the consent proof."""
+    """Handle returned by claim_for_upload: the full claim classification plus
+    the command (so apply can validate the adapter result against it)."""
     upload_id: str
+    status: str            # AssetClaimResult.status (claimed/busy/done/terminal/retry_wait)
     fence: int
-    parent_operation_id: str
-    asset_role: str
+    attempts: int
+    resource_id: int | None
+    command: AssetUploadCommand
 
 
 @dataclass(frozen=True)
 class AssetUploadOnceResult:
-    status: str  # "uploaded" | "reconciliation_required" | "failed" | "busy" | "terminal" | "retry_wait"
+    status: str  # uploaded | reconciliation_required | failed | busy | terminal | retry_wait
     resource_id: int | None = None
     error_code: str | None = None
+
+
+def _validate_asset_upload_result(result: AssetUploadResult,
+                                  command: AssetUploadCommand) -> None:
+    """An AssetUploadResult is a public dataclass — verify the adapter returned
+    one that actually matches the prepared command before binding it."""
+    if not isinstance(result, AssetUploadResult):
+        raise OperationIntegrityError("adapter did not return an AssetUploadResult")
+    if result.mime_type != command.content_type:
+        raise OperationIntegrityError(
+            f"adapter mime_type {result.mime_type!r} != command {command.content_type!r}")
+    if result.size_bytes != command.file_size:
+        raise OperationIntegrityError(
+            f"adapter size {result.size_bytes} != command {command.file_size}")
+    if not _ASSET_REMOTE_ID_RE.fullmatch(result.asset_id or ""):
+        raise OperationIntegrityError(
+            f"adapter returned invalid asset_id {result.asset_id!r}")
 
 
 class AssetUploadProcessor:
@@ -2274,9 +2296,9 @@ class AssetUploadProcessor:
         self, *, command: AssetUploadCommand,
         lease_owner: str, now_iso: str, lease_seconds: int,
     ) -> AssetUploadClaim:
-        """ONE transaction: consent guard → claim. If consent fails or the row
-        is not claimable, nothing is written. Returns the claim handle the
-        worker needs to apply the outcome (carrying the fence)."""
+        """ONE transaction: consent guard → claim. If consent fails, nothing is
+        written (raises a Consent* error). Returns the FULL claim classification
+        (claimed/busy/done/terminal/retry_wait) — the caller does not re-query."""
         with self._repository.begin_immediate() as conn:
             self._consent.validate_asset_upload_consent_in_tx(
                 conn, parent_operation_id=command.operation_id,
@@ -2294,20 +2316,18 @@ class AssetUploadProcessor:
                 idempotency_key=command.idempotency_key,
                 lease_owner=lease_owner, now_iso=now_iso,
                 lease_seconds=lease_seconds)
-        if claim.status != "claimed":
-            raise OperationStateError(
-                f"asset upload {command.upload_id!r} not claimable: {claim.status}")
         return AssetUploadClaim(
-            upload_id=claim.upload_id, fence=claim.fence,
-            parent_operation_id=command.operation_id,
-            asset_role=command.asset_role)
+            upload_id=claim.upload_id, status=claim.status, fence=claim.fence,
+            attempts=claim.attempts, resource_id=claim.remote_resource_id,
+            command=command)
 
     def apply_outcome(
         self, *, claim: AssetUploadClaim, asset_result: AssetUploadResult,
         lease_owner: str, now_iso: str,
     ) -> int:
-        """Fenced apply of a successful upload (second tx). The CAS on
-        lease_owner+fence rejects a stale worker whose lease was reclaimed."""
+        """Fenced apply of a successful upload (second tx). Validates the
+        adapter result matches the command, then CAS on lease_owner+fence."""
+        _validate_asset_upload_result(asset_result, claim.command)
         with self._repository.begin_immediate() as conn:
             return self._repository.apply_asset_outcome_in_tx(
                 conn, upload_id=claim.upload_id,
@@ -2333,17 +2353,19 @@ class AssetUploadProcessor:
         lease_seconds: int,
     ) -> AssetUploadOnceResult:
         """One full attempt: claim (guard+claim tx) → adapter.upload_asset
-        (outside tx) → fenced apply. Returns the terminal status. The caller
-        drives retries by inspecting the result (busy/terminal/retry_wait/
-        reconciliation_required mean do not retry blindly)."""
-        try:
-            claim = self.claim_for_upload(
-                command=command, lease_owner=lease_owner, now_iso=now_iso,
-                lease_seconds=lease_seconds)
-        except OperationStateError:
-            # Non-claimed (busy/terminal/retry_wait) — re-classify via a read.
-            return AssetUploadOnceResult(status=_classify_nonclaimable(
-                self._repository, command.upload_id))
+        (outside tx) → fenced apply. The claim classification is forwarded
+        verbatim (no re-query): done→uploaded+resource_id, busy/retry_wait/
+        terminal are surfaced as-is. Unknown adapter exceptions propagate (the
+        lease is left to expire — certainty is unknowable, never guess)."""
+        claim = self.claim_for_upload(
+            command=command, lease_owner=lease_owner, now_iso=now_iso,
+            lease_seconds=lease_seconds)
+        if claim.status == "done":
+            return AssetUploadOnceResult(status="uploaded",
+                                         resource_id=claim.resource_id)
+        if claim.status in ("busy", "retry_wait", "terminal"):
+            return AssetUploadOnceResult(status=claim.status)
+        # claimed → invoke the adapter outside any tx.
         try:
             result = adapter.upload_asset(command, runtime_root=runtime_root)
         except AssetUploadAmbiguousError as exc:
@@ -2357,23 +2379,6 @@ class AssetUploadProcessor:
         resource_id = self.apply_outcome(
             claim=claim, asset_result=result, lease_owner=lease_owner, now_iso=now_iso)
         return AssetUploadOnceResult(status="uploaded", resource_id=resource_id)
-
-
-def _classify_nonclaimable(repository: OperationRepository, upload_id: str) -> str:
-    """Read-only classification of a row that claim_for_upload refused, so
-    upload_once reports a meaningful terminal status instead of 'failed'."""
-    with repository.begin_immediate() as conn:
-        row = conn.execute(
-            "SELECT status FROM heygen_asset_uploads WHERE upload_id=?",
-            (upload_id,)).fetchone()
-    if row is None:
-        return "failed"
-    st = row["status"] if row and "status" in row.keys() else None
-    if st == "uploaded":
-        return "terminal"  # already done
-    if st in ("failed", "cancelled", "manual_reconciliation_required"):
-        return "terminal"
-    return "busy"
 
 
 # --- coordinator -------------------------------------------------------

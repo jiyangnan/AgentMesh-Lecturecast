@@ -144,11 +144,103 @@ def test_upload_once_idempotent_on_replay():
         second = proc.upload_once(command=command, adapter=adapter, runtime_root=runtime,
                                   lease_owner=LEASE, now_iso="2026-07-30T00:01:00Z",
                                   lease_seconds=60)
-        assert second.status == "terminal"
+        assert second.status == "uploaded"      # done → forwarded as uploaded
+        assert second.resource_id == first.resource_id
         assert adapter.calls == 1  # not re-sent
 
 
 # === concurrency / crash contracts ========================================
+
+def test_apply_outcome_validates_result_matches_command():
+    # AssetUploadResult is a public dataclass; a buggy/fake adapter returning a
+    # mismatched result must be rejected before binding (blocker #2).
+    with tempfile.TemporaryDirectory() as td:
+        command, _op, runtime = _prepare(td)
+        proc = AssetUploadProcessor(td)
+        claim = proc.claim_for_upload(
+            command=command, lease_owner=LEASE,
+            now_iso="2026-07-30T00:00:00Z", lease_seconds=60)
+        from lecturecast.operation_repository import OperationIntegrityError
+        with pytest.raises(OperationIntegrityError):   # wrong mime_type
+            proc.apply_outcome(
+                claim=claim, lease_owner=LEASE, now_iso="2026-07-30T00:00:30Z",
+                asset_result=AssetUploadResult(asset_id="ax", remote_url="u",
+                    mime_type="image/jpeg", size_bytes=command.file_size))
+        with pytest.raises(OperationIntegrityError):   # wrong size
+            proc.apply_outcome(
+                claim=claim, lease_owner=LEASE, now_iso="2026-07-30T00:00:30Z",
+                asset_result=AssetUploadResult(asset_id="ax", remote_url="u",
+                    mime_type=command.content_type, size_bytes=999))
+        with pytest.raises(OperationIntegrityError):   # bad asset_id
+            proc.apply_outcome(
+                claim=claim, lease_owner=LEASE, now_iso="2026-07-30T00:00:30Z",
+                asset_result=AssetUploadResult(asset_id="../x", remote_url="u",
+                    mime_type=command.content_type, size_bytes=command.file_size))
+
+
+def test_concurrent_workers_one_reaches_adapter():
+    # Two workers release simultaneously; exactly one claims + reaches the
+    # adapter, the other gets 'busy'. No duplicate upload (blocker #3).
+    import threading
+    with tempfile.TemporaryDirectory() as td:
+        command, _op, runtime = _prepare(td)
+        proc = AssetUploadProcessor(td)
+        adapter = _FakeAdapter(result=AssetUploadResult(
+            asset_id="ax", remote_url="u", mime_type=command.content_type,
+            size_bytes=command.file_size))
+        barrier = threading.Barrier(2)
+        results: dict[str, str] = {}
+
+        def worker(name):
+            barrier.wait(timeout=5)
+            r = proc.upload_once(command=command, adapter=adapter,
+                                 runtime_root=runtime, lease_owner=name,
+                                 now_iso="2026-07-30T00:00:00Z", lease_seconds=60)
+            results[name] = r.status
+
+        threads = [threading.Thread(target=worker, args=(f"worker-{i}",)) for i in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        # No duplicate upload: the adapter is reached exactly once. Outcomes are
+        # a subset of {uploaded (winner), busy (loser) | uploaded (idempotent
+        # replay if the loser claims after the winner already applied)}.
+        assert adapter.calls == 1
+        assert "uploaded" in results.values()
+        assert all(v in ("uploaded", "busy") for v in results.values())
+
+
+def test_unexpected_adapter_exception_preserves_lease_and_recovers():
+    # An adapter error we can't classify (RuntimeError) must propagate; the
+    # claim lease is left intact (certainty unknowable, never guess). Within the
+    # 24h window a reclaim with the SAME idempotency key recovers and completes;
+    # past 24h it goes terminal/manual without touching the provider.
+    with tempfile.TemporaryDirectory() as td:
+        command, _op, runtime = _prepare(td)
+        proc = AssetUploadProcessor(td)
+        blow = _FakeAdapter(error=RuntimeError("adapter exploded"))
+        with pytest.raises(RuntimeError):
+            proc.upload_once(command=command, adapter=blow, runtime_root=runtime,
+                             lease_owner=LEASE, now_iso="2026-07-30T00:00:00Z",
+                             lease_seconds=60)
+        from lecturecast.heygen_journal import init_database
+        conn = init_database(Path(td))
+        row = conn.execute(
+            "SELECT status FROM heygen_asset_uploads WHERE upload_id=?",
+            (command.upload_id,)).fetchone()
+        conn.close()
+        assert row[0] == "uploading"  # lease preserved
+        # reclaim within 24h (lease expired) → claimed → completes
+        good = _FakeAdapter(result=AssetUploadResult(
+            asset_id="ax", remote_url="u", mime_type=command.content_type,
+            size_bytes=command.file_size))
+        r = proc.upload_once(command=command, adapter=good, runtime_root=runtime,
+                             lease_owner=LEASE, now_iso="2026-07-30T00:30:00Z",
+                             lease_seconds=60)
+        assert r.status == "uploaded"
+        assert good.calls == 1
+
 
 def test_stale_fence_apply_is_rejected():
     # Worker 1 claims; worker 2 reclaims after the lease expires (fence bumps);
