@@ -51,6 +51,16 @@ def _add_parent_op(conn, op_id="op1"):
         (op_id, "video", "/v3/videos", "gen", "sha256:m", "sha256:r",
          f"idem-{op_id}", f"lc:{op_id}", "heygen_env_default", "t", "t"),
     )
+    # Default-grant a receipt so the fenced-apply consent re-check sees granted.
+    conn.execute(
+        "INSERT INTO heygen_consent_receipts (receipt_digest, operation_id,"
+        " disclosure_version, generation_id, request_digest, creative_brief_digest,"
+        " provider, operation_kind, disclosed_assets_json, data_categories_json,"
+        " provider_cost_disclosure, agentmesh_non_processor_disclosure, status,"
+        " consented_at, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (f"rd-{op_id}", op_id, "heygen-transfer-2026-07-27", "gen", "sha256:r",
+         "sha256:b", "heygen", "video", "[]", "[]", "cost", "nonproc",
+         "granted", "t", "t"))
 
 
 def _grant_parent(td, assets=(("portrait_photo", D_PORT),), decision="granted"):
@@ -139,7 +149,14 @@ class TestAssetConsentGuard:
         conn, td = _db()
         try:
             conn.execute("BEGIN")
-            _add_parent_op(conn, "op_bare")  # op with no receipt
+            # Bare parent op with NO receipt (_add_parent_op grants one by default).
+            conn.execute(
+                "INSERT INTO heygen_operations (operation_id, kind, endpoint, "
+                "generation_id, manifest_digest, request_digest, idempotency_key, "
+                "heygen_title, credential_profile_id, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                ("op_bare", "video", "/v3/videos", "gen", "sha256:m", "sha256:r",
+                 "i_bare", "lc:op_bare", "heygen_env_default", "t", "t"))
             with pytest.raises(ConsentStateError):
                 self._svc(td).validate_asset_upload_consent_in_tx(
                     conn, parent_operation_id="op_bare",
@@ -172,6 +189,126 @@ class TestAssetConsentGuard:
                 self._svc(td).validate_asset_upload_consent_in_tx(
                     conn, parent_operation_id="op1",
                     asset_role="portrait_photo", content_digest=D_PORT)
+        finally:
+            conn.close()
+
+
+class TestAssetApplyConsentRecheck:
+    """The fenced-apply consent re-check (e5b0c3b race closure): if consent is
+    no longer granted when the adapter returns, the resource is still recorded
+    but marked for deletion, and the upload goes cleanup_required."""
+
+    def _claim(self, repo, conn):
+        return _do_claim(repo, conn)
+
+    def test_apply_with_granted_receipt_is_uploaded(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)  # granted receipt
+            repo = OperationRepository(Path(td))
+            c = self._claim(repo, conn)
+            out = repo.apply_asset_outcome_in_tx(
+                conn, upload_id=_U1, asset_id="ax",
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
+            assert out.status == "uploaded"
+            assert out.resource_id > 0
+        finally:
+            conn.close()
+
+    def test_apply_with_withdrawn_receipt_is_cleanup_consent_withdrawal(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            conn.execute(
+                "UPDATE heygen_consent_receipts SET status='withdrawn' "
+                "WHERE operation_id='op1'")
+            repo = OperationRepository(Path(td))
+            c = self._claim(repo, conn)
+            out = repo.apply_asset_outcome_in_tx(
+                conn, upload_id=_U1, asset_id="ax",
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
+            assert out.status == "cleanup_required"
+            res = conn.execute(
+                "SELECT deletion_status, deletion_reason FROM heygen_remote_resources "
+                "WHERE resource_id=?", (out.resource_id,)).fetchone()
+            assert res["deletion_status"] == "deletion_pending"
+            assert res["deletion_reason"] == "consent_withdrawal"
+            # asset row has no integrity error code for a clean withdrawal
+            err = conn.execute(
+                "SELECT last_error_code FROM heygen_asset_uploads "
+                "WHERE upload_id=?", (_U1,)).fetchone()[0]
+            assert err is None
+        finally:
+            conn.close()
+
+    def test_apply_with_declined_receipt_is_cleanup_manual_force(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            conn.execute(
+                "UPDATE heygen_consent_receipts SET status='declined' "
+                "WHERE operation_id='op1'")
+            repo = OperationRepository(Path(td))
+            c = self._claim(repo, conn)
+            out = repo.apply_asset_outcome_in_tx(
+                conn, upload_id=_U1, asset_id="ax",
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
+            assert out.status == "cleanup_required"
+            res = conn.execute(
+                "SELECT deletion_status, deletion_reason FROM heygen_remote_resources "
+                "WHERE resource_id=?", (out.resource_id,)).fetchone()
+            assert res["deletion_status"] == "deletion_pending"
+            assert res["deletion_reason"] == "manual_force"
+            # integrity failure recorded on the asset, docked for manual cleanup
+            err = conn.execute(
+                "SELECT last_error_code FROM heygen_asset_uploads "
+                "WHERE upload_id=?", (_U1,)).fetchone()[0]
+            assert err == "consent_integrity_failure"
+        finally:
+            conn.close()
+
+    def test_apply_with_missing_receipt_is_cleanup_manual_force(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            conn.execute("DELETE FROM heygen_consent_receipts WHERE operation_id='op1'")
+            repo = OperationRepository(Path(td))
+            c = self._claim(repo, conn)
+            out = repo.apply_asset_outcome_in_tx(
+                conn, upload_id=_U1, asset_id="ax",
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
+            assert out.status == "cleanup_required"
+            err = conn.execute(
+                "SELECT last_error_code FROM heygen_asset_uploads "
+                "WHERE upload_id=?", (_U1,)).fetchone()[0]
+            assert err == "consent_integrity_failure"
+        finally:
+            conn.close()
+
+    def test_idempotent_replay_reports_real_cleanup_status(self):
+        # After a withdrawn-apply, re-apply must report cleanup_required (the
+        # real DB state), never re-report uploaded.
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            conn.execute(
+                "UPDATE heygen_consent_receipts SET status='withdrawn' "
+                "WHERE operation_id='op1'")
+            repo = OperationRepository(Path(td))
+            c = self._claim(repo, conn)
+            first = repo.apply_asset_outcome_in_tx(
+                conn, upload_id=_U1, asset_id="ax", now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
+            second = repo.apply_asset_outcome_in_tx(
+                conn, upload_id=_U1, asset_id="ax", now_iso="2026-07-30T00:00:02Z",
+                lease_owner=LEASE, expected_fence=c.fence)
+            assert first.status == "cleanup_required"
+            assert second.status == "cleanup_required"
+            assert first.resource_id == second.resource_id
         finally:
             conn.close()
 
@@ -336,7 +473,7 @@ class TestAssetApplyOutcome:
             c = _do_claim(repo, conn)
             rid = repo.apply_asset_outcome_in_tx(conn, upload_id=_U1,
                 asset_id="ax", now_iso="2026-07-30T00:00:01Z",
-                lease_owner=LEASE, expected_fence=c.fence)
+                lease_owner=LEASE, expected_fence=c.fence).resource_id
             up = conn.execute("SELECT status, remote_resource_id FROM "
                               "heygen_asset_uploads WHERE upload_id=?",
                               (_U1,)).fetchone()
@@ -368,7 +505,7 @@ class TestAssetApplyOutcome:
                       lref="r/n.wav")
             rid = repo.apply_asset_outcome_in_tx(conn, upload_id=c.upload_id,
                 asset_id="aud", now_iso="2026-07-30T00:00:01Z",
-                lease_owner=LEASE, expected_fence=c.fence)
+                lease_owner=LEASE, expected_fence=c.fence).resource_id
             kind = conn.execute("SELECT resource_kind FROM heygen_remote_resources "
                                 "WHERE resource_id=?", (rid,)).fetchone()[0]
             assert kind == "audio_asset"
@@ -385,7 +522,7 @@ class TestAssetApplyOutcome:
             c = _do_claim(repo, conn)
             rid = repo.apply_asset_outcome_in_tx(conn, upload_id=_U1,
                 asset_id="ax", now_iso="2026-07-30T00:00:01Z",
-                lease_owner=LEASE, expected_fence=c.fence)
+                lease_owner=LEASE, expected_fence=c.fence).resource_id
             res = conn.execute("SELECT credential_profile_id, retention_mode "
                                "FROM heygen_remote_resources WHERE resource_id=?",
                                (rid,)).fetchone()
@@ -423,10 +560,10 @@ class TestAssetApplyOutcome:
             c = _do_claim(repo, conn)
             rid1 = repo.apply_asset_outcome_in_tx(conn, upload_id=_U1,
                 asset_id="ax", now_iso="2026-07-30T00:00:01Z",
-                lease_owner=LEASE, expected_fence=c.fence)
+                lease_owner=LEASE, expected_fence=c.fence).resource_id
             rid2 = repo.apply_asset_outcome_in_tx(conn, upload_id=_U1,
                 asset_id="ax", now_iso="2026-07-30T00:00:02Z",
-                lease_owner=LEASE, expected_fence=c.fence)
+                lease_owner=LEASE, expected_fence=c.fence).resource_id
             assert rid1 == rid2  # no duplicate resource
             n = conn.execute("SELECT count(*) c FROM heygen_remote_resources "
                              "WHERE remote_id='ax'").fetchone()["c"]

@@ -1973,17 +1973,17 @@ class OperationRepository:
     def apply_asset_outcome_in_tx(
         self, conn: sqlite3.Connection, *, upload_id: str, asset_id: str,
         now_iso: str, lease_owner: str, expected_fence: int,
-    ) -> int:
-        """On a successful upload: insert the remote_resource + a parent-op ref,
-        backfill remote_resource_id, and mark the upload 'uploaded' — all in the
-        caller's fenced tx. The status flip is guarded by a CAS on the claim's
-        lease_owner + fence (a stale worker cannot overwrite a newer claim).
-        credential_profile_id is read from the PARENT operation (never caller-
-        supplied); resource_kind and retention_mode are derived from asset_role
-        (both one-shot roles → portrait_asset/audio_asset, ephemeral; a future
-        reusable_avatar lifecycle is separate). Idempotent re-apply validates the
-        full resource binding topology. A remote-id collision with another
-        parent/role is an OperationIntegrityError, not a raw sqlite3 error."""
+    ) -> AssetApplyOutcome:
+        """On a successful adapter upload: insert the remote_resource + parent-op
+        ref, backfill remote_resource_id, and flip the upload status — all fenced
+        on the claim's lease_owner+fence. AT FENCED-APPLY TIME the parent
+        receipt is re-checked (the withdrawn/integrity race closure): if consent
+        is no longer granted, the resource is still recorded (never orphaned) but
+        marked deletion_pending with the matching reason, and the upload goes
+        cleanup_required (NOT a consumable uploaded). credential_profile_id is
+        read from the parent op; resource_kind/retention_mode are derived. An
+        idempotent re-apply validates the full binding topology and returns the
+        real outcome (uploaded/cleanup_required/deleted)."""
         self._require_tx(conn)
         conn.row_factory = sqlite3.Row
         _require_lease_owner(lease_owner)
@@ -2011,29 +2011,62 @@ class OperationRepository:
         retention_mode = _asset_retention_mode(row["asset_role"])
         remote_id = asset_id.strip()
 
-        if row["status"] == "uploaded":
-            # Validate the full binding topology on replay (shared check).
+        if row["status"] in ("uploaded", "cleanup_required", "deleted"):
+            # Idempotent replay — validate topology + report the REAL outcome.
+            if row["remote_resource_id"] is None:
+                raise OperationIntegrityError(
+                    f"asset upload {upload_id!r} terminal without remote_resource_id")
+            res = conn.execute(
+                "SELECT deletion_status FROM heygen_remote_resources "
+                "WHERE resource_id=?", (row["remote_resource_id"],),
+            ).fetchone()
+            if res is None:
+                raise OperationIntegrityError(
+                    f"asset upload {upload_id!r} bound resource missing")
             _validate_asset_binding(
                 conn, remote_resource_id=row["remote_resource_id"],
                 parent_operation_id=row["parent_operation_id"],
                 asset_role=row["asset_role"],
                 credential_profile_id=credential_profile_id,
                 expected_remote_id=remote_id)
-            return row["remote_resource_id"]
+            return AssetApplyOutcome(
+                status=_outcome_status_for_resource_deletion(res["deletion_status"]),
+                resource_id=row["remote_resource_id"])
+        if row["status"] != "uploading":
+            raise OperationStateError(
+                f"asset upload {upload_id!r} status {row['status']!r} not applyable")
+
+        # Re-check consent at fenced-apply time (the race closure).
+        receipt = conn.execute(
+            "SELECT status FROM heygen_consent_receipts WHERE operation_id = ?",
+            (row["parent_operation_id"],),
+        ).fetchone()
+        consent, asset_error_code = _classify_apply_consent(receipt)
+        if consent == "granted":
+            resource_deletion = "not_started"
+            deletion_reason = None
+            upload_status = "uploaded"
+        elif consent == "withdrawn":
+            resource_deletion = "deletion_pending"
+            deletion_reason = "consent_withdrawal"
+            upload_status = "cleanup_required"
+        else:  # integrity (declined / missing / corrupt)
+            resource_deletion = "deletion_pending"
+            deletion_reason = "manual_force"
+            upload_status = "cleanup_required"
 
         try:
             cur = conn.execute(
                 "INSERT INTO heygen_remote_resources ("
                 "  credential_profile_id, resource_kind, remote_id, retention_mode,"
-                "  created_by_operation_id, created_at, updated_at"
-                ") VALUES (?,?,?,?,?,?,?)",
+                "  created_by_operation_id, deletion_status, deletion_reason,"
+                "  created_at, updated_at"
+                ") VALUES (?,?,?,?,?,?,?,?,?)",
                 (credential_profile_id, resource_kind, remote_id, retention_mode,
-                 row["parent_operation_id"], now_iso, now_iso),
+                 row["parent_operation_id"], resource_deletion, deletion_reason,
+                 now_iso, now_iso),
             )
         except sqlite3.IntegrityError as exc:
-            # UNIQUE(credential_profile_id, resource_kind, remote_id) — the
-            # remote id is already owned (by this or another parent). Surface a
-            # structured error, never the raw sqlite3 exception.
             raise OperationIntegrityError(
                 f"remote asset id {remote_id!r} already exists for "
                 f"{resource_kind}/{credential_profile_id}") from exc
@@ -2044,18 +2077,20 @@ class OperationRepository:
             (resource_id, row["parent_operation_id"], now_iso),
         )
         cur = conn.execute(
-            "UPDATE heygen_asset_uploads SET status='uploaded', remote_resource_id=?, "
+            "UPDATE heygen_asset_uploads SET status=?, remote_resource_id=?, "
             "uploaded_at=?, lease_owner=NULL, lease_expires_at=NULL, "
-            "attempt_started_at=NULL, next_retry_at=NULL, last_error_code=NULL, "
-            "updated_at=? WHERE upload_id=? AND status='uploading' AND lease_owner=? "
-            "AND lease_fence=? AND attempt_started_at IS NOT NULL",
-            (resource_id, now_iso, now_iso, upload_id, lease_owner, expected_fence),
+            "attempt_started_at=NULL, next_retry_at=NULL, last_error_code=?, "
+            "updated_at=? WHERE upload_id=? AND status='uploading' AND "
+            "lease_owner=? AND lease_fence=? AND attempt_started_at IS NOT NULL",
+            (upload_status, resource_id, now_iso, asset_error_code, now_iso,
+             upload_id, lease_owner, expected_fence),
         )
         if cur.rowcount != 1:
             raise OperationIntegrityError(
                 f"asset upload {upload_id!r} fence conflict — lease no longer held "
                 f"(owner={lease_owner!r}, fence={expected_fence})")
-        return resource_id
+        return AssetApplyOutcome(
+            status=upload_status, resource_id=resource_id)
 
     def apply_asset_upload_failure_in_tx(
         self, conn: sqlite3.Connection, *, upload_id: str, error_code: str,
@@ -2220,7 +2255,8 @@ def _validate_asset_binding(
             or res["created_by_operation_id"] != parent_operation_id
             or res["credential_profile_id"] != credential_profile_id
             or res["retention_mode"] != expected_retention
-            or res["deletion_status"] != "not_started"
+            or res["deletion_status"] not in
+            ("not_started", "deletion_pending", "deleted", "deletion_failed")
             or (expected_remote_id is not None
                 and res["remote_id"] != expected_remote_id)):
         raise OperationIntegrityError(
@@ -2234,6 +2270,39 @@ def _validate_asset_binding(
             f"asset binding resource_id={remote_resource_id} has foreign or "
             f"missing operation refs")
     return remote_resource_id
+
+
+# Consent classification at fenced-apply time (the withdrawn/integrity race).
+_CONSENT_INTEGRITY_ERROR_CODE = "consent_integrity_failure"
+
+
+def _classify_apply_consent(receipt_row) -> tuple[str, str | None]:
+    """Classify the parent receipt at fenced-apply time. Returns
+    (classification, asset_error_code):
+      granted    → upload normally, resource not_started
+      withdrawn  → cleanup_required, resource deletion_pending/consent_withdrawal
+      integrity  → declined/missing/corrupt → cleanup_required, resource
+                   deletion_pending/manual_force + consent_integrity_failure
+    """
+    if receipt_row is None:
+        return ("integrity", _CONSENT_INTEGRITY_ERROR_CODE)
+    status = receipt_row["status"]
+    if status == "granted":
+        return ("granted", None)
+    if status == "withdrawn":
+        return ("withdrawn", None)
+    # declined (or any non-granted/non-withdrawn) → integrity problem
+    return ("integrity", _CONSENT_INTEGRITY_ERROR_CODE)
+
+
+def _outcome_status_for_resource_deletion(deletion_status: str) -> str:
+    """Map a resource's deletion_status to the AssetApplyOutcome.status that
+    faithfully reports it (idempotent replay)."""
+    if deletion_status == "not_started":
+        return "uploaded"
+    if deletion_status == "deleted":
+        return "deleted"
+    return "cleanup_required"  # deletion_pending / deletion_failed
 
 
 # --- asset upload processor (§5.5e5b0c2) --------------------------------
@@ -2257,6 +2326,22 @@ class AssetUploadClaim:
     attempts: int
     resource_id: int | None
     command: AssetUploadCommand
+
+
+@dataclass(frozen=True)
+class AssetApplyOutcome:
+    """Result of applying a successful upload. status reflects whether the
+    resource is consumable: uploaded (resource not_started), cleanup_required
+    (resource deletion_pending/deletion_failed — consent withdrawn or integrity
+    problem at apply time), or deleted. resource_id is always the bound row."""
+    status: str  # "uploaded" | "cleanup_required" | "deleted"
+    resource_id: int
+
+    def __post_init__(self) -> None:
+        if self.status not in ("uploaded", "cleanup_required", "deleted"):
+            raise ValueError(f"unknown AssetApplyOutcome.status: {self.status!r}")
+        if type(self.resource_id) is not int or self.resource_id <= 0:
+            raise ValueError("resource_id must be a positive int")
 
 
 @dataclass(frozen=True)
@@ -2324,9 +2409,12 @@ class AssetUploadProcessor:
     def apply_outcome(
         self, *, claim: AssetUploadClaim, asset_result: AssetUploadResult,
         lease_owner: str, now_iso: str,
-    ) -> int:
+    ) -> AssetApplyOutcome:
         """Fenced apply of a successful upload (second tx). Validates the
-        adapter result matches the command, then CAS on lease_owner+fence."""
+        adapter result matches the command, then CAS on lease_owner+fence. The
+        outcome.status is uploaded only if consent was still granted at apply
+        time; withdrawn/integrity → cleanup_required (resource recorded but
+        marked for deletion)."""
         _validate_asset_upload_result(asset_result, claim.command)
         with self._repository.begin_immediate() as conn:
             return self._repository.apply_asset_outcome_in_tx(
@@ -2376,9 +2464,10 @@ class AssetUploadProcessor:
             status = self.apply_failure(
                 claim=claim, error=exc, lease_owner=lease_owner, now_iso=now_iso)
             return AssetUploadOnceResult(status=status, error_code=exc.code)
-        resource_id = self.apply_outcome(
+        outcome = self.apply_outcome(
             claim=claim, asset_result=result, lease_owner=lease_owner, now_iso=now_iso)
-        return AssetUploadOnceResult(status="uploaded", resource_id=resource_id)
+        return AssetUploadOnceResult(status=outcome.status,
+                                     resource_id=outcome.resource_id)
 
 
 # --- coordinator -------------------------------------------------------
