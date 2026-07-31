@@ -1848,7 +1848,8 @@ class TestRecoverDeletions:
             conn.close()
         with repo.begin_immediate() as conn:
             outcome = repo.apply_deletion_outcome_in_tx(
-                conn, "op1", rid, OWNER, claim.fence, NOW, DeleteResult("deleted"))
+                conn, "op1", rid, OWNER, claim.fence, NOW, DeleteResult("deleted"),
+                expected_remote_id=claim.remote_id)
         # The reason swap must be rejected BEFORE any outcome path — no deletion,
         # no lease clear.
         assert outcome.status == "fence_conflict"
@@ -1883,7 +1884,8 @@ class TestRecoverDeletions:
         # No mutation between the two fenced txs.
         with repo.begin_immediate() as conn:
             outcome = repo.apply_deletion_outcome_in_tx(
-                conn, "op1", rid, OWNER, claim.fence, NOW, DeleteResult("deleted"))
+                conn, "op1", rid, OWNER, claim.fence, NOW, DeleteResult("deleted"),
+                expected_remote_id=claim.remote_id)
         assert outcome.status == "deleted"
         conn = _fresh_conn(td)
         try:
@@ -1918,7 +1920,8 @@ class TestRecoverDeletions:
             conn.close()
         with repo.begin_immediate() as conn:
             outcome = repo.apply_deletion_outcome_in_tx(
-                conn, "op1", rid, OWNER, claim.fence, NOW, DeleteResult("deleted"))
+                conn, "op1", rid, OWNER, claim.fence, NOW, DeleteResult("deleted"),
+                expected_remote_id=claim.remote_id)
         assert outcome.status == "deleted"
         conn = _fresh_conn(td)
         try:
@@ -1927,6 +1930,143 @@ class TestRecoverDeletions:
                 "WHERE resource_id=?", (rid,)).fetchone()
             assert v["deletion_status"] == "deleted"
             assert v["deletion_reason"] == "consent_withdrawal"
+        finally:
+            conn.close()
+
+    def test_apply_rejects_retention_swap_to_reusable_between_claim_and_apply(self, tmp_path):
+        # T18a / round-12 F1a: post_download cleanup is authorized by an EPHEMERAL
+        # op's verified delivery. claim verifies retention_mode='ephemeral' in tx1
+        # (which CLOSES before apply). Between tx1 and tx2 a schema-legal UPDATE
+        # flips retention_mode='reusable_avatar' while deletion_status stays
+        # deletion_pending and reason stays post_download. Before round-12, video
+        # apply re-checked ONLY reason + single-video (not retention), so a
+        # reusable_avatar video was auto-deleted — violating "reusable_avatar is
+        # NEVER swept". Round-12 makes apply re-verify retention_mode='ephemeral'
+        # (post_download only) against the CURRENT row.
+        td = _db()
+        rid = _setup_full_op(td, video_ds="not_started")  # verified + v1 ephemeral
+        repo = OperationRepository(td)
+        with repo.begin_immediate() as conn:
+            claim = repo.claim_deletion_in_tx(conn, "op1", rid, OWNER, NOW, LEASE_SECONDS)
+        assert claim.status == "claimed"
+        # TOCTOU seam: a SEPARATE connection flips ONLY retention_mode.
+        conn = _fresh_conn(td)
+        try:
+            conn.execute(
+                "UPDATE heygen_remote_resources SET retention_mode='reusable_avatar' "
+                "WHERE resource_id=?", (rid,))
+            conn.commit()
+        finally:
+            conn.close()
+        with repo.begin_immediate() as conn:
+            outcome = repo.apply_deletion_outcome_in_tx(
+                conn, "op1", rid, OWNER, claim.fence, NOW, DeleteResult("deleted"),
+                expected_remote_id=claim.remote_id)
+        assert outcome.status == "fence_conflict"
+        conn = _fresh_conn(td)
+        try:
+            v = conn.execute(
+                "SELECT deletion_status, deletion_reason, retention_mode "
+                "FROM heygen_remote_resources WHERE resource_id=?", (rid,)).fetchone()
+            assert v["deletion_status"] == "deletion_pending"  # survived
+            assert v["deletion_reason"] == "post_download"
+            assert v["retention_mode"] == "reusable_avatar"   # marker intact
+            op = conn.execute(
+                "SELECT lease_owner, lease_expires_at FROM heygen_operations "
+                "WHERE operation_id='op1'").fetchone()
+            assert op["lease_owner"] == OWNER  # lease NOT cleared
+            assert op["lease_expires_at"] is not None
+        finally:
+            conn.close()
+
+    def test_apply_rejects_download_status_swap_between_claim_and_apply(self, tmp_path):
+        # T18b / round-12 F1b: post_download cleanup is OP-LEVEL-authorized by a
+        # VERIFIED delivery. Between claim (tx1) and apply (tx2) a schema-legal
+        # UPDATE flips op.download_status='not_started' (reason stays post_download,
+        # retention stays ephemeral, single-video intact). Before round-12, video
+        # apply never re-checked op.download_status, so a video whose delivery had
+        # been un-verified mid-sweep was still auto-deleted. Round-12 makes apply
+        # re-verify op.download_status='verified' (post_download only) against the
+        # CURRENT row. (consent_withdrawal is exempt — T17w-ctrl-consent mutates
+        # download_status and still deletes.)
+        td = _db()
+        rid = _setup_full_op(td, video_ds="not_started")
+        repo = OperationRepository(td)
+        with repo.begin_immediate() as conn:
+            claim = repo.claim_deletion_in_tx(conn, "op1", rid, OWNER, NOW, LEASE_SECONDS)
+        assert claim.status == "claimed"
+        conn = _fresh_conn(td)
+        try:
+            conn.execute(
+                "UPDATE heygen_operations SET download_status='not_started' "
+                "WHERE operation_id='op1'")
+            conn.commit()
+        finally:
+            conn.close()
+        with repo.begin_immediate() as conn:
+            outcome = repo.apply_deletion_outcome_in_tx(
+                conn, "op1", rid, OWNER, claim.fence, NOW, DeleteResult("deleted"),
+                expected_remote_id=claim.remote_id)
+        assert outcome.status == "fence_conflict"
+        conn = _fresh_conn(td)
+        try:
+            v = conn.execute(
+                "SELECT deletion_status, deletion_reason FROM heygen_remote_resources "
+                "WHERE resource_id=?", (rid,)).fetchone()
+            assert v["deletion_status"] == "deletion_pending"
+            assert v["deletion_reason"] == "post_download"
+            op = conn.execute(
+                "SELECT lease_owner, lease_expires_at, download_status "
+                "FROM heygen_operations WHERE operation_id='op1'").fetchone()
+            assert op["lease_owner"] == OWNER  # lease NOT cleared
+            assert op["download_status"] == "not_started"  # marker intact
+        finally:
+            conn.close()
+
+    def test_apply_rejects_remote_id_swap_between_claim_and_apply(self, tmp_path):
+        # T18c / round-12 F2: the fenced claim returns remote_id and the adapter
+        # DELETEs THAT id outside any tx; the fenced apply then records the
+        # outcome. Between tx1 and tx2 a schema-legal UPDATE renames the row's
+        # remote_id (v1 -> v1-RENAMED) while status/reason/retention stay valid.
+        # The adapter deleted v1; before round-12 video apply received NO
+        # expected_remote_id and never inspected remote_id, so it recorded the
+        # (now renamed) row deleted — journal/remote divergence (journal marks the
+        # renamed id deleted, adapter deleted v1). Round-12 re-binds r.remote_id=?
+        # to claim.remote_id in tx2 so a rename returns no topology row ->
+        # fence_conflict. (Mirror asset apply :2130, which has always defended this.)
+        td = _db()
+        rid = _setup_full_op(td, video_ds="not_started")
+        repo = OperationRepository(td)
+        with repo.begin_immediate() as conn:
+            claim = repo.claim_deletion_in_tx(conn, "op1", rid, OWNER, NOW, LEASE_SECONDS)
+        assert claim.status == "claimed"
+        assert claim.remote_id == "v1"  # _setup_full_op video remote_id
+        # Adapter would delete claim.remote_id == 'v1' here.
+        conn = _fresh_conn(td)
+        try:
+            conn.execute(
+                "UPDATE heygen_remote_resources SET remote_id='v1-RENAMED' "
+                "WHERE resource_id=?", (rid,))
+            conn.commit()
+        finally:
+            conn.close()
+        with repo.begin_immediate() as conn:
+            outcome = repo.apply_deletion_outcome_in_tx(
+                conn, "op1", rid, OWNER, claim.fence, NOW, DeleteResult("deleted"),
+                expected_remote_id=claim.remote_id)  # 'v1' — the id adapter deleted
+        assert outcome.status == "fence_conflict"
+        conn = _fresh_conn(td)
+        try:
+            v = conn.execute(
+                "SELECT deletion_status, deletion_reason, remote_id "
+                "FROM heygen_remote_resources WHERE resource_id=?", (rid,)).fetchone()
+            assert v["deletion_status"] == "deletion_pending"  # survived
+            assert v["remote_id"] == "v1-RENAMED"              # rename intact
+            op = conn.execute(
+                "SELECT lease_owner, lease_expires_at FROM heygen_operations "
+                "WHERE operation_id='op1'").fetchone()
+            assert op["lease_owner"] == OWNER  # lease NOT cleared
+            assert op["lease_expires_at"] is not None
         finally:
             conn.close()
 
