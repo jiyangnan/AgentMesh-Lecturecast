@@ -2253,6 +2253,26 @@ class OperationRepository:
             "next_retry_at=NULL, updated_at=? WHERE upload_id=?",
             (now_iso, upload_id))
 
+    def recover_withdrawn_asset_cleanups(self, *, now_iso: str) -> dict[str, int]:
+        """Maintenance recovery: for every operation with a withdrawn receipt,
+        re-run the consent-withdrawal cleanup enqueue. Idempotent — covers the
+        crash window where ConsentService.withdraw committed the receipt flip but
+        crashed before/during the enqueue. Network deletion itself runs in a
+        later pass; this only reconciles journal state. Returns an aggregate
+        tally across all recovered operations."""
+        aggregate = {"cancelled": 0, "cleanup_required": 0, "manual": 0,
+                     "kept": 0, "left_uploading": 0}
+        with self.begin_immediate() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT operation_id FROM heygen_consent_receipts "
+                "WHERE status='withdrawn'").fetchall()
+            for r in rows:
+                tally = self.enqueue_consent_withdrawal_cleanup_in_tx(
+                    conn, parent_operation_id=r["operation_id"], now_iso=now_iso)
+                for key, val in tally.items():
+                    aggregate[key] = aggregate.get(key, 0) + val
+        return aggregate
+
 
 def _output_ref(operation_id: str) -> str:
     return f"outputs/heygen/{operation_id}.mp4"
