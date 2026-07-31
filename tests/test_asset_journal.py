@@ -26,7 +26,9 @@ from lecturecast.operation_repository import (
     OperationIntegrityError,
     _check_asset_resource_consistency,
     _CONSENT_INTEGRITY_ERROR_CODE,
+    AssetDeletionProcessor,
 )
+from lecturecast.heygen_asset_adapter import AssetDeleteResult, AssetReadError
 
 
 D_PORT = "sha256:" + "a" * 64
@@ -1503,3 +1505,563 @@ class TestMarkAssetCleanupGuards:
             assert self._resource(conn)["deletion_status"] == "not_started"
         finally:
             conn.close()
+
+
+# === asset deletion lifecycle (§5.5e5b0c3c) ================================
+#
+# c1 primitives: claim_asset_deletion_in_tx / apply_asset_deletion_outcome_in_tx
+# / AssetDeletionProcessor.delete_once. Fenced on the asset's OWN lease columns;
+# claim flips asset uploaded→cleanup_required + resource not_started→
+# deletion_pending(post_download) in one tx so the correspondence matrix stays
+# self-consistent. manual_force resources are never auto-deleted.
+
+def _setup_uploaded_for_delete():
+    """granted receipt → asset 'uploaded' + resource 'not_started' (the normal
+    post-download starting point for asset deletion). Returns (conn, td, repo)
+    with an open BEGIN tx."""
+    conn, td = _db()
+    conn.execute("BEGIN"); _add_parent_op(conn)
+    repo = OperationRepository(Path(td))
+    c = _do_claim(repo, conn)
+    repo.apply_asset_outcome_in_tx(
+        conn, upload_id=_U1, asset_id="ax",
+        now_iso="2026-07-30T00:00:01Z",
+        lease_owner=LEASE, expected_fence=c.fence)
+    return conn, td, repo
+
+
+def _asset(conn):
+    return conn.execute(
+        "SELECT * FROM heygen_asset_uploads WHERE upload_id=?", (_U1,)).fetchone()
+
+
+def _resource(conn):
+    return conn.execute(
+        "SELECT * FROM heygen_remote_resources WHERE remote_id='ax'").fetchone()
+
+
+def _force_state(conn, *, asset_status, ds, reason=None, lec=None,
+                 attempts=0, next_retry=None, asset_err=None,
+                 lease_owner=None, lease_exp=None, att_started=None):
+    """Stamp both rows to an exact (asset_status, resource deletion) pair that
+    satisfies the correspondence matrix, clearing the asset lease unless an
+    active/half lease is explicitly requested."""
+    conn.execute(
+        "UPDATE heygen_asset_uploads SET status=?, last_error_code=?, "
+        "lease_owner=?, lease_expires_at=?, attempt_started_at=?, "
+        "next_retry_at=? WHERE upload_id=?",
+        (asset_status, asset_err, lease_owner, lease_exp, att_started,
+         None, _U1))
+    conn.execute(
+        "UPDATE heygen_remote_resources SET deletion_status=?, deletion_reason=?, "
+        "last_deletion_error=?, deletion_attempts=?, deletion_next_retry_at=? "
+        "WHERE remote_id='ax'",
+        (ds, reason, lec, attempts, next_retry))
+
+
+class TestAssetDeletionClaim:
+    def test_uploaded_flips_to_cleanup_and_pending(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
+            assert claim.status == "claimed"
+            assert claim.remote_id == "ax"
+            assert claim.resource_id == _resource(conn)["resource_id"]
+            # asset uploaded→cleanup_required, resource not_started→deletion_pending(post_download)
+            a = _asset(conn); r = _resource(conn)
+            assert a["status"] == "cleanup_required"
+            assert r["deletion_status"] == "deletion_pending"
+            assert r["deletion_reason"] == "post_download"
+            assert r["deletion_attempts"] == 1
+            # lease acquired on the asset's OWN columns; fence bumped 1→2.
+            assert a["lease_owner"] == LEASE
+            assert a["lease_expires_at"] == "2026-07-30T00:01:00+00:00"
+            assert a["lease_fence"] == 2
+            assert a["attempt_started_at"] is not None
+            assert claim.fence == 2
+        finally:
+            conn.close()
+
+    def test_cleanup_required_reclaim_inherits_reason(self):
+        # A consent_withdrawal resource (asset cleanup_required, resource
+        # deletion_pending/consent_withdrawal) reclaims WITHOUT reseeding
+        # post_download — the reason is inherited.
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            _force_state(conn, asset_status="cleanup_required", ds="deletion_pending",
+                         reason="consent_withdrawal", attempts=1)
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
+            assert claim.status == "claimed"
+            r = _resource(conn)
+            assert r["deletion_status"] == "deletion_pending"
+            assert r["deletion_reason"] == "consent_withdrawal"
+            assert r["deletion_attempts"] == 2
+        finally:
+            conn.close()
+
+    def test_unknown_upload_not_ready(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id="does-not-exist", lease_owner=LEASE,
+                now_iso=NOW, lease_seconds=60)
+            assert claim.status == "not_ready"
+            assert claim.resource_id is None
+        finally:
+            conn.close()
+
+    @pytest.mark.parametrize("asset_status", [
+        "upload_pending", "uploading", "failed", "cancelled",
+        "reconciliation_required", "manual_reconciliation_required", "deleted",
+    ])
+    def test_not_ready_for_ineligible_asset_status(self, asset_status):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            _force_state(conn, asset_status=asset_status, ds="not_started")
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
+            assert claim.status == "not_ready"
+        finally:
+            conn.close()
+
+    def test_not_ready_for_deleted_resource(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            _force_state(conn, asset_status="deleted", ds="deleted", reason="post_download")
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
+            assert claim.status == "not_ready"
+        finally:
+            conn.close()
+
+    def test_not_ready_for_manual_force_resource(self):
+        # manual_force is the integrity path's durable record — never auto-delete.
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            _force_state(conn, asset_status="cleanup_required", ds="deletion_pending",
+                         reason="manual_force", asset_err=_CONSENT_INTEGRITY_ERROR_CODE)
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
+            assert claim.status == "not_ready"
+            assert _asset(conn)["status"] == "cleanup_required"
+            assert _resource(conn)["deletion_reason"] == "manual_force"
+        finally:
+            conn.close()
+
+    def test_not_ready_for_deletion_failed_manual_code(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            _force_state(conn, asset_status="cleanup_required", ds="deletion_failed",
+                         reason="post_download", lec="deletion_retry_exhausted", attempts=1)
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
+            assert claim.status == "not_ready"
+        finally:
+            conn.close()
+
+    def test_not_ready_when_attempts_exhausted(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            _force_state(conn, asset_status="cleanup_required", ds="deletion_failed",
+                         reason="post_download", lec="network_timeout", attempts=3)
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
+            assert claim.status == "not_ready"
+        finally:
+            conn.close()
+
+    def test_retry_wait_when_backoff_not_elapsed(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            _force_state(conn, asset_status="cleanup_required", ds="deletion_failed",
+                         reason="post_download", lec="network_timeout", attempts=1,
+                         next_retry="2026-07-30T00:05:00+00:00")
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
+            assert claim.status == "retry_wait"
+        finally:
+            conn.close()
+
+    def test_reclaim_after_backoff_eligible(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            _force_state(conn, asset_status="cleanup_required", ds="deletion_failed",
+                         reason="post_download", lec="network_timeout", attempts=1,
+                         next_retry=None)  # backoff elapsed
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
+            assert claim.status == "claimed"
+            assert _resource(conn)["deletion_status"] == "deletion_pending"
+            assert _resource(conn)["deletion_reason"] == "post_download"
+            assert _resource(conn)["deletion_attempts"] == 2
+        finally:
+            conn.close()
+
+    def test_busy_on_active_lease(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            _force_state(conn, asset_status="cleanup_required", ds="deletion_pending",
+                         reason="post_download", attempts=1,
+                         lease_owner="other-worker",
+                         lease_exp="2026-07-30T00:05:00+00:00",
+                         att_started="2026-07-30T00:00:00+00:00")
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
+            assert claim.status == "busy"
+        finally:
+            conn.close()
+
+    def test_half_lease_raises(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            _force_state(conn, asset_status="cleanup_required", ds="deletion_pending",
+                         reason="post_download", attempts=1,
+                         lease_owner="other-worker", lease_exp=None)  # half lease
+            with pytest.raises(OperationIntegrityError):
+                repo.claim_asset_deletion_in_tx(
+                    conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
+        finally:
+            conn.close()
+
+    def test_rejects_foreign_resource(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            _add_parent_op(conn, op_id="op_other")
+            conn.execute(
+                "UPDATE heygen_remote_resources SET created_by_operation_id='op_other' "
+                "WHERE remote_id='ax'")
+            with pytest.raises(OperationIntegrityError):
+                repo.claim_asset_deletion_in_tx(
+                    conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
+            assert _asset(conn)["status"] == "uploaded"
+            assert _resource(conn)["deletion_status"] == "not_started"
+        finally:
+            conn.close()
+
+    def test_rejects_missing_resource_ref(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            rid = _resource(conn)["resource_id"]
+            conn.execute(
+                "DELETE FROM heygen_resource_operation_refs "
+                "WHERE resource_id=? AND operation_id='op1'", (rid,))
+            with pytest.raises(OperationIntegrityError):
+                repo.claim_asset_deletion_in_tx(
+                    conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
+            assert _asset(conn)["status"] == "uploaded"
+        finally:
+            conn.close()
+
+    def test_claim_preserves_error_code(self):
+        # The claim SET must not clear last_error_code (the manual_force marker
+        # must persist through reclaim). Verified with a sentinel on a
+        # non-manual cleanup_required resource.
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            _force_state(conn, asset_status="cleanup_required", ds="deletion_pending",
+                         reason="consent_withdrawal", attempts=1)
+            conn.execute(
+                "UPDATE heygen_asset_uploads SET last_error_code='sentinel' "
+                "WHERE upload_id=?", (_U1,))
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
+            assert claim.status == "claimed"
+            assert _asset(conn)["last_error_code"] == "sentinel"
+        finally:
+            conn.close()
+
+
+class TestApplyAssetDeletionOutcome:
+    def _claim(self, repo, conn, max_attempts=3):
+        return repo.claim_asset_deletion_in_tx(
+            conn, upload_id=_U1, lease_owner=LEASE, now_iso=NOW,
+            lease_seconds=60, max_attempts=max_attempts)
+
+    def test_apply_deleted_flips_both_rows(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = self._claim(repo, conn)
+            rid = claim.resource_id
+            out = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
+                fence=claim.fence, now_iso="2026-07-30T00:00:30Z",
+                result=AssetDeleteResult(status="deleted"))
+            assert out.status == "deleted"
+            a = _asset(conn); r = _resource(conn)
+            assert a["status"] == "deleted"
+            assert r["deletion_status"] == "deleted"
+            assert r["deleted_at"] == "2026-07-30T00:00:30+00:00"
+            assert r["last_deletion_error"] is None
+            # lease cleared, fence preserved
+            assert a["lease_owner"] is None
+            assert a["attempt_started_at"] is None
+            assert a["lease_fence"] == claim.fence
+            assert a["last_error_code"] is None
+        finally:
+            conn.close()
+
+    def test_apply_already_absent_is_deleted(self):
+        # 404 is idempotent success per spec §3.5.
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = self._claim(repo, conn)
+            rid = claim.resource_id
+            out = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
+                fence=claim.fence, now_iso=NOW,
+                result=AssetDeleteResult(status="already_absent"))
+            assert out.status == "deleted"
+            assert _asset(conn)["status"] == "deleted"
+            assert _resource(conn)["deletion_status"] == "deleted"
+        finally:
+            conn.close()
+
+    def test_apply_retryable_sets_backoff(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = self._claim(repo, conn)
+            rid = claim.resource_id
+            out = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
+                fence=claim.fence, now_iso=NOW,
+                result=AssetReadError(code="network_timeout", retryable=True))
+            assert out.status == "failed"
+            assert out.last_error == "network_timeout"
+            assert out.next_retry_at == "2026-07-30T00:02:00+00:00"
+            a = _asset(conn); r = _resource(conn)
+            assert a["status"] == "cleanup_required"
+            assert a["lease_owner"] is None
+            assert a["attempt_started_at"] is None
+            assert a["lease_fence"] == claim.fence
+            assert r["deletion_status"] == "deletion_failed"
+            assert r["last_deletion_error"] == "network_timeout"
+            assert r["deletion_next_retry_at"] == "2026-07-30T00:02:00+00:00"
+        finally:
+            conn.close()
+
+    def test_apply_permanent_sets_reconciliation_required(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = self._claim(repo, conn)
+            rid = claim.resource_id
+            out = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
+                fence=claim.fence, now_iso=NOW,
+                result=AssetReadError(code="validation_error", retryable=False))
+            assert out.status == "failed"
+            assert out.last_error == "deletion_reconciliation_required"
+            assert out.next_retry_at is None
+            r = _resource(conn)
+            assert r["deletion_status"] == "deletion_failed"
+            assert r["last_deletion_error"] == "deletion_reconciliation_required"
+            assert r["deletion_next_retry_at"] is None
+        finally:
+            conn.close()
+
+    def test_apply_exhausted_sets_retry_exhausted(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = self._claim(repo, conn, max_attempts=2)
+            rid = claim.resource_id
+            # Simulate being on the LAST allowed attempt.
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_attempts=2 "
+                "WHERE remote_id='ax'")
+            out = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
+                fence=claim.fence, now_iso=NOW, max_attempts=2,
+                result=AssetReadError(code="network_timeout", retryable=True))
+            assert out.status == "failed"
+            assert out.last_error == "deletion_retry_exhausted"
+            assert out.next_retry_at is None
+            assert _resource(conn)["last_deletion_error"] == "deletion_retry_exhausted"
+        finally:
+            conn.close()
+
+    def test_apply_fence_conflict_wrong_owner(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = self._claim(repo, conn)
+            rid = claim.resource_id
+            out = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id=_U1, resource_id=rid, lease_owner="not-the-owner",
+                fence=claim.fence, now_iso=NOW,
+                result=AssetDeleteResult(status="deleted"))
+            assert out.status == "fence_conflict"
+            assert _asset(conn)["status"] == "cleanup_required"
+            assert _resource(conn)["deletion_status"] == "deletion_pending"
+        finally:
+            conn.close()
+
+    def test_apply_fence_conflict_wrong_fence(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = self._claim(repo, conn)
+            rid = claim.resource_id
+            out = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
+                fence=claim.fence + 99, now_iso=NOW,
+                result=AssetDeleteResult(status="deleted"))
+            assert out.status == "fence_conflict"
+        finally:
+            conn.close()
+
+    def test_apply_fence_conflict_when_resource_not_pending(self):
+        # resource flipped to deleted between claim and apply → the lease CAS
+        # row read still matches (asset still cleanup_required+leased), but the
+        # gated resource UPDATE matches 0 rows → fence_conflict (never resurrect).
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = self._claim(repo, conn)
+            rid = claim.resource_id
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_status='deleted', "
+                "deletion_reason='post_download' WHERE remote_id='ax'")
+            out = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
+                fence=claim.fence, now_iso=NOW,
+                result=AssetDeleteResult(status="deleted"))
+            assert out.status == "fence_conflict"
+        finally:
+            conn.close()
+
+    def test_apply_rejects_foreign_resource(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        try:
+            claim = self._claim(repo, conn)
+            rid = claim.resource_id
+            _add_parent_op(conn, op_id="op_other")
+            conn.execute(
+                "UPDATE heygen_remote_resources SET created_by_operation_id='op_other' "
+                "WHERE remote_id='ax'")
+            with pytest.raises(OperationIntegrityError):
+                repo.apply_asset_deletion_outcome_in_tx(
+                    conn, upload_id=_U1, resource_id=rid, lease_owner=LEASE,
+                    fence=claim.fence, now_iso=NOW,
+                    result=AssetDeleteResult(status="deleted"))
+        finally:
+            conn.close()
+
+
+class _FakeAdapter:
+    def __init__(self, *, result=None, exc=None):
+        self._result = result
+        self._exc = exc
+
+    def delete_asset(self, asset_id):
+        if self._exc is not None:
+            raise self._exc
+        return self._result
+
+
+class TestAssetDeletionProcessor:
+    def _db_path(self, td):
+        return str(Path(td) / ".lecturecast" / "runtime" / "heygen-operations.db")
+
+    def test_happy_path_deleted(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        rid = _resource(conn)["resource_id"]
+        conn.commit(); conn.close()
+        proc = AssetDeletionProcessor(td)
+        res = proc.delete_once(
+            upload_id=_U1, lease_owner=LEASE,
+            adapter=_FakeAdapter(result=AssetDeleteResult(status="deleted")),
+            now_iso=NOW, lease_seconds=60)
+        assert res.claim.status == "claimed"
+        assert res.outcome.status == "deleted"
+        conn2 = sqlite3.connect(self._db_path(td))
+        conn2.row_factory = sqlite3.Row
+        a = conn2.execute("SELECT status FROM heygen_asset_uploads WHERE upload_id=?", (_U1,)).fetchone()
+        r = conn2.execute("SELECT deletion_status FROM heygen_remote_resources WHERE resource_id=?", (rid,)).fetchone()
+        assert a["status"] == "deleted"
+        assert r["deletion_status"] == "deleted"
+        conn2.close()
+
+    def test_already_absent_is_deleted(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        conn.commit(); conn.close()
+        proc = AssetDeletionProcessor(td)
+        res = proc.delete_once(
+            upload_id=_U1, lease_owner=LEASE,
+            adapter=_FakeAdapter(result=AssetDeleteResult(status="already_absent")),
+            now_iso=NOW, lease_seconds=60)
+        assert res.outcome.status == "deleted"
+
+    def test_retryable_error_failed_retry(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        conn.commit(); conn.close()
+        proc = AssetDeletionProcessor(td)
+        res = proc.delete_once(
+            upload_id=_U1, lease_owner=LEASE,
+            adapter=_FakeAdapter(exc=AssetReadError(code="rate_limited", retryable=True)),
+            now_iso=NOW, lease_seconds=60)
+        assert res.outcome.status == "failed"
+        assert res.outcome.last_error == "rate_limited"
+        assert res.outcome.next_retry_at is not None
+
+    def test_permanent_error_failed_terminal(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        conn.commit(); conn.close()
+        proc = AssetDeletionProcessor(td)
+        res = proc.delete_once(
+            upload_id=_U1, lease_owner=LEASE,
+            adapter=_FakeAdapter(exc=AssetReadError(code="auth_failed", retryable=False)),
+            now_iso=NOW, lease_seconds=60)
+        assert res.outcome.status == "failed"
+        assert res.outcome.last_error == "deletion_reconciliation_required"
+        assert res.outcome.next_retry_at is None
+
+    def test_not_ready_claim_no_outcome(self):
+        # resource already deleted → claim not_ready → no adapter call, no outcome
+        conn, td, repo = _setup_uploaded_for_delete()
+        _force_state(conn, asset_status="deleted", ds="deleted", reason="post_download")
+        conn.commit(); conn.close()
+        proc = AssetDeletionProcessor(td)
+        res = proc.delete_once(
+            upload_id=_U1, lease_owner=LEASE,
+            adapter=_FakeAdapter(result=AssetDeleteResult(status="deleted")),
+            now_iso=NOW, lease_seconds=60)
+        assert res.claim.status == "not_ready"
+        assert res.outcome is None
+
+    def test_busy_claim_no_outcome(self):
+        conn, td, repo = _setup_uploaded_for_delete()
+        _force_state(conn, asset_status="cleanup_required", ds="deletion_pending",
+                     reason="post_download", attempts=1,
+                     lease_owner="other-worker",
+                     lease_exp="2026-07-30T00:05:00+00:00",
+                     att_started="2026-07-30T00:00:00+00:00")
+        conn.commit(); conn.close()
+        proc = AssetDeletionProcessor(td)
+        res = proc.delete_once(
+            upload_id=_U1, lease_owner=LEASE,
+            adapter=_FakeAdapter(result=AssetDeleteResult(status="deleted")),
+            now_iso=NOW, lease_seconds=60)
+        assert res.claim.status == "busy"
+        assert res.outcome is None
+
+    def test_unknown_exception_propagates(self):
+        # A non-AssetReadError exception from the adapter is NOT mapped to an
+        # outcome — it propagates, leaving the lease to expire (certainty is
+        # unknowable, never guess a phantom outcome).
+        conn, td, repo = _setup_uploaded_for_delete()
+        conn.commit(); conn.close()
+
+        class _Boom(Exception):
+            pass
+        proc = AssetDeletionProcessor(td)
+        with pytest.raises(_Boom):
+            proc.delete_once(
+                upload_id=_U1, lease_owner=LEASE,
+                adapter=_FakeAdapter(exc=_Boom("transport died")),
+                now_iso=NOW, lease_seconds=60)
+        # asset is now leased (cleanup_required) but no outcome applied; a later
+        # run after lease expiry can reclaim.
+        conn2 = sqlite3.connect(self._db_path(td))
+        conn2.row_factory = sqlite3.Row
+        a = conn2.execute("SELECT status, lease_owner FROM heygen_asset_uploads WHERE upload_id=?", (_U1,)).fetchone()
+        assert a["status"] == "cleanup_required"
+        assert a["lease_owner"] == LEASE
+        conn2.close()

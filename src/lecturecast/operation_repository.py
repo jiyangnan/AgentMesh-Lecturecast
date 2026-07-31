@@ -49,6 +49,7 @@ from lecturecast.heygen_journal import _chmod_secure, init_database
 from lecturecast.heygen_asset_adapter import (
     derive_asset_identity, AssetUploadCommand, AssetUploadResult,
     AssetUploadError, AssetUploadAmbiguousError,
+    AssetDeleteResult, AssetReadError,
 )
 
 _RUNTIME_DB = Path(".lecturecast") / "runtime" / "heygen-operations.db"
@@ -275,6 +276,33 @@ class DeletionOutcome:
 class DeletionOnceResult:
     claim: DeletionClaim
     outcome: DeletionOutcome | None
+
+
+@dataclass(frozen=True)
+class AssetDeletionClaim:
+    """Handle returned by claim_asset_deletion_in_tx. Fenced on the asset's OWN
+    lease columns (heygen_asset_uploads.lease_*), unlike video's operation lease."""
+    upload_id: str
+    resource_id: int | None
+    status: str          # "claimed" | "busy" | "retry_wait" | "not_ready"
+    fence: int
+    remote_id: str | None
+
+
+@dataclass(frozen=True)
+class AssetDeletionOutcome:
+    upload_id: str
+    resource_id: int
+    status: str          # "deleted" | "failed" | "fence_conflict"
+    fence: int
+    last_error: str | None
+    next_retry_at: str | None
+
+
+@dataclass(frozen=True)
+class AssetDeletionOnceResult:
+    claim: AssetDeletionClaim
+    outcome: AssetDeletionOutcome | None
 
 
 # --- repository --------------------------------------------------------
@@ -1798,6 +1826,291 @@ class OperationRepository:
         self._clear_operation_lease(conn, operation_id, now_c)
         return DeletionOutcome(operation_id, resource_id, "failed", fence, code, None)
 
+    # === asset deletion lifecycle (§5.5e5b0c3c) ==========================
+    #
+    # One-shot assets (portrait_photo / synthetic_narration_audio) are deleted
+    # via their OWN lease columns on heygen_asset_uploads (not the operation
+    # lease video uses). The claim flips asset uploaded→cleanup_required AND
+    # resource not_started→deletion_pending(post_download) in the SAME tx so
+    # the asset↔resource correspondence matrix (_check_asset_resource_consistency)
+    # is self-consistent at every recoverable point. manual_force resources
+    # (the fenced-apply integrity path's durable record) are NOT auto-deleted:
+    # claim returns not_ready, leaving them for human reconciliation — mirroring
+    # video claim_deletion_in_tx. Crash-safety: claim(tx1) → adapter.DELETE
+    # (outside tx) → apply(tx2); a crash at any point leaves a row the next run
+    # can reclaim (or, exhausted, mark manual).
+
+    def claim_asset_deletion_in_tx(
+        self, conn: sqlite3.Connection, *, upload_id: str,
+        lease_owner: str, now_iso: str, lease_seconds: int,
+        max_attempts: int = DELETION_MAX_ATTEMPTS,
+    ) -> AssetDeletionClaim:
+        """Claim an asset-deletion lease on the asset's own lease columns.
+        Eligibility: asset status ∈ {uploaded, cleanup_required} AND resource
+        deletion_status ∈ {not_started, deletion_pending(non-manual),
+        deletion_failed(retryable)}. Bumps asset.lease_fence +
+        resource.deletion_attempts; flips asset uploaded→cleanup_required and
+        resource not_started→deletion_pending(post_download). Half lease →
+        OperationIntegrityError; active lease → busy; manual_force → not_ready."""
+        self._require_tx(conn)
+        conn.row_factory = sqlite3.Row
+        _require_lease_owner(lease_owner)
+        if type(max_attempts) is not int or not (1 <= max_attempts <= 10):
+            raise ValueError("max_attempts must be an int in [1, 10]")
+        now = _parse_utc(now_iso)
+        now_c = _canonical(now)
+        _check_lease_seconds(lease_seconds)
+        expires_iso = _canonical(now + timedelta(seconds=lease_seconds))
+
+        row = conn.execute(
+            "SELECT upload_id, parent_operation_id, asset_role, status, "
+            "remote_resource_id, lease_owner, lease_expires_at, lease_fence, "
+            "attempt_started_at, last_error_code "
+            "FROM heygen_asset_uploads WHERE upload_id=?",
+            (upload_id,)).fetchone()
+        if row is None:
+            return AssetDeletionClaim(upload_id, None, "not_ready", 0, None)
+        status = row["status"]
+        if status not in ("uploaded", "cleanup_required"):
+            # upload_pending/uploading/failed/cancelled/reconciliation_required/
+            # manual_reconciliation_required/deleted are not deletion-eligible.
+            return AssetDeletionClaim(upload_id, row["remote_resource_id"],
+                                      "not_ready", row["lease_fence"], None)
+        rid = row["remote_resource_id"]
+        if rid is None:
+            raise OperationIntegrityError(
+                f"asset upload {upload_id!r} status {status!r} without "
+                f"remote_resource_id")
+
+        # Identity topology (fail-closed): re-verify the bound resource still
+        # belongs to this upload's parent, single-referenced, matching
+        # kind/credential/retention. A foreign/tampered resource_id is rejected.
+        op = conn.execute(
+            "SELECT credential_profile_id FROM heygen_operations "
+            "WHERE operation_id=?", (row["parent_operation_id"],)).fetchone()
+        if op is None:
+            raise OperationIntegrityError(
+                f"parent op missing for {upload_id!r}")
+        _validate_asset_binding(
+            conn, remote_resource_id=rid,
+            parent_operation_id=row["parent_operation_id"],
+            asset_role=row["asset_role"],
+            credential_profile_id=op["credential_profile_id"],
+            expected_remote_id=None)
+
+        res = conn.execute(
+            "SELECT deletion_status, deletion_reason, deletion_attempts, "
+            "deletion_next_retry_at, last_deletion_error, remote_id "
+            "FROM heygen_remote_resources WHERE resource_id=?",
+            (rid,)).fetchone()
+        if res is None:
+            raise OperationIntegrityError(
+                f"asset upload {upload_id!r} bound resource {rid} missing")
+
+        ds = res["deletion_status"]
+        reason = res["deletion_reason"]
+        # Never resurrect a deleted resource.
+        if ds == "deleted":
+            return AssetDeletionClaim(upload_id, rid, "not_ready",
+                                      row["lease_fence"], None)
+        if ds == "deletion_pending":
+            # manual_force is the integrity path's durable record — never
+            # auto-delete (mirror video claim). consent_withdrawal /
+            # post_download pending are eligible reclaims.
+            if reason == "manual_force":
+                return AssetDeletionClaim(upload_id, rid, "not_ready",
+                                          row["lease_fence"], None)
+            if reason not in ("post_download", "consent_withdrawal"):
+                raise OperationIntegrityError(
+                    f"resource {rid} deletion_pending unknown reason {reason!r}")
+        elif ds == "deletion_failed":
+            lec = res["last_deletion_error"]
+            if lec in _DELETION_MANUAL_CODES:
+                return AssetDeletionClaim(upload_id, rid, "not_ready",
+                                          row["lease_fence"], None)
+            if res["deletion_attempts"] >= max_attempts:
+                return AssetDeletionClaim(upload_id, rid, "not_ready",
+                                          row["lease_fence"], None)
+            nr = res["deletion_next_retry_at"]
+            if nr is not None and _parse_utc(nr) > now:
+                return AssetDeletionClaim(upload_id, rid, "retry_wait",
+                                          row["lease_fence"], None)
+            # Inherit the original reason on retry; manual_force never retries.
+            if reason == "manual_force":
+                return AssetDeletionClaim(upload_id, rid, "not_ready",
+                                          row["lease_fence"], None)
+            if reason not in ("post_download", "consent_withdrawal"):
+                raise OperationIntegrityError(
+                    f"resource {rid} deletion_failed unknown reason {reason!r}")
+        elif ds == "not_started":
+            # Normal post-download entry point. c2/c3 resolver gates ordering
+            # + receipt; c1 only requires the matrix to be advanceable. A
+            # not_started resource must carry no reason.
+            if reason is not None:
+                raise OperationIntegrityError(
+                    f"resource {rid} not_started with reason {reason!r}")
+        else:
+            raise OperationIntegrityError(
+                f"resource {rid} unknown deletion_status {ds!r}")
+
+        # Half lease → integrity error (never trust a half-state).
+        owner = row["lease_owner"]; exp = row["lease_expires_at"]
+        att = row["attempt_started_at"]
+        if (owner is None) != (exp is None):
+            raise OperationIntegrityError(
+                f"asset upload {upload_id!r} half lease")
+        if owner is not None and att is None:
+            raise OperationIntegrityError(
+                f"asset upload {upload_id!r} lease without attempt")
+        # Active lease → busy.
+        if owner is not None and _parse_utc(exp) > now:
+            return AssetDeletionClaim(upload_id, rid, "busy",
+                                      row["lease_fence"], None)
+
+        new_fence = row["lease_fence"] + 1
+        new_reason = "post_download" if ds == "not_started" else reason
+        # Resource: advance to deletion_pending, inherit reason (or seed
+        # post_download on first claim), bump attempts. GATED on the observed
+        # deletion_status so a concurrent mutation cannot resurrect a deleted
+        # row (rowcount 0 → busy, never a blind overwrite).
+        cur = conn.execute(
+            "UPDATE heygen_remote_resources SET deletion_status='deletion_pending', "
+            "deletion_reason=?, deletion_attempts=deletion_attempts+1, updated_at=? "
+            "WHERE resource_id=? AND deletion_status=?",
+            (new_reason, now_c, rid, ds))
+        if cur.rowcount == 0:
+            return AssetDeletionClaim(upload_id, rid, "busy", new_fence, None)
+        # Asset: uploaded→cleanup_required (first claim) or stay cleanup_required
+        # (reclaim); acquire the lease on the asset's OWN columns. lease_fence is
+        # PRESERVED across the upload lifecycle (upload apply does not clear it),
+        # so this monotonic bump spans upload→delete. last_error_code is NOT in
+        # the SET — the manual_force marker (consent_integrity_failure) must
+        # persist, and the granted/withdrawn path's NULL stays NULL.
+        conn.execute(
+            "UPDATE heygen_asset_uploads SET status='cleanup_required', "
+            "lease_owner=?, lease_expires_at=?, lease_fence=?, attempt_started_at=?, "
+            "next_retry_at=NULL, updated_at=? WHERE upload_id=?",
+            (lease_owner, expires_iso, new_fence, now_c, now_c, upload_id))
+        return AssetDeletionClaim(upload_id, rid, "claimed", new_fence,
+                                  res["remote_id"])
+
+    def apply_asset_deletion_outcome_in_tx(
+        self, conn: sqlite3.Connection, *, upload_id: str, resource_id: int,
+        lease_owner: str, fence: int, now_iso: str, result,
+        max_attempts: int = DELETION_MAX_ATTEMPTS,
+    ) -> AssetDeletionOutcome:
+        """Apply an asset-deletion outcome, fenced on the asset's OWN lease
+        (status='cleanup_required' AND lease_owner AND lease_fence AND
+        attempt_started_at IS NOT NULL). Re-verifies the FULL topology +
+        resource deletion_status='deletion_pending' (claim and apply are
+        separate txs — a foreign/tampered resource between them is rejected).
+        Maps AssetDeleteResult→deleted (200/404 are both idempotent success),
+        retryable AssetReadError→deletion_failed+backoff (asset stays
+        cleanup_required for reclaim), terminal→deletion_failed + manual code."""
+        self._require_tx(conn)
+        conn.row_factory = sqlite3.Row
+        now_c = _canonical(_parse_utc(now_iso))
+        if type(max_attempts) is not int or not (1 <= max_attempts <= 10):
+            raise ValueError("max_attempts must be an int in [1, 10]")
+        # Fence CAS on the asset's own lease columns.
+        row = conn.execute(
+            "SELECT remote_resource_id, asset_role, parent_operation_id "
+            "FROM heygen_asset_uploads "
+            "WHERE upload_id=? AND lease_owner=? AND lease_fence=? "
+            "AND status='cleanup_required' AND attempt_started_at IS NOT NULL",
+            (upload_id, lease_owner, fence)).fetchone()
+        if row is None:
+            return AssetDeletionOutcome(upload_id, resource_id, "fence_conflict",
+                                        fence, None, None)
+        rid = row["remote_resource_id"]
+        if rid is None:
+            raise OperationIntegrityError(
+                f"asset upload {upload_id!r} held lease without remote_resource_id")
+
+        # Re-verify full topology (claim/apply gap) + resource still pending.
+        op = conn.execute(
+            "SELECT credential_profile_id FROM heygen_operations "
+            "WHERE operation_id=?", (row["parent_operation_id"],)).fetchone()
+        if op is None:
+            raise OperationIntegrityError(
+                f"parent op missing for {upload_id!r}")
+        _validate_asset_binding(
+            conn, remote_resource_id=rid,
+            parent_operation_id=row["parent_operation_id"],
+            asset_role=row["asset_role"],
+            credential_profile_id=op["credential_profile_id"],
+            expected_remote_id=None)
+        res = conn.execute(
+            "SELECT deletion_attempts FROM heygen_remote_resources "
+            "WHERE resource_id=? AND deletion_status='deletion_pending'",
+            (rid,)).fetchone()
+        if res is None:
+            return AssetDeletionOutcome(upload_id, rid, "fence_conflict",
+                                        fence, None, None)
+
+        if isinstance(result, AssetDeleteResult):
+            # 200 (deleted) or 404 (already_absent) — both are idempotent
+            # success per spec §3.5.
+            cur = conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_status='deleted', "
+                "deleted_at=?, deletion_next_retry_at=NULL, last_deletion_error=NULL, "
+                "updated_at=? WHERE resource_id=? AND deletion_status='deletion_pending'",
+                (now_c, now_c, rid))
+            if cur.rowcount == 0:
+                return AssetDeletionOutcome(upload_id, rid, "fence_conflict",
+                                            fence, None, None)
+            # Flip asset → deleted, clear lease (fence preserved). last_error_code
+            # cleared: only post_download/consent_withdrawal resources reach apply
+            # (manual_force is claim not_ready), and the matrix for deleted +
+            # those reasons requires no error code.
+            conn.execute(
+                "UPDATE heygen_asset_uploads SET status='deleted', "
+                "lease_owner=NULL, lease_expires_at=NULL, attempt_started_at=NULL, "
+                "next_retry_at=NULL, last_error_code=NULL, updated_at=? "
+                "WHERE upload_id=?",
+                (now_c, upload_id))
+            return AssetDeletionOutcome(upload_id, rid, "deleted", fence, None, None)
+
+        # AssetReadError — retryable vs terminal.
+        attempts = res["deletion_attempts"]
+        if result.retryable and attempts < max_attempts:
+            retry = _canonical(_parse_utc(now_iso)
+                               + timedelta(seconds=DELETION_BACKOFF_SECONDS))
+            cur = conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_status='deletion_failed', "
+                "last_deletion_error=?, deletion_next_retry_at=?, updated_at=? "
+                "WHERE resource_id=? AND deletion_status='deletion_pending'",
+                (result.code, retry, now_c, rid))
+            if cur.rowcount == 0:
+                return AssetDeletionOutcome(upload_id, rid, "fence_conflict",
+                                            fence, None, None)
+            # Asset stays cleanup_required; clear the lease (fence preserved) so
+            # the next run can reclaim after backoff. last_error_code untouched.
+            conn.execute(
+                "UPDATE heygen_asset_uploads SET lease_owner=NULL, "
+                "lease_expires_at=NULL, attempt_started_at=NULL, next_retry_at=NULL, "
+                "updated_at=? WHERE upload_id=?",
+                (now_c, upload_id))
+            return AssetDeletionOutcome(upload_id, rid, "failed", fence,
+                                        result.code, retry)
+        # Exhausted or permanent → terminal manual code on the resource.
+        code = ("deletion_retry_exhausted" if result.retryable
+                else "deletion_reconciliation_required")
+        cur = conn.execute(
+            "UPDATE heygen_remote_resources SET deletion_status='deletion_failed', "
+            "last_deletion_error=?, deletion_next_retry_at=NULL, updated_at=? "
+            "WHERE resource_id=? AND deletion_status='deletion_pending'",
+            (code, now_c, rid))
+        if cur.rowcount == 0:
+            return AssetDeletionOutcome(upload_id, rid, "fence_conflict",
+                                        fence, None, None)
+        conn.execute(
+            "UPDATE heygen_asset_uploads SET lease_owner=NULL, "
+            "lease_expires_at=NULL, attempt_started_at=NULL, next_retry_at=NULL, "
+            "updated_at=? WHERE upload_id=?",
+            (now_c, upload_id))
+        return AssetDeletionOutcome(upload_id, rid, "failed", fence, code, None)
+
     @staticmethod
     def _single_video(conn, operation_id):
         count = conn.execute(
@@ -3028,6 +3341,43 @@ class DeleteProcessor:
                 conn, operation_id, resource_id, lease_owner, claim.fence,
                 now_iso, result, max_attempts)
         return DeletionOnceResult(claim=claim, outcome=outcome)
+
+
+class AssetDeletionProcessor:
+    """One deletion step of a one-shot asset (portrait_photo /
+    synthetic_narration_audio) resource: claim → delete outside tx → fenced
+    apply. Mirrors DeleteProcessor but fences on the asset's OWN lease columns
+    and drives the asset GET/DELETE adapter (AssetDeleteResult /
+    AssetReadError). The claim classification is forwarded verbatim — a
+    not_ready/busy/retry_wait claim surfaces with no outcome (the caller, c2/c3
+    resolver+coordinator, decides ordering and retries)."""
+
+    def __init__(self, project_dir):
+        self._project_dir = Path(project_dir)
+        self._repository = OperationRepository(self._project_dir)
+
+    def delete_once(self, *, upload_id, lease_owner, adapter, now_iso, lease_seconds,
+                    max_attempts=DELETION_MAX_ATTEMPTS):
+        with self._repository.begin_immediate() as conn:
+            claim = self._repository.claim_asset_deletion_in_tx(
+                conn, upload_id=upload_id, lease_owner=lease_owner, now_iso=now_iso,
+                lease_seconds=lease_seconds, max_attempts=max_attempts)
+        if claim.status != "claimed":
+            return AssetDeletionOnceResult(claim=claim, outcome=None)
+        # Adapter call OUTSIDE any tx; an AssetReadError is captured as the
+        # outcome so apply can map retryable/terminal uniformly. Any OTHER
+        # exception propagates (certainty is unknowable — leave the lease to
+        # expire, never guess a phantom outcome).
+        try:
+            result = adapter.delete_asset(claim.remote_id)
+        except AssetReadError as exc:
+            result = exc
+        with self._repository.begin_immediate() as conn:
+            outcome = self._repository.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id=upload_id, resource_id=claim.resource_id,
+                lease_owner=lease_owner, fence=claim.fence, now_iso=now_iso,
+                result=result, max_attempts=max_attempts)
+        return AssetDeletionOnceResult(claim=claim, outcome=outcome)
 
 
 def _has_any_video(conn: sqlite3.Connection, operation_id: str) -> bool:
