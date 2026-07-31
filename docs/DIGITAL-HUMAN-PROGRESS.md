@@ -47,6 +47,7 @@
 | §5.5e5b0c2 | AssetUploadProcessor（guard+claim 同 tx → adapter 事务外 → fenced apply；claim 状态原样转发 + result-vs-command 校验 + 确定性双 worker/崩溃超窗契约；3 轮 Codex 审阅后锁定） | ✅ |
 | §5.5e5b0c3a | asset GET/DELETE adapter（GET 验存在+id/type 无 digest；DELETE 验回显 data.id；独立 AssetReadError + AssetProbeResult 严格不变量；2 轮 Codex 审阅后锁定） | ✅ |
 | §5.5e5b0c3b | asset 删除 repo + withdrawal/in-flight-upload 竞态闭合（journal v6 + fenced-apply consent 重检 + AssetApplyOutcome + enqueue_consent_withdrawal_cleanup + withdraw 接线 + recover maintenance；deletion_reason/error_code 矩阵 + enqueue fail-closed 边界 + _mark_asset_cleanup 四 guard；6 轮 Codex 审阅后锁定） | ✅ |
+| §5.5e5b0c3c-c1 | asset deletion fenced claim/apply 原语 + AssetDeletionProcessor.delete_once（asset 自身 lease fence；claim 同 tx 翻 uploaded→cleanup_required + not_started→deletion_pending(post_download)；apply CAS 绑 resource_id + expected_remote_id + 矩阵 + reason gate；manual_force 不自动删；4 轮 Codex 审阅后锁定） | ✅ |
 
 ## §6 跨仓 contract tests（commit bcec6f3，待 Codex 复审）
 
@@ -66,45 +67,51 @@
 
 ### 还没做
 
-- §5.5e5b0c3c 正常顺序 coordinator（video verified→deleted→audio→portrait）+ maintenance 恢复接线 + 消费门禁 resolver（receipt granted + asset status=uploaded + resource deletion_status=not_started + 拓扑）+ 网络 DELETE 编排（asset-specific claim/apply，用 asset upload 自身 fence，原子更新 asset/resource）
+- §5.5e5b0c3c-c2 消费门禁 resolver（给定 op，按 §3.5 返回有序可删 resource 列表 + force 模式：正常 video verified→deleted→audio→portrait；force 跳过 video；reusable_avatar 的 portrait 跳过）
+- §5.5e5b0c3c-c3 正常顺序 coordinator（c2 决策 × c1/video processor）+ maintenance 恢复接线（recover 调度入口 + deletion 恢复 pass）
 - §5.5e5c/d capability wiring + doctor/canary
 - §5.5e6 RecoveryDirectiveCatalog 验签 + failure mapping + 宿主 workflow（§6 #14 依赖它）
 - §6 收尾：补 #9 定价下发 / #10 M1 门禁跨仓契约 + #14（依赖 e6）+ 三仓 CI gate
 
-客户端 **850 测试全绿**。分支 `feat/digital-human-protocol-v1_1`。
+客户端 **896 测试全绿**。分支 `feat/digital-human-protocol-v1_1`。
 
 ---
 
-## 下次会话接续点（交接）—— e5b0c3b 已锁定，e5b0c3c 起步
+## 下次会话接续点（交接）—— e5b0c3c-c1 已锁定，c2 起步
 
-**当前状态**：e5b0c3b 已锁定（6 轮 Codex 审阅后锁定，commit `6aca98d`，850 测试全绿）。审阅轨迹：round-1（5 blocker）→ round-2（全闭）→ round-3（#1–#4 + v6）→ round-4（3 gap：withdrawn_at 泄漏 / manual_force deleted 豁免 / _mark guard 缺测）→ round-5（ref 拓扑测试合同缺口）→ round-6（可锁）。
+**当前状态**：e5b0c3c-c1 已锁定（4 轮 Codex 审阅后锁定，commit `333b6e7`+`a3c`，896 测试全绿）。审阅轨迹：round-1（2 blocker：apply 未绑 resource_id + claim/apply 未调矩阵）→ round-2（remote_id 篡改：apply 未绑远端身份）→ round-3（必填 kwarg 仍可显式传 None）→ round-4（可锁）。
 
-### e5b0c3c 范围（下一步）
+### c1 已落地的关键不变量（改动时不能放松）
 
-- 正常顺序 coordinator：video verified → deleted → audio → portrait 串行编排
-- maintenance 恢复接线（`recover_withdrawn_asset_cleanups` 等已落地原语的调度入口）
-- 消费门禁 resolver：receipt granted + asset status=uploaded + resource deletion_status=not_started + 拓扑全验才放行
-- 网络 DELETE 编排：asset-specific claim/apply，用 asset upload 自身 fence，原子更新 asset/resource
-- 进 e5b0c3c 前先写盲预测（lecturecast EP06 起纪律）+ 设计稿，再发 Codex round-1
+- **claim 同 tx 自洽**：claim 在一个 tx 内翻 asset `uploaded→cleanup_required` + resource `not_started→deletion_pending(post_download)`，矩阵始终自洽；claim 在任何 eligibility 分支前调 `_check_asset_resource_consistency`（非法起点 fail-closed，不静默修正）。
+- **apply 三重身份绑定**：lease CAS 绑 `remote_resource_id=resource_id`（本地行身份）；`_validate_asset_binding(expected_remote_id=...)` 绑远端身份（claim/apply 间改名 remote_id 被拒）；`expected_remote_id` 必填 + 运行时 regex 守卫（防显式传 None 绕过）。所有维度（resource_id / remote_id / kind / created_by / credential / retention / refs / deletion_status / reason / manual-force marker）在 claim/apply 两 tx 间都被重验。
+- **矩阵 + reason gate**：apply 落库前重读 resource 全状态调矩阵 + reason allowlist（只 post_download/consent_withdrawal；manual_force 永不自动删、永不清 integrity marker）。
+- **幂等 + 崩溃安全**：claim(tx1)→adapter.DELETE(tx 外，AssetReadError 捕获为 outcome)→apply(tx2)；200/404→deleted；retryable→deletion_failed+backoff；耗尽/永久→terminal manual code；非 AssetReadError 异常传播留 lease 到期恢复。
+
+### c1 审阅中暴露的系统性教训（适用于 c2/c3）
+
+每轮 Codex 都找到一个**同类的身份/契约绕过**，模式高度一致——值得记取：
+1. **round-1**：apply 信任了入参但没把它绑进 CAS（resource_id 被忽略）；"必填"原语跳过了已锁的矩阵。
+2. **round-2**：CAS 绑了本地行身份（resource_id）却漏了远端身份（remote_id）。
+3. **round-3**：必填 kwarg 只防"省略"不防"显式传 None"，而 None 在下游语义是"跳过"。
+→ **c2/c3 写任何 fencing/门禁原语时，每个身份维度都要：(a) 绑进 CAS 或显式校验，(b) 运行时拒 None/空/非法，(c) 复用已锁的不变量而不是绕过，(d) 写直接篡改测试而非只测 happy path。**
+
+### e5b0c3c-c2 范围（下一步）
+
+消费门禁 resolver：`resolve_deletion_plan(conn, operation_id, *, force=False) → 有序可删 resource 列表`。
+- 正常模式（§3.5）：video（需 download_status=verified）→ audio_asset → portrait_asset（reusable_avatar 的 portrait 跳过，retention）。
+- force 模式：跳过 video 阶段（用户主动/隐私紧急/video 持续下载失败）。
+- 进 c2 前先写盲预测 + 设计稿，再发 Codex round-1（**建议新开 Codex session**，019fb840 已跑 4 轮上下文较长）。
 
 ### 恢复操作（下次会话）
 
 ```bash
 cd ~/AgentMesh-Lecturecast
-git log --oneline -6   # 最近：6aca98d round-5 ref 拓扑测试（e5b0c3b 锁定）
-UV_CACHE_DIR=/tmp/lc-uv-cache uv run --project . pytest tests/ -c pyproject.toml -q   # 应 850 passed
+git log --oneline -6   # 最近：333b6e7 round-3 None 守卫（c1 锁定）
+UV_CACHE_DIR=/tmp/lc-uv-cache uv run --project . pytest tests/ -c pyproject.toml -q   # 应 896 passed
 ```
 
-e5b0c3c 建议开新 Codex session（e5b0c3b 的 `019fa2e9` 已跑 6 轮，上下文较长）。发审命令同前：
-```bash
-codex exec resume <session> "<prompt>" -c 'model_reasoning_effort="medium"' --json 2>/dev/null \
-  | python3 -c "import json,sys
-for l in sys.stdin:
- l=l.strip()
- if l:
-  ev=json.loads(l)
-  if ev.get('type')=='item.completed' and ev.get('item',{}).get('type')=='agent_message': print(ev['item']['text'])"
-```
+Codex e5b0c3c-c1 会话（4 轮）: `019fb840-a93b-73e1-b56c-a29b07a15e3d`；c2 建议开新 session。发审命令同前（`codex exec resume <session> "<prompt>" -c 'model_reasoning_effort="low"' --json`，**务必 effort=low**，medium 在新 session 会挂）。
 
 ### 关键不变量（已落地的安全边界，改动时不能放松）
 
