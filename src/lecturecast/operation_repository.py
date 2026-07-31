@@ -2477,13 +2477,23 @@ class OperationRepository:
         F3: op.download_status='verified' — a post_download asset is explicitly
             delivery-authorized (c1's "asset processor is delivery-agnostic" layering
             is NOT a boundary once post_download ties cleanup to a verified delivery).
-        F4: COUNT(video) <= 1 — B2's `1 >= COUNT` mirror, NOT _single_video's `==1`:
-            a legit 0-video op (video row hard-purged post-delivery, or a consent
-            cleanup) must stay sweepable; `==1` would wrongly freeze it (round-9).
-        F5: no non-deleted non-reusable video — the resolver releases the tail only
-            when video_entry is None; a between-tx appearing/resurrected video must
-            re-gate the tail (the resolver's ordering decision does not survive its
-            closed tx). Reusable videos are excluded to match the resolver's skip.
+        F4: COUNT(video) <= 1 over the REFS topology — B2's `1 >= COUNT` / the
+            _single_video claim invariant mirror (both count ref-bound videos, NOT
+            ==1: a legit 0-video op stays sweepable; round-9). Domain is refs because
+            F4's authority is _single_video (the claim invariant that actually executes
+            on the live-video path), NOT the resolver. Switching F4 to created_by would
+            over-block: an op with two DELETED created_by videos (only one ref-bound)
+            has the resolver correctly release the tail (it skips deleted), yet a
+            created_by COUNT would see 2 and freeze — wrong.
+        F5: no non-deleted non-reusable video over the CREATED_BY domain — the resolver
+            (resolve_deletion_plan_in_tx) releases the asset tail iff video_entry is
+            None, and it selects video_entry by created_by_operation_id (NO ref row
+            required, @2399-2406). So a video with created_by_operation_id=op but NO
+            ref row GATES the resolver yet is invisible to a refs-JOIN. F5 must inspect
+            the resolver's exact population (created_by, kind=video, non-deleted,
+            non-reusable) or it fails to re-verify the ordering decision it claims to
+            (Codex round-13). F4 and F5 deliberately count over DIFFERENT domains because
+            their authorities differ (claim _single_video vs resolver tail-release).
         Returns True iff all three hold (fail-closed on NULL/missing op state)."""
         if download_status != "verified":
             return False
@@ -2492,8 +2502,7 @@ class OperationRepository:
             " JOIN heygen_resource_operation_refs refv ON refv.resource_id=rv.resource_id"
             " WHERE refv.operation_id=? AND rv.resource_kind='video') AS video_count,"
             " (SELECT 1 FROM heygen_remote_resources rv"
-            " JOIN heygen_resource_operation_refs refv ON refv.resource_id=rv.resource_id"
-            " WHERE refv.operation_id=? AND rv.resource_kind='video'"
+            " WHERE rv.created_by_operation_id=? AND rv.resource_kind='video'"
             " AND rv.deletion_status!='deleted'"
             " AND rv.retention_mode!='reusable_avatar' LIMIT 1) AS live_video",
             (operation_id, operation_id)).fetchone()
