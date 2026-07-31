@@ -3912,11 +3912,11 @@ class DeletionCoordinator:
                 # (e) resource_kind (avatar_look/avatar_group have no processor, so
                 # a corrupt row is never re-verified), (f) single-video count
                 # (COUNT(video)==1 — the claim/apply gate a double-video op refuses).
-                # Round-7 P1 closed the LAST two un-mirrored invariants the same
-                # way: (g) the apply TERMINAL PROOF for a deleted video (deleted_at
-                # NOT NULL + deletion_attempts>=1 + next_retry/error NULL — a state
-                # only apply_deletion_outcome_in_tx can produce), and (h) the FULL
-                # asset binding for a non-video witness (the asset↔resource matrix
+                # Round-7 P1 closed two more un-mirrored invariants: (g) the apply
+                # TERMINAL PROOF for a deleted video (deleted_at NOT NULL +
+                # deletion_attempts>=1 + next_retry/error NULL — a state only
+                # apply_deletion_outcome_in_tx can produce), and (h) the FULL asset
+                # binding for a non-video witness (the asset↔resource matrix
                 # deletion_pending<->cleanup_required AND the asset_role↔kind pair
                 # the claim's _validate_asset_binding checks — a bare "upload
                 # exists" still witnessed an inconsistent/mismatched pair whose own
@@ -3928,7 +3928,20 @@ class DeletionCoordinator:
                 # exactly-one own ref, and (B1) for a deleted video terminal-proof +
                 # count==1+verified (post_download only; consent cleanup is delivery-
                 # independent) or (B2) for a non-video asset a real, matrix-
-                # consistent, role-kind-paired upload binding on an audio/portrait.
+                # consistent, role-kind-paired upload binding on an audio/portrait,
+                # ALSO gated on op.download_status=verified for post_download.
+                # Round-8 P1 (independent workflow audit) closed an asymmetry between
+                # the two tail-releasing branches that round-7 missed: (i) B2 must
+                # mirror op.download_status for post_download EXACTLY as B1 does.
+                # The asset claim and the resolver do NOT enforce download_status, so
+                # a B2-only op (no live/verified video) had no layer preventing pre-
+                # delivery asset cleanup — a 直插 pending/post_download asset witness
+                # on an unverified op released the tail and deleted a sibling while
+                # the witness's own (download_status-blind) asset claim executed. The
+                # fix mirrors B1's clause into B2; consent_withdrawal stays exempt.
+                # (Round-7's "LAST two" framing was, again, over-optimistic — the
+                # reliable boundary is per-field line-by-line enumeration, not a
+                # count claimed after each round.)
                 rows = conn.execute(
                     "SELECT DISTINCT r.created_by_operation_id AS op_id "
                     "FROM heygen_remote_resources r "
@@ -4014,11 +4027,61 @@ class DeletionCoordinator:
                     #  matrix inconsistency the claim would raise on; without these
                     #  gates it witnesses the op and the coordinator's dumb iterator
                     #  deletes the sibling while the witness's own claim alerts.
+                    #  Round-8 P1 (B2 download_status mirror): B2 ALSO requires —
+                    #  identical to B1's clause directly above — that a post_download
+                    #  witness only authorize a download-verified op. The asset claim
+                    #  (claim_asset_deletion_in_tx) does NOT gate on op.download_status
+                    #  and the resolver only carries it as informational context, so
+                    #  when B2 authorizes an op with NO live/verified video (a B2-only
+                    #  op) no layer enforces "delivery was verified before asset
+                    #  cleanup." A 直插 pending/post_download asset witness on an
+                    #  unverified op would release the tail and the asset claim would
+                    #  delete a pre-delivery sibling (empirically confirmed, then
+                    #  closed). consent_withdrawal stays exempt (delivery-independent).
                     "    (r2.resource_kind IN ('audio_asset','portrait_asset')"
                     "     AND r2.deletion_status IN ('deletion_pending',"
                     "                               'deletion_failed')"
                     "     AND r2.deletion_reason IN ('post_download',"
                     "                               'consent_withdrawal')"
+                    "     AND (r2.deletion_reason != 'post_download'"
+                    "          OR o.download_status = 'verified')"
+                    #  Round-9 P1 (B2 single-video mirror): B2 ALSO requires —
+                    #  identical to B1's clause directly above — that a
+                    #  post_download witness only authorize a SINGLE-VIDEO op.
+                    #  The video claim's _single_video gate is an OP-LEVEL
+                    #  invariant (resolver L2328 "at most one video per op"),
+                    #  enforced ONLY on the live-video path; the asset claim
+                    #  reads zero video count and the resolver only comments on
+                    #  it (trusting "the video claim will fail-closed on
+                    #  doubles" — a trust broken once the videos are already
+                    #  deleted/skipped). A 直插 double-video op (COUNT>=2) with
+                    #  both videos marked deleted routes around B1's count
+                    #  defense through a B2 asset witness: B1 refuses (COUNT==1
+                    #  fails its gate), B2 authorizes, the resolver skips both
+                    #  deleted videos -> releases the tail -> the coordinator
+                    #  sweeps individually-eligible assets on a structurally-
+                    #  corrupt op that B1's gate exists to freeze for human
+                    #  reconciliation. Same B1↔B2 asymmetry class as round-8's
+                    #  download_status (empirically confirmed, then closed).
+                    #  consent_withdrawal stays exempt (delivery/structure-
+                    #  independent (matching B1 and the VIDEO claim's consent
+                    #  exemption). NOTE: B2's mirror is COUNT(video) <= 1 (i.e.
+                    #  `1 >= COUNT`), NOT B1's exact `1 == COUNT`. The invariant
+                    #  is the resolver's "AT MOST one video per op" contract
+                    #  (L2328) — zero is allowed. B1's witness IS a deleted
+                    #  video, so COUNT>=1 is self-guaranteed and `==1` ⟺ `<=1`.
+                    #  B2's witness is a non-video ASSET, so the op may
+                    #  legitimately have 0 video rows (e.g. a post-delivery op
+                    #  whose video row was already hard-purged, or a consent
+                    #  cleanup); `==1` would wrongly freeze those legit 0-video
+                    #  sweeps. `<=1` blocks the corrupt >=2 case while keeping
+                    #  the legit 0- and 1-video cases (round-8 control).
+                    "     AND (r2.deletion_reason != 'post_download'"
+                    "          OR 1 >= (SELECT COUNT(*) FROM heygen_remote_resources rv"
+                    "            JOIN heygen_resource_operation_refs refv"
+                    "              ON refv.resource_id = rv.resource_id"
+                    "            WHERE refv.operation_id = r2.created_by_operation_id"
+                    "            AND rv.resource_kind = 'video'))"
                     "     AND EXISTS (SELECT 1 FROM heygen_asset_uploads u"
                     "      WHERE u.remote_resource_id = r2.resource_id"
                     "      AND u.parent_operation_id = r2.created_by_operation_id"
