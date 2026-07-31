@@ -1933,16 +1933,18 @@ class OperationRepository:
 
     def apply_asset_outcome_in_tx(
         self, conn: sqlite3.Connection, *, upload_id: str, asset_id: str,
-        retention_mode: str, credential_profile_id: str, now_iso: str,
-        lease_owner: str, expected_fence: int,
+        now_iso: str, lease_owner: str, expected_fence: int,
     ) -> int:
         """On a successful upload: insert the remote_resource + a parent-op ref,
         backfill remote_resource_id, and mark the upload 'uploaded' — all in the
         caller's fenced tx. The status flip is guarded by a CAS on the claim's
         lease_owner + fence (a stale worker cannot overwrite a newer claim).
-        resource_kind is derived from asset_role (portrait_photo→portrait_asset,
-        audio→audio_asset). Idempotent: a re-apply on an already-uploaded row is
-        a no-op returning the existing resource_id (asset_id must match)."""
+        credential_profile_id is read from the PARENT operation (never caller-
+        supplied); resource_kind and retention_mode are derived from asset_role
+        (both one-shot roles → portrait_asset/audio_asset, ephemeral; a future
+        reusable_avatar lifecycle is separate). Idempotent re-apply validates the
+        full resource binding topology. A remote-id collision with another
+        parent/role is an OperationIntegrityError, not a raw sqlite3 error."""
         self._require_tx(conn)
         conn.row_factory = sqlite3.Row
         _require_lease_owner(lease_owner)
@@ -1957,24 +1959,50 @@ class OperationRepository:
         ).fetchone()
         if row is None:
             raise OperationStateError(f"no asset upload {upload_id!r}")
-        if row["status"] == "uploaded":
-            existing = conn.execute(
-                "SELECT remote_id FROM heygen_remote_resources WHERE resource_id=?",
-                (row["remote_resource_id"],),
-            ).fetchone()
-            if existing is None or existing["remote_id"] != asset_id.strip():
-                raise OperationIntegrityError(
-                    f"asset upload {upload_id!r} already bound to a different remote id")
-            return row["remote_resource_id"]
+        parent = conn.execute(
+            "SELECT credential_profile_id FROM heygen_operations "
+            "WHERE operation_id = ?", (row["parent_operation_id"],),
+        ).fetchone()
+        if parent is None or not parent["credential_profile_id"]:
+            raise OperationStateError(
+                f"parent operation {row['parent_operation_id']!r} has no "
+                f"credential_profile_id")
+        credential_profile_id = parent["credential_profile_id"]
         resource_kind = _asset_resource_kind(row["asset_role"])
-        cur = conn.execute(
-            "INSERT INTO heygen_remote_resources ("
-            "  credential_profile_id, resource_kind, remote_id, retention_mode,"
-            "  created_by_operation_id, created_at, updated_at"
-            ") VALUES (?,?,?,?,?,?,?)",
-            (credential_profile_id, resource_kind, asset_id.strip(), retention_mode,
-             row["parent_operation_id"], now_iso, now_iso),
-        )
+        retention_mode = _asset_retention_mode(row["asset_role"])
+        remote_id = asset_id.strip()
+
+        if row["status"] == "uploaded":
+            # Validate the full binding topology on replay, not just the id.
+            existing = conn.execute(
+                "SELECT remote_id, resource_kind, created_by_operation_id, "
+                "credential_profile_id, deletion_status FROM heygen_remote_resources "
+                "WHERE resource_id=?", (row["remote_resource_id"],),
+            ).fetchone()
+            if (existing is None or existing["remote_id"] != remote_id
+                    or existing["resource_kind"] != resource_kind
+                    or existing["created_by_operation_id"] != row["parent_operation_id"]
+                    or existing["credential_profile_id"] != credential_profile_id):
+                raise OperationIntegrityError(
+                    f"asset upload {upload_id!r} bound resource topology changed")
+            return row["remote_resource_id"]
+
+        try:
+            cur = conn.execute(
+                "INSERT INTO heygen_remote_resources ("
+                "  credential_profile_id, resource_kind, remote_id, retention_mode,"
+                "  created_by_operation_id, created_at, updated_at"
+                ") VALUES (?,?,?,?,?,?,?)",
+                (credential_profile_id, resource_kind, remote_id, retention_mode,
+                 row["parent_operation_id"], now_iso, now_iso),
+            )
+        except sqlite3.IntegrityError as exc:
+            # UNIQUE(credential_profile_id, resource_kind, remote_id) — the
+            # remote id is already owned (by this or another parent). Surface a
+            # structured error, never the raw sqlite3 exception.
+            raise OperationIntegrityError(
+                f"remote asset id {remote_id!r} already exists for "
+                f"{resource_kind}/{credential_profile_id}") from exc
         resource_id = cur.lastrowid
         conn.execute(
             "INSERT OR IGNORE INTO heygen_resource_operation_refs "
@@ -2120,6 +2148,15 @@ def _asset_resource_kind(asset_role: str) -> str:
     if kind is None:
         raise OperationIntegrityError(f"no resource_kind mapping for {asset_role!r}")
     return kind
+
+
+def _asset_retention_mode(asset_role: str) -> str:
+    """Both one-shot asset roles are ephemeral (deleted after the delivery
+    completes). A reusable_avatar retention mode is a future, separate
+    lifecycle (photo avatar kept across operations) — not inferred here."""
+    if asset_role not in _ASSET_ROLE_TO_RESOURCE_KIND:
+        raise OperationIntegrityError(f"no retention mapping for {asset_role!r}")
+    return "ephemeral"
 
 
 # --- coordinator -------------------------------------------------------

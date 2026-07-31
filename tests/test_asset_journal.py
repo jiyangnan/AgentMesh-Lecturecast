@@ -47,9 +47,9 @@ def _add_parent_op(conn, op_id="op1"):
     conn.execute(
         "INSERT INTO heygen_operations (operation_id, kind, endpoint, generation_id,"
         " manifest_digest, request_digest, idempotency_key, heygen_title,"
-        " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        " credential_profile_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (op_id, "video", "/v3/videos", "gen", "sha256:m", "sha256:r",
-         f"idem-{op_id}", f"lc:{op_id}", "t", "t"),
+         f"idem-{op_id}", f"lc:{op_id}", "heygen_env_default", "t", "t"),
     )
 
 
@@ -213,7 +213,6 @@ class TestAssetClaim:
             repo = OperationRepository(Path(td))
             c = _do_claim(repo, conn)
             repo.apply_asset_outcome_in_tx(conn, upload_id="u1", asset_id="ax",
-                retention_mode="ephemeral", credential_profile_id="prof",
                 now_iso="2026-07-30T00:00:01Z",
                 lease_owner=LEASE, expected_fence=c.fence)
             again = _do_claim(repo, conn, now="2026-07-30T00:00:02Z")
@@ -288,8 +287,7 @@ class TestAssetApplyOutcome:
             repo = OperationRepository(Path(td))
             c = _do_claim(repo, conn)
             rid = repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
-                asset_id="ax", retention_mode="ephemeral",
-                credential_profile_id="prof", now_iso="2026-07-30T00:00:01Z",
+                asset_id="ax", now_iso="2026-07-30T00:00:01Z",
                 lease_owner=LEASE, expected_fence=c.fence)
             up = conn.execute("SELECT status, remote_resource_id FROM "
                               "heygen_asset_uploads WHERE upload_id=?",
@@ -321,12 +319,51 @@ class TestAssetApplyOutcome:
                       digest=D_AUDIO, ctype="audio/wav", fname="narration.wav",
                       lref="r/n.wav")
             rid = repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
-                asset_id="aud", retention_mode="ephemeral",
-                credential_profile_id="prof", now_iso="2026-07-30T00:00:01Z",
+                asset_id="aud", now_iso="2026-07-30T00:00:01Z",
                 lease_owner=LEASE, expected_fence=c.fence)
             kind = conn.execute("SELECT resource_kind FROM heygen_remote_resources "
                                 "WHERE resource_id=?", (rid,)).fetchone()[0]
             assert kind == "audio_asset"
+        finally:
+            conn.close()
+
+    def test_credential_and_retention_derived_from_parent_and_role(self):
+        # credential_profile_id is read from the PARENT operation, never passed
+        # by the caller; retention_mode is derived from the role (ephemeral).
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)  # credential=heygen_env_default
+            repo = OperationRepository(Path(td))
+            c = _do_claim(repo, conn)
+            rid = repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
+                asset_id="ax", now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
+            res = conn.execute("SELECT credential_profile_id, retention_mode "
+                               "FROM heygen_remote_resources WHERE resource_id=?",
+                               (rid,)).fetchone()
+            assert res["credential_profile_id"] == "heygen_env_default"
+            assert res["retention_mode"] == "ephemeral"
+        finally:
+            conn.close()
+
+    def test_remote_id_collision_is_structured_error(self):
+        # The same remote id under the same profile+kind (different upload)
+        # must surface as OperationIntegrityError, not a raw sqlite3 error.
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN")
+            _add_parent_op(conn, "op_a"); _add_parent_op(conn, "op_b")
+            repo = OperationRepository(Path(td))
+            ca = _do_claim(repo, conn, upload_id="ua", parent="op_a", idem="ka")
+            repo.apply_asset_outcome_in_tx(conn, upload_id="ua", asset_id="dup",
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=ca.fence)
+            cb = _do_claim(repo, conn, upload_id="ub", parent="op_b", idem="kb")
+            from lecturecast.operation_repository import OperationIntegrityError
+            with pytest.raises(OperationIntegrityError):
+                repo.apply_asset_outcome_in_tx(conn, upload_id="ub", asset_id="dup",
+                    now_iso="2026-07-30T00:00:02Z",
+                    lease_owner=LEASE, expected_fence=cb.fence)
         finally:
             conn.close()
 
@@ -337,12 +374,10 @@ class TestAssetApplyOutcome:
             repo = OperationRepository(Path(td))
             c = _do_claim(repo, conn)
             rid1 = repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
-                asset_id="ax", retention_mode="ephemeral",
-                credential_profile_id="prof", now_iso="2026-07-30T00:00:01Z",
+                asset_id="ax", now_iso="2026-07-30T00:00:01Z",
                 lease_owner=LEASE, expected_fence=c.fence)
             rid2 = repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
-                asset_id="ax", retention_mode="ephemeral",
-                credential_profile_id="prof", now_iso="2026-07-30T00:00:02Z",
+                asset_id="ax", now_iso="2026-07-30T00:00:02Z",
                 lease_owner=LEASE, expected_fence=c.fence)
             assert rid1 == rid2  # no duplicate resource
             n = conn.execute("SELECT count(*) c FROM heygen_remote_resources "
@@ -359,8 +394,7 @@ class TestAssetApplyOutcome:
             c = _do_claim(repo, conn)
             with pytest.raises(ValueError):
                 repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
-                    asset_id="  ", retention_mode="ephemeral",
-                    credential_profile_id="prof", now_iso=NOW,
+                    asset_id="  ", now_iso=NOW,
                     lease_owner=LEASE, expected_fence=c.fence)
         finally:
             conn.close()
@@ -373,14 +407,12 @@ class TestAssetApplyOutcome:
             repo = OperationRepository(Path(td))
             c = _do_claim(repo, conn)
             repo.apply_asset_outcome_in_tx(conn, upload_id="u1", asset_id="ax",
-                retention_mode="ephemeral", credential_profile_id="prof",
                 now_iso="2026-07-30T00:00:01Z",
                 lease_owner=LEASE, expected_fence=c.fence)
             from lecturecast.operation_repository import OperationIntegrityError
             with pytest.raises(OperationIntegrityError):
                 repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
-                    asset_id="different", retention_mode="ephemeral",
-                    credential_profile_id="prof", now_iso="2026-07-30T00:00:02Z",
+                    asset_id="different", now_iso="2026-07-30T00:00:02Z",
                     lease_owner=LEASE, expected_fence=c.fence)
         finally:
             conn.close()
@@ -476,7 +508,6 @@ class TestAssetFailure:
             with pytest.raises(OperationIntegrityError):
                 repo.apply_asset_outcome_in_tx(
                     conn, upload_id="u1", asset_id="ax",
-                    retention_mode="ephemeral", credential_profile_id="prof",
                     now_iso="2026-07-30T00:02:30Z",
                     lease_owner=LEASE, expected_fence=c1.fence)
         finally:
