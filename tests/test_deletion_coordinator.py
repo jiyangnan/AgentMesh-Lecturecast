@@ -946,6 +946,46 @@ class TestRecoverDeletions:
         finally:
             conn.close()
 
+    def test_deleted_null_reason_video_does_not_authorize_default_sweep(self, tmp_path):
+        # Codex round-5 P1 regression: a schema-legal deleted/NULL-reason VIDEO
+        # must not authorize the default sweep. The round-4 COMMON reason gate
+        # (reason IS NULL OR reason IN auto-recoverable) admitted ANY NULL-reason
+        # resource as a witness — including a deleted/NULL video, which the
+        # resolver skips (releasing the tail) exactly like a deleted/manual_force
+        # video. The only legit NULL-reason witness is a not_started video
+        # (in-flight, never claimed → no reason set); a deleted video must carry
+        # a non-NULL auto-recoverable reason (video apply inherits the claim's
+        # reason; claim from not_started always sets post_download). So the
+        # witness must be gated on the full (status, reason) STATE MATRIX —
+        # Option B — not on reason alone. Same fail-closed-against-schema-legal-
+        # anomalous-states threat model as round-4 (corrupt/直插 deleted+NULL,
+        # not producer-reachable, still in-model).
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="not_started")  # in flight
+            _add_resource(conn, op_id="opLive", kind="video", remote_id="vKeep",
+                          retention="ephemeral", ds="deleted")  # NULL reason
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] != "deleted"          # sibling untouched
+        finally:
+            conn.close()
+
     def test_candidate_tx_closed_before_any_pass_runs(self, tmp_path, monkeypatch):
         # T18 / R5 — the candidate-listing tx is closed before any network
         # deletion. The open-tx counter must read 0 at every deleter/adapter call.
