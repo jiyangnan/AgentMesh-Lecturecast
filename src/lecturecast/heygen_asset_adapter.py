@@ -42,6 +42,28 @@ _ALLOWED_EXTENSIONS = {
     "synthetic_narration_audio": {".mp3", ".wav"},
 }
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_ASSET_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,128}$")
+
+
+def _validate_asset_id(asset_id: str) -> str:
+    if not _ASSET_ID_RE.fullmatch(asset_id or ""):
+        raise ValueError(f"invalid asset_id: {asset_id!r}")
+    return asset_id
+
+
+def _transport_read_error(exc: HttpTransportError) -> AssetReadError:
+    """Map a transport-level failure of an asset GET/DELETE."""
+    if exc.code == "auth_failed":
+        return AssetReadError(code="auth_failed", retryable=False,
+                              message=f"transport error: {exc}")
+    if exc.code in ("network_timeout", "connection_error", "rate_limited"):
+        return AssetReadError(code=exc.code, retryable=True,
+                              message=f"transport error: {exc}")
+    if exc.code == "malformed_response":
+        return AssetReadError(code="malformed_response", retryable=False,
+                              message=f"transport error: {exc}")
+    return AssetReadError(code="unknown", retryable=False,
+                          message=f"transport error: {exc}")
 
 
 def derive_asset_identity(
@@ -102,6 +124,49 @@ class AssetUploadAmbiguousError(HeyGenAdapterError):
     def __init__(self, *, code: str, message: str = "", retryable: bool = True):
         super().__init__(code=code, retryable=retryable,
                          submission_certainty="maybe_sent", message=message)
+
+
+# --- asset GET / DELETE (§5.5e5b0c3a) ------------------------------------
+#
+# HeyGen exposes GET /v3/assets/{id} (id/name/type/.../url, no digest) and
+# DELETE /v3/assets/{id} (returns data.id). These are NOT submit operations,
+# so they use standalone error types (no submission_certainty). GET only
+# verifies existence + id/type; it cannot attest content digest.
+
+class AssetReadError(Exception):
+    """A structured failure of an asset GET/DELETE (closed code vocabulary)."""
+    def __init__(self, *, code: str, retryable: bool, message: str = "") -> None:
+        if code not in _ASSET_READ_ERROR_CODES:
+            raise ValueError(f"unknown asset read error code: {code!r}")
+        if type(retryable) is not bool:
+            raise TypeError("retryable must be a bool")
+        self.code = code
+        self.retryable = retryable
+        super().__init__(message or code)
+
+
+_ASSET_READ_ERROR_CODES = frozenset({
+    "auth_failed", "rate_limited", "validation_error", "network_timeout",
+    "connection_error", "provider_server_error", "malformed_response", "unknown",
+})
+
+
+@dataclass(frozen=True)
+class AssetProbeResult:
+    """Result of GET /v3/assets/{id}. exists=False on 404. asset_type is the
+    provider-reported type (image/audio); GET cannot attest content digest."""
+    exists: bool
+    asset_id: str = ""
+    asset_type: str = ""
+
+
+@dataclass(frozen=True)
+class AssetDeleteResult:
+    status: str  # "deleted" | "already_absent"
+
+    def __post_init__(self) -> None:
+        if self.status not in ("deleted", "already_absent"):
+            raise ValueError(f"unknown AssetDeleteResult.status: {self.status!r}")
 
 
 def _validate_asset_path(runtime_root: Path, local_output_ref: str) -> None:
@@ -355,6 +420,78 @@ class HeyGenAssetAdapter:
             mime_type=mime_type.strip(),
             size_bytes=size_bytes,
         )
+
+    def get_asset(self, asset_id: str) -> AssetProbeResult:
+        """GET /v3/assets/{id}. Verifies existence + id/type match. A 404 →
+        exists=False. Used for doctor / manual reconciliation only — never attest
+        content digest from the GET response."""
+        _validate_asset_id(asset_id)
+        try:
+            resp = self._transport.request_json(
+                method="GET", path=f"/v3/assets/{asset_id}")
+        except HttpErrorResponse as exc:
+            if exc.status == 404:
+                return AssetProbeResult(exists=False)
+            raise self._map_read_error(exc) from None
+        except HttpTransportError as exc:
+            raise _transport_read_error(exc) from None
+        data = resp.body.get("data")
+        if not isinstance(data, dict):
+            raise AssetReadError(code="malformed_response", retryable=False,
+                                 message="get-asset response data is not a dict")
+        rid = data.get("id")
+        if not isinstance(rid, str) or rid != asset_id:
+            raise AssetReadError(code="malformed_response", retryable=False,
+                                 message="get-asset response id does not match")
+        atype = data.get("type")
+        if not isinstance(atype, str) or not atype.strip():
+            raise AssetReadError(code="malformed_response", retryable=False,
+                                 message="get-asset response missing type")
+        return AssetProbeResult(exists=True, asset_id=rid, asset_type=atype.strip())
+
+    def delete_asset(self, asset_id: str) -> AssetDeleteResult:
+        """DELETE /v3/assets/{id}. 404 → already_absent (idempotent). A 200 must
+        echo data.id == the requested id, else malformed. Does NOT GET first —
+        avoid extra requests and GET/DELETE races."""
+        _validate_asset_id(asset_id)
+        try:
+            resp = self._transport.request_json(
+                method="DELETE", path=f"/v3/assets/{asset_id}")
+        except HttpErrorResponse as exc:
+            if exc.status == 404:
+                return AssetDeleteResult(status="already_absent")
+            raise self._map_read_error(exc) from None
+        except HttpTransportError as exc:
+            raise _transport_read_error(exc) from None
+        data = resp.body.get("data")
+        if not isinstance(data, dict):
+            raise AssetReadError(code="malformed_response", retryable=False,
+                                 message="delete-asset response data is not a dict")
+        rid = data.get("id")
+        if not isinstance(rid, str) or rid != asset_id:
+            raise AssetReadError(code="malformed_response", retryable=False,
+                                 message="delete-asset response id does not match")
+        return AssetDeleteResult(status="deleted")
+
+    @staticmethod
+    def _map_read_error(exc: HttpErrorResponse) -> AssetReadError:
+        """Map an HTTP error response from GET/DELETE to a closed-code
+        AssetReadError. Provider codes stay in the message."""
+        provider_code = exc.provider_code or "unknown"
+        if exc.status == 429:
+            return AssetReadError(code="rate_limited", retryable=True,
+                                  message=f"HTTP 429 ({provider_code})")
+        if exc.status in (401, 403):
+            return AssetReadError(code="auth_failed", retryable=False,
+                                  message=f"HTTP {exc.status} ({provider_code})")
+        if exc.status in (400, 422):
+            return AssetReadError(code="validation_error", retryable=False,
+                                  message=f"HTTP {exc.status} ({provider_code})")
+        if exc.status >= 500:
+            return AssetReadError(code="provider_server_error", retryable=True,
+                                  message=f"HTTP {exc.status} ({provider_code})")
+        return AssetReadError(code="unknown", retryable=False,
+                              message=f"HTTP {exc.status} ({provider_code})")
 
     @staticmethod
     def _map_error(exc: HttpErrorResponse) -> Exception:
