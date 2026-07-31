@@ -14,7 +14,7 @@ from lecturecast.heygen_asset_adapter import AssetDeleteResult, AssetReadError
 from lecturecast.heygen_journal import init_database
 from lecturecast.operation_repository import (
     DELETION_MAX_ATTEMPTS, DeleteProcessor, AssetDeletionProcessor,
-    DeletionCoordinator, OperationRepository)
+    DeletionCoordinator, OperationRepository, _CONSENT_INTEGRITY_ERROR_CODE)
 
 NOW = "2026-07-31T00:00:00Z"
 OWNER = "deletion-coord-w1"
@@ -81,6 +81,27 @@ def _add_asset(conn, *, op_id, role, upload_id, remote_id, ds="not_started",
         (upload_id, op_id, role, "sha256:" + remote_id, "loc",
          "application/octet-stream", 1, remote_id + ".bin", "idem-" + upload_id,
          rid, asset_status, "t", "t"))
+    return rid
+
+
+def _add_manual_asset(conn, *, op_id, role, upload_id, remote_id,
+                      ds="deletion_pending"):
+    """A matrix-valid manual_force asset: resource deletion_pending/failed +
+    reason manual_force, upload cleanup_required + the consent_integrity_failure
+    marker such a resource must carry. The c1 claim returns not_ready for
+    manual_force (never auto-deleted) — but before the round-3 fix this resource
+    still acted as a sweep authorization WITNESS for its siblings."""
+    rid = _add_resource(conn, op_id=op_id, kind=_ROLE_KIND[role],
+                        remote_id=remote_id, retention="ephemeral", ds=ds,
+                        reason="manual_force")
+    conn.execute(
+        "INSERT INTO heygen_asset_uploads (upload_id, parent_operation_id,"
+        " asset_role, content_digest, local_ref, content_type, size_bytes,"
+        " provider_filename, idempotency_key, remote_resource_id, status,"
+        " last_error_code, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (upload_id, op_id, role, "sha256:" + remote_id, "loc",
+         "application/octet-stream", 1, remote_id + ".bin", "idem-" + upload_id,
+         rid, "cleanup_required", _CONSENT_INTEGRITY_ERROR_CODE, "t", "t"))
     return rid
 
 
@@ -808,6 +829,82 @@ class TestRecoverDeletions:
                 "WHERE remote_id='aLive'").fetchone()
             assert a["status"] == "uploaded"          # untouched
             assert r["deletion_status"] == "not_started"
+        finally:
+            conn.close()
+
+    def test_manual_force_pending_does_not_authorize_default_sweep(self, tmp_path):
+        # Codex round-3 P1 regression: a manual_force resource (c1 locked
+        # semantic: NEVER auto-deleted) must NOT act as the "in deletion
+        # pipeline" authorization witness for the default sweep. The witness
+        # checked only deletion_status ∈ {pending, failed} with no deletion_reason
+        # gate — so an in-flight op with a manual_force asset + a sibling
+        # uploaded/not_started asset was swept; the manual_force asset's own
+        # claim correctly returns not_ready, but the resolver releases the tail
+        # and the sibling's asset claim (no download_status gate) deletes it.
+        # The witness must be restricted to auto-recoverable reasons
+        # (post_download / consent_withdrawal); manual_force is operator-only.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="not_started")  # in flight
+            _add_manual_asset(conn, op_id="opLive",
+                              role="synthetic_narration_audio",
+                              upload_id="uManual", remote_id="aManual",
+                              ds="deletion_pending")
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            for uid in ("uManual", "uLive"):
+                a = conn.execute(
+                    "SELECT status FROM heygen_asset_uploads WHERE upload_id=?",
+                    (uid,)).fetchone()
+                assert a["status"] != "deleted"      # neither asset touched
+        finally:
+            conn.close()
+
+    def test_manual_force_failed_does_not_authorize_default_sweep(self, tmp_path):
+        # Codex round-3 P1 mirror: the deletion_failed branch of the witness
+        # must also exclude manual_force. A manual_force resource in
+        # deletion_failed is the same operator-only integrity path and must not
+        # authorize auto-sweeping a sibling.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="not_started")  # in flight
+            _add_manual_asset(conn, op_id="opLive",
+                              role="synthetic_narration_audio",
+                              upload_id="uManual", remote_id="aManual",
+                              ds="deletion_failed")
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            for uid in ("uManual", "uLive"):
+                a = conn.execute(
+                    "SELECT status FROM heygen_asset_uploads WHERE upload_id=?",
+                    (uid,)).fetchone()
+                assert a["status"] != "deleted"      # neither asset touched
         finally:
             conn.close()
 
