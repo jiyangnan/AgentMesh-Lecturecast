@@ -1461,3 +1461,45 @@ class TestMarkAssetCleanupGuards:
             assert self._resource(conn)["deletion_status"] == "not_started"
         finally:
             conn.close()
+
+    def test_refuses_with_missing_resource_ref(self):
+        # The resource→operation ref row is the binding record. With it gone
+        # (parent op + resource both intact), _validate_asset_binding sees 0
+        # refs and fails closed — a DISTINCT branch from a missing parent
+        # operation row (round-5).
+        conn, td, repo = self._setup_uploaded()
+        try:
+            rid = self._resource(conn)["resource_id"]
+            conn.execute(
+                "DELETE FROM heygen_resource_operation_refs "
+                "WHERE resource_id=? AND operation_id='op1'", (rid,))
+            row = self._row(conn)
+            with pytest.raises(OperationIntegrityError):
+                repo._mark_asset_cleanup_in_tx(
+                    conn, row=row, reason="consent_withdrawal",
+                    now_iso="2026-07-30T00:00:02Z")
+            assert self._row(conn)["status"] == "uploaded"
+            assert self._resource(conn)["deletion_status"] == "not_started"
+        finally:
+            conn.close()
+
+    def test_refuses_with_shared_resource_ref(self):
+        # A resource referenced by TWO operations is shared — _validate_asset_binding
+        # requires exactly ONE ref matching the asset's parent (round-5).
+        conn, td, repo = self._setup_uploaded()
+        try:
+            _add_parent_op(conn, op_id="op_other")   # satisfy the ref→op FK
+            rid = self._resource(conn)["resource_id"]
+            conn.execute(
+                "INSERT INTO heygen_resource_operation_refs "
+                "(resource_id, operation_id, created_at) VALUES (?, 'op_other', 't')",
+                (rid,))
+            row = self._row(conn)
+            with pytest.raises(OperationIntegrityError):
+                repo._mark_asset_cleanup_in_tx(
+                    conn, row=row, reason="consent_withdrawal",
+                    now_iso="2026-07-30T00:00:02Z")
+            assert self._row(conn)["status"] == "uploaded"
+            assert self._resource(conn)["deletion_status"] == "not_started"
+        finally:
+            conn.close()
