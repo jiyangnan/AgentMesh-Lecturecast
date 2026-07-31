@@ -45,6 +45,7 @@ from lecturecast.heygen_adapter import (DeleteAdapterError, DeleteResult,
     HeyGenAdapterError, PollAdapterError, PollResult, SubmitAccepted, SubmitOutcome,
     TitleCandidate, TitleQuery, TitleQueryAdapterError, TitleQueryResult)
 from lecturecast.heygen_journal import _chmod_secure, init_database
+from lecturecast.heygen_asset_adapter import derive_asset_identity
 
 _RUNTIME_DB = Path(".lecturecast") / "runtime" / "heygen-operations.db"
 _LEASE_OWNER_RE = re.compile(r"^[A-Za-z0-9_:.\-]{3,96}$")
@@ -1837,6 +1838,15 @@ class OperationRepository:
         now = _parse_utc(now_iso)
         _check_lease_seconds(lease_seconds)
         expires_iso = _canonical(now + timedelta(seconds=lease_seconds))
+        # Re-derive the canonical journal identity from the immutable triple and
+        # reject any non-canonical upload_id / idempotency_key from the caller.
+        expected_upload_id, expected_idem = derive_asset_identity(
+            parent_operation_id, asset_role, content_digest)
+        if upload_id != expected_upload_id or idempotency_key != expected_idem:
+            raise OperationIntegrityError(
+                f"non-canonical asset identity for {parent_operation_id!r}/"
+                f"{asset_role!r} (upload_id or idempotency_key does not match "
+                f"the derived value)")
         row = conn.execute(
             "SELECT * FROM heygen_asset_uploads WHERE upload_id = ?",
             (upload_id,),

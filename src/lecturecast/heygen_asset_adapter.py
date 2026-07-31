@@ -44,10 +44,34 @@ _ALLOWED_EXTENSIONS = {
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
+def derive_asset_identity(
+    parent_operation_id: str, asset_role: AssetRole, content_digest: str,
+) -> tuple[str, str]:
+    """Canonical, pure derivation of the asset-upload journal identity from the
+    immutable triple. Shared by prepare_asset_upload() and the repository so a
+    processor (or a fake caller) cannot forge a non-canonical upload_id /
+    idempotency_key pair.
+
+    Returns (upload_id, idempotency_key):
+      upload_id        = 'lc-hg-asset-' + sha256(parent:role:digest)[:32]
+      idempotency_key  = 'lc-hg-asset-' + sha256(parent:role:digest)
+    """
+    if asset_role not in ("portrait_photo", "synthetic_narration_audio"):
+        raise ValueError(f"unknown asset_role: {asset_role!r}")
+    if not parent_operation_id or not parent_operation_id.strip():
+        raise ValueError("parent_operation_id is required")
+    if not _DIGEST_RE.fullmatch(content_digest or ""):
+        raise ValueError("content_digest must be sha256:<64 hex>")
+    full = hashlib.sha256(
+        f"{parent_operation_id}:{asset_role}:{content_digest}".encode()).hexdigest()
+    return f"lc-hg-asset-{full[:32]}", f"lc-hg-asset-{full}"
+
+
 @dataclass(frozen=True)
 class AssetUploadCommand:
     """Prepared, validated command for an asset upload. Constructed only via
     prepare_asset_upload() — callers cannot forge it."""
+    upload_id: str               # canonical journal PK (derived)
     operation_id: str
     asset_role: AssetRole
     local_output_ref: str        # runtime-root-relative path
@@ -165,10 +189,11 @@ def prepare_asset_upload(
     finally:
         if fd is not None:
             os.close(fd)
-    # Derive idempotency key
-    idem_input = f"{operation_id}:{asset_role}:{digest}"
-    idempotency_key = "lc-hg-asset-" + hashlib.sha256(idem_input.encode()).hexdigest()
+    # Derive canonical journal identity (shared with the repository).
+    upload_id, idempotency_key = derive_asset_identity(
+        operation_id, asset_role, digest)
     return AssetUploadCommand(
+        upload_id=upload_id,
         operation_id=operation_id,
         asset_role=asset_role,
         local_output_ref=local_output_ref,
