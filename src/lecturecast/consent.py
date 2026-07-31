@@ -1174,9 +1174,19 @@ class ConsentService:
                 f"receipt {existing_rc['receipt_digest']} exists without an operation row"
             )
         # 1. Recompute the digest from stored content + stored consented_at.
-        stored = ConsentService._stored_content_no_time(existing_rc)
-        stored["decision_at"] = existing_rc["consented_at"] or ""
-        if sha256_digest(stored) != existing_rc["receipt_digest"]:
+        # Malformed JSON / type corruption in the receipt columns must surface
+        # as a structured ConsentIntegrityError, never a raw JSONDecodeError
+        # (which would abort the caller's tx and orphan an already-returned
+        # remote asset).
+        try:
+            stored = ConsentService._stored_content_no_time(existing_rc)
+            stored["decision_at"] = existing_rc["consented_at"] or ""
+            digest_ok = sha256_digest(stored) == existing_rc["receipt_digest"]
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ConsentIntegrityError(
+                f"receipt {existing_rc['receipt_digest']} content is unparseable: {exc}"
+            ) from exc
+        if not digest_ok:
             raise ConsentIntegrityError(
                 f"receipt digest does not match stored content for {existing_rc['receipt_digest']}"
             )
@@ -1189,6 +1199,19 @@ class ConsentService:
         # 3. Status topology: receipt status ↔ operation status + consent pointer.
         status = existing_rc["status"]
         ptr = existing_op["consent_receipt_digest"]
+        # 3a. withdrawn_at consistency: a withdrawn receipt must carry a valid
+        # tz-aware withdrawn_at; granted/declined must not. (Blocks a forged
+        # status='withdrawn' flip from triggering cleanup.)
+        withdrawn_at = existing_rc["withdrawn_at"]
+        if status == "withdrawn":
+            if not withdrawn_at:
+                raise ConsentIntegrityError(
+                    f"receipt {existing_rc['receipt_digest']} withdrawn without withdrawn_at")
+            _canonical_decision_at(withdrawn_at)  # raises if naive / not ISO-8601
+        elif withdrawn_at:
+            raise ConsentIntegrityError(
+                f"receipt {existing_rc['receipt_digest']} status {status!r} "
+                f"unexpectedly carries withdrawn_at")
         if status == "granted":
             # Single carve-out: a definitive title no-match cancels the operation
             # and clears the consent pointer while the granted receipt is kept as

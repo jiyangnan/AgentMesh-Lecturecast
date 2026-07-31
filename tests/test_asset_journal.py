@@ -77,11 +77,12 @@ def _add_parent_op(conn, op_id="op1"):
 
 
 def _withdraw_op(conn, op_id="op1"):
-    """Simulate ConsentService.withdraw's DB effect: receipt → withdrawn, op
-    consent pointer cleared (so the enqueue entry verification passes)."""
+    """Simulate ConsentService.withdraw's DB effect: receipt → withdrawn (with a
+    valid withdrawn_at), op consent pointer cleared (so the enqueue entry + apply
+    integrity checks pass)."""
     conn.execute(
-        "UPDATE heygen_consent_receipts SET status='withdrawn' "
-        "WHERE operation_id=?", (op_id,))
+        "UPDATE heygen_consent_receipts SET status='withdrawn', "
+        "withdrawn_at='2026-07-30T00:00:00Z' WHERE operation_id=?", (op_id,))
     conn.execute(
         "UPDATE heygen_operations SET consent_receipt_digest=NULL "
         "WHERE operation_id=?", (op_id,))
@@ -237,7 +238,7 @@ class TestAssetConsentGuard:
             # crash window: flip the receipt withdrawn WITHOUT enqueue (real
             # withdraw also clears the pointer; simulate that committed)
             conn.execute(
-                "UPDATE heygen_consent_receipts SET status='withdrawn' "
+                "UPDATE heygen_consent_receipts SET status='withdrawn', withdrawn_at='2026-07-30T00:00:00Z' "
                 "WHERE operation_id=?", (op_id,))
             conn.execute(
                 "UPDATE heygen_operations SET consent_receipt_digest=NULL "
@@ -455,7 +456,7 @@ class TestAssetApplyConsentRecheck:
             # Real withdrawn state: status=withdrawn + consent pointer cleared
             # (ConsentService.withdraw clears the pointer).
             conn.execute(
-                "UPDATE heygen_consent_receipts SET status='withdrawn' "
+                "UPDATE heygen_consent_receipts SET status='withdrawn', withdrawn_at='2026-07-30T00:00:00Z' "
                 "WHERE operation_id='op1'")
             conn.execute(
                 "UPDATE heygen_operations SET consent_receipt_digest=NULL "
@@ -533,7 +534,7 @@ class TestAssetApplyConsentRecheck:
         try:
             conn.execute("BEGIN"); _add_parent_op(conn)
             conn.execute(
-                "UPDATE heygen_consent_receipts SET status='withdrawn' "
+                "UPDATE heygen_consent_receipts SET status='withdrawn', withdrawn_at='2026-07-30T00:00:00Z' "
                 "WHERE operation_id='op1'")
             repo = OperationRepository(Path(td))
             c = self._claim(repo, conn)
