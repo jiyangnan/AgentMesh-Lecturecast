@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 _RUNTIME_DIR_NAME = "runtime"
 _DB_NAME = "heygen-operations.db"
 
@@ -201,8 +201,8 @@ _ASSET_UPLOADS_DDL = """
         idempotency_key TEXT NOT NULL UNIQUE,
         status TEXT NOT NULL DEFAULT 'upload_pending'
             CHECK (status IN (
-                'upload_pending', 'uploading', 'uploaded',
-                'reconciliation_required', 'manual_reconciliation_required',
+                'upload_pending', 'uploading', 'uploaded', 'cleanup_required',
+                'deleted', 'reconciliation_required', 'manual_reconciliation_required',
                 'failed', 'cancelled'
             )),
         remote_resource_id INTEGER,
@@ -313,6 +313,38 @@ def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
+    """v5 → v6: extend heygen_asset_uploads.status CHECK with cleanup_required
+    + deleted (the withdrawn/post-delivery cleanup lifecycle). SQLite cannot
+    ALTER a CHECK constraint, so the table is rebuilt: CREATE _new (v6 schema)
+    → INSERT … SELECT → DROP old → RENAME. heygen_asset_uploads has NO inbound
+    FKs (nothing references it), so the rebuild is safe inside the migration
+    transaction; its outbound FKs (parent_operation_id, remote_resource_id) are
+    recreated by the new DDL. Idempotent: a v6-shaped table is left untouched,
+    and fresh installs already use _ASSET_UPLOADS_DDL (the latest CHECK)."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='heygen_asset_uploads'"
+    ).fetchone()
+    if row is None:
+        return  # nothing to rebuild
+    current_sql = row[0] or ""
+    if "'cleanup_required'" in current_sql:
+        return  # already v6-shaped
+    new_ddl = _ASSET_UPLOADS_DDL.replace(
+        "CREATE TABLE IF NOT EXISTS heygen_asset_uploads",
+        "CREATE TABLE heygen_asset_uploads_new")
+    conn.execute(new_ddl)
+    conn.execute("INSERT INTO heygen_asset_uploads_new SELECT * FROM heygen_asset_uploads")
+    conn.execute("DROP TABLE heygen_asset_uploads")
+    conn.execute("ALTER TABLE heygen_asset_uploads_new RENAME TO heygen_asset_uploads")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_asset_uploads_parent "
+        "ON heygen_asset_uploads(parent_operation_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_asset_uploads_status "
+        "ON heygen_asset_uploads(status)")
+
+
 def _migrate(conn: sqlite3.Connection, current_version: int) -> None:
     """Run all version steps < _SCHEMA_VERSION, then bump user_version, in one
     BEGIN IMMEDIATE transaction. All-or-nothing: on any failure the whole
@@ -330,6 +362,8 @@ def _migrate(conn: sqlite3.Connection, current_version: int) -> None:
             _migrate_v3_to_v4(conn)
         if current_version < 5:
             _migrate_v4_to_v5(conn)
+        if current_version < 6:
+            _migrate_v5_to_v6(conn)
         conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         conn.execute("COMMIT")
     except Exception:
