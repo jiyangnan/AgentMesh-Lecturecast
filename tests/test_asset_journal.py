@@ -21,7 +21,12 @@ from lecturecast.consent import (
     DisclosedAsset, HeyGenOperationIdentity, ThirdPartyTransferDisclosure,
     prepare_operation,
 )
-from lecturecast.operation_repository import OperationRepository
+from lecturecast.operation_repository import (
+    OperationRepository,
+    OperationIntegrityError,
+    _check_asset_resource_consistency,
+    _CONSENT_INTEGRITY_ERROR_CODE,
+)
 
 
 D_PORT = "sha256:" + "a" * 64
@@ -933,5 +938,359 @@ class TestAssetFailure:
                     conn, upload_id=_U1, asset_id="ax",
                     now_iso="2026-07-30T00:02:30Z",
                     lease_owner=LEASE, expected_fence=c1.fence)
+        finally:
+            conn.close()
+
+
+class TestCheckAssetResourceConsistency:
+    """Direct unit tests for the asset↔resource correspondence matrix:
+    blocker #3 (status matrix) + round-3 #2 (deletion_reason /
+    last_error_code matrix). Pure-function — no DB setup."""
+
+    # --- status matrix (blocker #3, must not regress) ---
+    def test_status_matrix_happy_paths(self):
+        _check_asset_resource_consistency(
+            "uploaded", "not_started",
+            deletion_reason=None, last_error_code=None)
+        _check_asset_resource_consistency(
+            "cleanup_required", "deletion_pending",
+            deletion_reason="consent_withdrawal", last_error_code=None)
+        _check_asset_resource_consistency(
+            "deleted", "deleted",
+            deletion_reason="post_download", last_error_code=None)
+
+    def test_status_mismatch_rejected(self):
+        with pytest.raises(OperationIntegrityError):
+            _check_asset_resource_consistency(
+                "uploaded", "deletion_pending",
+                deletion_reason="consent_withdrawal", last_error_code=None)
+
+    def test_unknown_deletion_status_rejected(self):
+        with pytest.raises(OperationIntegrityError):
+            _check_asset_resource_consistency(
+                "uploaded", "bogus",
+                deletion_reason=None, last_error_code=None)
+
+    # --- reason matrix (round-3 #2) ---
+    def test_not_started_requires_null_reason(self):
+        _check_asset_resource_consistency(
+            "uploaded", "not_started",
+            deletion_reason=None, last_error_code=None)
+        # any reason set while nothing is being deleted is corrupt
+        with pytest.raises(OperationIntegrityError):
+            _check_asset_resource_consistency(
+                "uploaded", "not_started",
+                deletion_reason="post_download", last_error_code=None)
+
+    def test_deletion_pending_requires_known_reason(self):
+        for reason in ("post_download", "consent_withdrawal"):
+            _check_asset_resource_consistency(
+                "cleanup_required", "deletion_pending",
+                deletion_reason=reason, last_error_code=None)
+        # null reason on a deletion-bearing state is corrupt
+        with pytest.raises(OperationIntegrityError):
+            _check_asset_resource_consistency(
+                "cleanup_required", "deletion_pending",
+                deletion_reason=None, last_error_code=None)
+        # out-of-vocabulary reason is corrupt
+        with pytest.raises(OperationIntegrityError):
+            _check_asset_resource_consistency(
+                "cleanup_required", "deletion_pending",
+                deletion_reason="bogus", last_error_code=None)
+
+    def test_manual_force_pending_requires_integrity_error_code(self):
+        # the integrity path always records consent_integrity_failure on apply
+        _check_asset_resource_consistency(
+            "cleanup_required", "deletion_pending",
+            deletion_reason="manual_force",
+            last_error_code=_CONSENT_INTEGRITY_ERROR_CODE)
+        # missing error code → the manual_force claim is unproven
+        with pytest.raises(OperationIntegrityError):
+            _check_asset_resource_consistency(
+                "cleanup_required", "deletion_pending",
+                deletion_reason="manual_force", last_error_code=None)
+        # wrong error code → corrupt
+        with pytest.raises(OperationIntegrityError):
+            _check_asset_resource_consistency(
+                "cleanup_required", "deletion_pending",
+                deletion_reason="manual_force", last_error_code="upload_timeout")
+
+    def test_manual_force_failed_requires_integrity_error_code(self):
+        _check_asset_resource_consistency(
+            "cleanup_required", "deletion_failed",
+            deletion_reason="manual_force",
+            last_error_code=_CONSENT_INTEGRITY_ERROR_CODE)
+        with pytest.raises(OperationIntegrityError):
+            _check_asset_resource_consistency(
+                "cleanup_required", "deletion_failed",
+                deletion_reason="manual_force", last_error_code=None)
+
+    def test_manual_force_deleted_does_not_recheck_error_code(self):
+        # once the resource is deleted the resource row itself is the durable
+        # record; the asset's upload-time error code is no longer the signal,
+        # so a terminal manual_force must not be blocked by a cleared code.
+        _check_asset_resource_consistency(
+            "deleted", "deleted",
+            deletion_reason="manual_force", last_error_code=None)
+        _check_asset_resource_consistency(
+            "deleted", "deleted",
+            deletion_reason="manual_force",
+            last_error_code=_CONSENT_INTEGRITY_ERROR_CODE)
+
+    def test_deleted_requires_known_reason(self):
+        for reason in ("post_download", "consent_withdrawal", "manual_force"):
+            _check_asset_resource_consistency(
+                "deleted", "deleted",
+                deletion_reason=reason, last_error_code=None)
+        with pytest.raises(OperationIntegrityError):
+            _check_asset_resource_consistency(
+                "deleted", "deleted",
+                deletion_reason=None, last_error_code=None)
+
+
+class TestE5b0c3bRound3Regressions:
+    """Round-3 closures: fenced-apply receipt tampering → manual_force with the
+    remote asset still recorded; consent-withdrawal cleanup enqueue state
+    machine + fail-closed edges (unknown status, half-lease); idempotent-replay
+    status/deletion_reason matrix (round-3 #2/#3)."""
+
+    def _insert_upload(self, conn, *, upload_id, parent="op1",
+                       role="portrait_photo", status="upload_pending",
+                       remote_resource_id=None, maybe_sent_at=None,
+                       idempotency_expires_at=None, attempt_started_at=None,
+                       lease_owner=None, lease_expires_at=None):
+        conn.execute(
+            "INSERT INTO heygen_asset_uploads (upload_id, parent_operation_id, "
+            "asset_role, content_digest, local_ref, content_type, size_bytes, "
+            "provider_filename, idempotency_key, status, remote_resource_id, "
+            "maybe_sent_at, idempotency_expires_at, attempt_started_at, lease_owner, "
+            "lease_expires_at, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (upload_id, parent, role, D_PORT, "r/p", "image/png", 10,
+             "portrait.png", f"k_{upload_id}", status, remote_resource_id,
+             maybe_sent_at, idempotency_expires_at, attempt_started_at, lease_owner,
+             lease_expires_at, "t", "t"))
+
+    def _assert_manual_force_with_remote(self, conn, out):
+        # The remote asset is ALWAYS recorded (never orphaned); the integrity
+        # path docks it manual_force + stamps consent_integrity_failure.
+        assert out.status == "cleanup_required"
+        assert out.resource_id > 0
+        res = conn.execute(
+            "SELECT deletion_status, deletion_reason FROM heygen_remote_resources "
+            "WHERE resource_id=?", (out.resource_id,)).fetchone()
+        assert res["deletion_status"] == "deletion_pending"
+        assert res["deletion_reason"] == "manual_force"
+        err = conn.execute(
+            "SELECT last_error_code FROM heygen_asset_uploads "
+            "WHERE upload_id=?", (_U1,)).fetchone()[0]
+        assert err == "consent_integrity_failure"
+
+    # --- fenced-apply receipt tampering → integrity → manual_force ----------
+    def test_apply_corrupt_receipt_digest_is_manual_force(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)  # granted + valid digest
+            repo = OperationRepository(Path(td))
+            c = _do_claim(repo, conn)
+            conn.execute(
+                "UPDATE heygen_consent_receipts SET receipt_digest='sha256:bogus' "
+                "WHERE operation_id='op1'")
+            out = repo.apply_asset_outcome_in_tx(
+                conn, upload_id=_U1, asset_id="ax",
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
+            self._assert_manual_force_with_remote(conn, out)
+        finally:
+            conn.close()
+
+    def test_apply_corrupt_receipt_json_is_manual_force(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            c = _do_claim(repo, conn)
+            # mutating the stored JSON invalidates the recomputed digest
+            conn.execute(
+                "UPDATE heygen_consent_receipts SET disclosed_assets_json='[\"x\"]' "
+                "WHERE operation_id='op1'")
+            out = repo.apply_asset_outcome_in_tx(
+                conn, upload_id=_U1, asset_id="ax",
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
+            self._assert_manual_force_with_remote(conn, out)
+        finally:
+            conn.close()
+
+    def test_apply_corrupt_binding_is_manual_force(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            c = _do_claim(repo, conn)
+            # op.request_digest no longer matches the receipt binding field
+            conn.execute(
+                "UPDATE heygen_operations SET request_digest='sha256:zzz' "
+                "WHERE operation_id='op1'")
+            out = repo.apply_asset_outcome_in_tx(
+                conn, upload_id=_U1, asset_id="ax",
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
+            self._assert_manual_force_with_remote(conn, out)
+        finally:
+            conn.close()
+
+    # --- granted receipt mis-call on enqueue is refused ---------------------
+    def test_granted_receipt_mis_enqueue_is_rejected(self):
+        # A still-granted operation must not have its assets enqueued for
+        # withdrawal cleanup (internal mis-call, not a real withdraw).
+        td = tempfile.mkdtemp()
+        conn = init_database(Path(td))
+        conn.row_factory = sqlite3.Row
+        try:
+            op_id = _grant_parent(td, assets=[("portrait_photo", D_PORT)])
+            repo = OperationRepository(Path(td))
+            conn.execute("BEGIN")
+            from lecturecast.operation_repository import OperationStateError
+            with pytest.raises(OperationStateError):
+                repo.enqueue_consent_withdrawal_cleanup_in_tx(
+                    conn, parent_operation_id=op_id, now_iso=NOW)
+            conn.execute("ROLLBACK")
+        finally:
+            conn.close()
+
+    # --- idempotent-replay status / deletion_reason matrix (round-3 #2) -----
+    def test_replay_status_matrix_mismatch_rejected(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            c = _do_claim(repo, conn)
+            repo.apply_asset_outcome_in_tx(conn, upload_id=_U1, asset_id="ax",
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)  # uploaded / not_started
+            # corrupt: resource advanced to deletion_pending but asset still uploaded
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_status='deletion_pending' "
+                "WHERE remote_id='ax'")
+            with pytest.raises(OperationIntegrityError):
+                repo.apply_asset_outcome_in_tx(conn, upload_id=_U1, asset_id="ax",
+                    now_iso="2026-07-30T00:00:02Z",
+                    lease_owner=LEASE, expected_fence=c.fence)
+        finally:
+            conn.close()
+
+    def test_replay_deletion_reason_on_not_started_rejected(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            c = _do_claim(repo, conn)
+            repo.apply_asset_outcome_in_tx(conn, upload_id=_U1, asset_id="ax",
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)  # not_started / reason NULL
+            # corrupt: a reason set while nothing is being deleted
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_reason='post_download' "
+                "WHERE remote_id='ax'")
+            with pytest.raises(OperationIntegrityError):
+                repo.apply_asset_outcome_in_tx(conn, upload_id=_U1, asset_id="ax",
+                    now_iso="2026-07-30T00:00:02Z",
+                    lease_owner=LEASE, expected_fence=c.fence)
+        finally:
+            conn.close()
+
+    def test_replay_deletion_reason_missing_on_pending_rejected(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            conn.execute(
+                "UPDATE heygen_consent_receipts SET status='withdrawn', "
+                "withdrawn_at='2026-07-30T00:00:00Z' WHERE operation_id='op1'")
+            conn.execute(
+                "UPDATE heygen_operations SET consent_receipt_digest=NULL "
+                "WHERE operation_id='op1'")
+            repo = OperationRepository(Path(td))
+            c = _do_claim(repo, conn)
+            repo.apply_asset_outcome_in_tx(conn, upload_id=_U1, asset_id="ax",
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)  # deletion_pending / consent_withdrawal
+            # corrupt: reason dropped while the resource is still pending deletion
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_reason=NULL "
+                "WHERE remote_id='ax'")
+            with pytest.raises(OperationIntegrityError):
+                repo.apply_asset_outcome_in_tx(conn, upload_id=_U1, asset_id="ax",
+                    now_iso="2026-07-30T00:00:02Z",
+                    lease_owner=LEASE, expected_fence=c.fence)
+        finally:
+            conn.close()
+
+    # --- consent-withdrawal cleanup enqueue edges (round-3 #3) --------------
+    def test_enqueue_expired_uploading_is_manual(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            _do_claim(repo, conn, now="2026-07-30T00:00:00Z")  # lease 60s → 00:01:00
+            _withdraw_op(conn)
+            tally = repo.enqueue_consent_withdrawal_cleanup_in_tx(
+                conn, parent_operation_id="op1", now_iso="2026-07-30T00:02:00Z")
+            assert tally["manual"] == 1
+            assert conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id=?", (_U1,)
+            ).fetchone()[0] == "manual_reconciliation_required"
+        finally:
+            conn.close()
+
+    def test_enqueue_active_lease_is_left_uploading(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            _do_claim(repo, conn, now="2026-07-30T00:00:00Z")  # lease to 00:01:00
+            _withdraw_op(conn)
+            tally = repo.enqueue_consent_withdrawal_cleanup_in_tx(
+                conn, parent_operation_id="op1", now_iso="2026-07-30T00:00:30Z")
+            assert tally["left_uploading"] == 1
+            assert conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id=?", (_U1,)
+            ).fetchone()[0] == "uploading"
+        finally:
+            conn.close()
+
+    def test_enqueue_half_lease_rejected(self):
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            _do_claim(repo, conn, now="2026-07-30T00:00:00Z")
+            _withdraw_op(conn)
+            # corrupt half-lease: owner cleared but lease_expires_at left set
+            conn.execute(
+                "UPDATE heygen_asset_uploads SET lease_owner=NULL WHERE upload_id=?",
+                (_U1,))
+            with pytest.raises(OperationIntegrityError):
+                repo.enqueue_consent_withdrawal_cleanup_in_tx(
+                    conn, parent_operation_id="op1", now_iso="2026-07-30T00:00:30Z")
+        finally:
+            conn.close()
+
+    def test_enqueue_unknown_status_rejected(self):
+        # A status outside the handled enum must fail closed, NOT fall into a
+        # catch-all "kept" (round-3 #3). The schema CHECK normally forbids an
+        # unknown status, so it is relaxed only for this injected-corruption
+        # probe to reach the enqueue else-branch.
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            conn.execute("PRAGMA ignore_check_constraints = ON")
+            self._insert_upload(conn, upload_id="u_unk", status="unknown_future")
+            conn.execute("PRAGMA ignore_check_constraints = OFF")
+            _withdraw_op(conn)
+            with pytest.raises(OperationIntegrityError):
+                repo.enqueue_consent_withdrawal_cleanup_in_tx(
+                    conn, parent_operation_id="op1", now_iso=NOW)
         finally:
             conn.close()

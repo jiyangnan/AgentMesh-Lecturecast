@@ -1994,7 +1994,8 @@ class OperationRepository:
             raise ValueError("asset_id must be a non-empty string")
         row = conn.execute(
             "SELECT parent_operation_id, asset_role, status, "
-            "remote_resource_id FROM heygen_asset_uploads WHERE upload_id = ?",
+            "remote_resource_id, last_error_code "
+            "FROM heygen_asset_uploads WHERE upload_id = ?",
             (upload_id,),
         ).fetchone()
         if row is None:
@@ -2018,7 +2019,8 @@ class OperationRepository:
                 raise OperationIntegrityError(
                     f"asset upload {upload_id!r} terminal without remote_resource_id")
             res = conn.execute(
-                "SELECT deletion_status FROM heygen_remote_resources "
+                "SELECT deletion_status, deletion_reason "
+                "FROM heygen_remote_resources "
                 "WHERE resource_id=?", (row["remote_resource_id"],),
             ).fetchone()
             if res is None:
@@ -2030,9 +2032,12 @@ class OperationRepository:
                 asset_role=row["asset_role"],
                 credential_profile_id=credential_profile_id,
                 expected_remote_id=remote_id)
-            # Strict asset-status ↔ resource-deletion correspondence (blocker #3).
+            # Strict asset-status ↔ resource-deletion correspondence (blocker
+            # #3) + deletion_reason/last_error_code matrix (round-3 #2).
             _check_asset_resource_consistency(
-                row["status"], res["deletion_status"])
+                row["status"], res["deletion_status"],
+                deletion_reason=res["deletion_reason"],
+                last_error_code=row["last_error_code"])
             return AssetApplyOutcome(
                 status=_outcome_status_for_resource_deletion(res["deletion_status"]),
                 resource_id=row["remote_resource_id"])
@@ -2221,6 +2226,7 @@ class OperationRepository:
                 f"withdrawn receipt for {parent_operation_id!r} still has an "
                 f"active consent pointer")
         now = _parse_utc(now_iso)   # validates tz-aware canonical ISO (blocker #5)
+        now_c = _canonical(now)     # direct cleanup-writes stamp canonical time (round-3 #3)
         rows = conn.execute(
             "SELECT upload_id, parent_operation_id, asset_role, status, "
             "remote_resource_id, maybe_sent_at, idempotency_expires_at, "
@@ -2270,21 +2276,29 @@ class OperationRepository:
                     and row["maybe_sent_at"] is None
                     and row["idempotency_expires_at"] is None
                     and row["attempt_started_at"] is None
-                    and row["lease_owner"] is None)
+                    and row["lease_owner"] is None
+                    and row["lease_expires_at"] is None)
                 if provably_clean:
                     conn.execute(
                         "UPDATE heygen_asset_uploads SET status='cancelled', "
                         "lease_owner=NULL, lease_expires_at=NULL, attempt_started_at=NULL, "
                         "next_retry_at=NULL, updated_at=? WHERE upload_id=?",
-                        (now_iso, row["upload_id"]))
+                        (now_c, row["upload_id"]))
                     tally["cancelled"] += 1
                 else:
                     self._to_manual_in_tx(conn, upload_id=row["upload_id"],
                                           now_iso=now_iso)
                     tally["manual"] += 1
-            else:
-                # manual_reconciliation_required or anything unexpected → keep.
+            elif st == "manual_reconciliation_required":
+                # already docked manual by a prior crash/recovery; idempotent.
                 tally["kept"] += 1
+            else:
+                # An unknown status must NOT fall into a catch-all "kept" — that
+                # would silently swallow a future status and leak a remote asset
+                # past a withdrawal. Fail closed (round-3 #3).
+                raise OperationIntegrityError(
+                    f"asset upload {row['upload_id']!r} unknown status {st!r} "
+                    f"on consent-withdrawal cleanup")
         return tally
 
     def _mark_asset_cleanup_in_tx(
@@ -2294,7 +2308,9 @@ class OperationRepository:
         deletion_pending with the given reason. The resource UPDATE is GATED on
         its current deletion_status (only not_started is accepted — never revive
         a deleted/deletion_failed resource) and its rowcount checked; identity
-        topology is re-verified so a foreign resource_id cannot be touched."""
+        topology is re-verified so a foreign resource_id cannot be touched.
+        Stamps canonical time regardless of the caller's now_iso form (round-3 #3)."""
+        now_c = _canonical(_parse_utc(now_iso))
         rid = row["remote_resource_id"]
         if rid is None:
             raise OperationIntegrityError(
@@ -2316,7 +2332,7 @@ class OperationRepository:
             "UPDATE heygen_remote_resources SET deletion_status='deletion_pending', "
             "deletion_reason=?, updated_at=? WHERE resource_id=? "
             "AND deletion_status='not_started'",
-            (reason, now_iso, rid))
+            (reason, now_c, rid))
         if cur.rowcount != 1:
             raise OperationIntegrityError(
                 f"resource_id={rid} not in not_started (cannot mark cleanup)")
@@ -2324,15 +2340,16 @@ class OperationRepository:
             "UPDATE heygen_asset_uploads SET status='cleanup_required', "
             "lease_owner=NULL, lease_expires_at=NULL, attempt_started_at=NULL, "
             "next_retry_at=NULL, last_error_code=NULL, updated_at=? WHERE upload_id=?",
-            (now_iso, row["upload_id"]))
+            (now_c, row["upload_id"]))
 
     @staticmethod
     def _to_manual_in_tx(conn, *, upload_id: str, now_iso: str) -> None:
+        now_c = _canonical(_parse_utc(now_iso))   # canonical time (round-3 #3)
         conn.execute(
             "UPDATE heygen_asset_uploads SET status='manual_reconciliation_required', "
             "lease_owner=NULL, lease_expires_at=NULL, attempt_started_at=NULL, "
             "next_retry_at=NULL, updated_at=? WHERE upload_id=?",
-            (now_iso, upload_id))
+            (now_c, upload_id))
 
     def recover_withdrawn_asset_cleanups(self, *, now_iso: str) -> dict[str, int]:
         """Maintenance recovery: for every operation with a withdrawn receipt,
@@ -2522,8 +2539,30 @@ _ASSET_STATUS_FOR_DELETION = {
     "deleted": "deleted",
 }
 
+# Closed vocabulary for heygen_remote_resources.deletion_reason (mirrors the
+# table's CHECK constraint). not_started requires NULL; every deletion-bearing
+# state requires one of these three (round-3 #2).
+_DELETION_REASON_VALUES = frozenset(
+    {"post_download", "consent_withdrawal", "manual_force"}
+)
 
-def _check_asset_resource_consistency(asset_status: str, deletion_status: str) -> None:
+
+def _check_asset_resource_consistency(
+    asset_status: str, deletion_status: str, *,
+    deletion_reason: str | None, last_error_code: str | None,
+) -> None:
+    """Strict asset-status ↔ resource (deletion_status + deletion_reason, and
+    for the manual_force/integrity path, the asset's last_error_code)
+    correspondence. A mismatch is an integrity error, never silently
+    "corrected" (blocker #3, round-3 #2).
+
+    The manual_force reason is produced ONLY by the fenced-apply integrity
+    path, which always records consent_integrity_failure on the asset. So
+    while the resource is still deletion_pending/deletion_failed (the
+    cleanup_required stage that awaits action) that error code must still be
+    present on the asset; once the resource is deleted the resource row itself
+    is the durable record, so the asset's upload-time error code is no longer
+    the signal and is not re-checked."""
     expected = _ASSET_STATUS_FOR_DELETION.get(deletion_status)
     if expected is None:
         raise OperationIntegrityError(
@@ -2532,6 +2571,25 @@ def _check_asset_resource_consistency(asset_status: str, deletion_status: str) -
         raise OperationIntegrityError(
             f"asset status {asset_status!r} != resource deletion_status "
             f"{deletion_status!r} correspondence")
+    if deletion_status == "not_started":
+        if deletion_reason is not None:
+            raise OperationIntegrityError(
+                f"resource deletion_status not_started but deletion_reason="
+                f"{deletion_reason!r}")
+    else:
+        # deletion_pending / deletion_failed / deleted → a known reason is required.
+        if deletion_reason not in _DELETION_REASON_VALUES:
+            raise OperationIntegrityError(
+                f"resource deletion_status {deletion_status!r} requires a known "
+                f"deletion_reason (one of {sorted(_DELETION_REASON_VALUES)}), "
+                f"got {deletion_reason!r}")
+        if (deletion_reason == "manual_force"
+                and deletion_status in ("deletion_pending", "deletion_failed")
+                and last_error_code != _CONSENT_INTEGRITY_ERROR_CODE):
+            raise OperationIntegrityError(
+                f"manual_force deletion_reason requires asset last_error_code="
+                f"{_CONSENT_INTEGRITY_ERROR_CODE!r} while resource is "
+                f"{deletion_status!r}, got {last_error_code!r}")
 
 
 # --- asset upload processor (§5.5e5b0c2) --------------------------------
