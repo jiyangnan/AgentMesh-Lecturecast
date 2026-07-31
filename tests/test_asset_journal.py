@@ -1025,23 +1025,40 @@ class TestCheckAssetResourceConsistency:
                 "cleanup_required", "deletion_failed",
                 deletion_reason="manual_force", last_error_code=None)
 
-    def test_manual_force_deleted_does_not_recheck_error_code(self):
-        # once the resource is deleted the resource row itself is the durable
-        # record; the asset's upload-time error code is no longer the signal,
-        # so a terminal manual_force must not be blocked by a cleared code.
-        _check_asset_resource_consistency(
-            "deleted", "deleted",
-            deletion_reason="manual_force", last_error_code=None)
+    def test_manual_force_deleted_requires_integrity_error_code(self):
+        # round-4 #2: the resource row's deletion_reason is a generic cause
+        # marker that does NOT durably encode consent_integrity_failure, so the
+        # asset's last_error_code is the ONLY durable integrity-cause signal —
+        # and it must persist through EVERY deletion state, including 'deleted'.
         _check_asset_resource_consistency(
             "deleted", "deleted",
             deletion_reason="manual_force",
             last_error_code=_CONSENT_INTEGRITY_ERROR_CODE)
-
-    def test_deleted_requires_known_reason(self):
-        for reason in ("post_download", "consent_withdrawal", "manual_force"):
+        # a cleared/missing code on a terminal manual_force is a forgery of the
+        # integrity path, NOT an accepted terminal state.
+        with pytest.raises(OperationIntegrityError):
             _check_asset_resource_consistency(
                 "deleted", "deleted",
-                deletion_reason=reason, last_error_code=None)
+                deletion_reason="manual_force", last_error_code=None)
+        with pytest.raises(OperationIntegrityError):
+            _check_asset_resource_consistency(
+                "deleted", "deleted",
+                deletion_reason="manual_force", last_error_code="upload_timeout")
+
+    def test_deleted_requires_known_reason(self):
+        # post_download / consent_withdrawal carry no asset-side cause marker
+        _check_asset_resource_consistency(
+            "deleted", "deleted",
+            deletion_reason="post_download", last_error_code=None)
+        _check_asset_resource_consistency(
+            "deleted", "deleted",
+            deletion_reason="consent_withdrawal", last_error_code=None)
+        # manual_force is the integrity path — it must keep the cause code even
+        # at the terminal deleted state (round-4 #2)
+        _check_asset_resource_consistency(
+            "deleted", "deleted",
+            deletion_reason="manual_force",
+            last_error_code=_CONSENT_INTEGRITY_ERROR_CODE)
         with pytest.raises(OperationIntegrityError):
             _check_asset_resource_consistency(
                 "deleted", "deleted",
@@ -1132,6 +1149,56 @@ class TestE5b0c3bRound3Regressions:
             conn.execute(
                 "UPDATE heygen_operations SET request_digest='sha256:zzz' "
                 "WHERE operation_id='op1'")
+            out = repo.apply_asset_outcome_in_tx(
+                conn, upload_id=_U1, asset_id="ax",
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
+            self._assert_manual_force_with_remote(conn, out)
+        finally:
+            conn.close()
+
+    # --- fenced-apply: malformed/invalid receipt fields → manual_force (round-4 #1)
+    def test_apply_malformed_receipt_json_is_manual_force(self):
+        # Syntactically broken JSON in a receipt column must be normalized to a
+        # ConsentIntegrityError (the normalization try already catches
+        # ValueError→ConsentIntegrityError), routing to manual_force — never a
+        # raw JSONDecodeError that aborts the apply tx and orphans the asset.
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            c = _do_claim(repo, conn)
+            # relax the JSON-array CHECK only to plant syntactically-broken JSON
+            conn.execute("PRAGMA ignore_check_constraints = ON")
+            conn.execute(
+                "UPDATE heygen_consent_receipts SET disclosed_assets_json='{broken' "
+                "WHERE operation_id='op1'")
+            conn.execute("PRAGMA ignore_check_constraints = OFF")
+            out = repo.apply_asset_outcome_in_tx(
+                conn, upload_id=_U1, asset_id="ax",
+                now_iso="2026-07-30T00:00:01Z",
+                lease_owner=LEASE, expected_fence=c.fence)
+            self._assert_manual_force_with_remote(conn, out)
+        finally:
+            conn.close()
+
+    def test_apply_invalid_withdrawn_at_is_manual_force(self):
+        # A withdrawn receipt with a NAIVE (tz-unaware) withdrawn_at must route
+        # to manual_force, NOT escape as a raw ValueError that the fenced-apply
+        # `except ConsentError` misses (rolling its tx back and orphaning the
+        # already-returned remote asset) — round-4 #1.
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            # withdraw the receipt but plant a tz-NAIVE withdrawn_at (no 'Z')
+            conn.execute(
+                "UPDATE heygen_consent_receipts SET status='withdrawn', "
+                "withdrawn_at='2026-07-30T00:00:00' WHERE operation_id='op1'")
+            conn.execute(
+                "UPDATE heygen_operations SET consent_receipt_digest=NULL "
+                "WHERE operation_id='op1'")
+            repo = OperationRepository(Path(td))
+            c = _do_claim(repo, conn)
             out = repo.apply_asset_outcome_in_tx(
                 conn, upload_id=_U1, asset_id="ax",
                 now_iso="2026-07-30T00:00:01Z",
@@ -1292,5 +1359,105 @@ class TestE5b0c3bRound3Regressions:
             with pytest.raises(OperationIntegrityError):
                 repo.enqueue_consent_withdrawal_cleanup_in_tx(
                     conn, parent_operation_id="op1", now_iso=NOW)
+        finally:
+            conn.close()
+
+
+class TestMarkAssetCleanupGuards:
+    """Round-4 #3: direct regression tests for the _mark_asset_cleanup_in_tx
+    fail-closed guards. The resource UPDATE is gated on deletion_status=
+    not_started (never revive a deleted/deletion_failed resource); identity
+    topology is re-verified (never touch a foreign resource); the parent ref
+    must exist. Each guard must leave BOTH the asset and the resource row
+    untouched on failure."""
+
+    def _setup_uploaded(self):
+        # granted receipt → apply docks the asset at 'uploaded' with its bound
+        # resource at deletion_status='not_started' (the only valid starting
+        # point for _mark_asset_cleanup_in_tx).
+        conn, td = _db()
+        conn.execute("BEGIN"); _add_parent_op(conn)
+        repo = OperationRepository(Path(td))
+        c = _do_claim(repo, conn)
+        repo.apply_asset_outcome_in_tx(
+            conn, upload_id=_U1, asset_id="ax",
+            now_iso="2026-07-30T00:00:01Z",
+            lease_owner=LEASE, expected_fence=c.fence)
+        return conn, td, repo
+
+    def _row(self, conn):
+        return conn.execute(
+            "SELECT * FROM heygen_asset_uploads WHERE upload_id=?", (_U1,)
+        ).fetchone()
+
+    def _resource(self, conn):
+        return conn.execute(
+            "SELECT * FROM heygen_remote_resources WHERE remote_id='ax'"
+        ).fetchone()
+
+    def test_refuses_to_resurrect_deleted_resource(self):
+        # A resource already at terminal 'deleted' must NOT be flipped back to
+        # deletion_pending — the gated UPDATE matches 0 rows and fails closed.
+        conn, td, repo = self._setup_uploaded()
+        try:
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_status='deleted', "
+                "deletion_reason='post_download' WHERE remote_id='ax'")
+            row = self._row(conn)
+            with pytest.raises(OperationIntegrityError):
+                repo._mark_asset_cleanup_in_tx(
+                    conn, row=row, reason="consent_withdrawal",
+                    now_iso="2026-07-30T00:00:02Z")
+            # both rows untouched: asset still uploaded, resource still deleted
+            assert self._row(conn)["status"] == "uploaded"
+            res = self._resource(conn)
+            assert res["deletion_status"] == "deleted"
+            assert res["deletion_reason"] == "post_download"
+        finally:
+            conn.close()
+
+    def test_refuses_to_mutate_foreign_resource(self):
+        # A resource whose created_by_operation_id no longer matches the asset's
+        # parent is foreign — topology re-verification fails before any UPDATE.
+        conn, td, repo = self._setup_uploaded()
+        try:
+            # a SECOND parent op the resource does NOT belong to (satisfies the
+            # resource→operations FK so the rebind itself is admissible)
+            _add_parent_op(conn, op_id="op_other")
+            # rebind the resource to the OTHER op → the asset's
+            # remote_resource_id now points at a foreign resource
+            conn.execute(
+                "UPDATE heygen_remote_resources SET created_by_operation_id='op_other' "
+                "WHERE remote_id='ax'")
+            row = self._row(conn)
+            with pytest.raises(OperationIntegrityError):
+                repo._mark_asset_cleanup_in_tx(
+                    conn, row=row, reason="consent_withdrawal",
+                    now_iso="2026-07-30T00:00:02Z")
+            # both rows untouched
+            assert self._row(conn)["status"] == "uploaded"
+            res = self._resource(conn)
+            assert res["deletion_status"] == "not_started"
+            assert res["created_by_operation_id"] == "op_other"
+        finally:
+            conn.close()
+
+    def test_refuses_with_missing_parent_ref(self):
+        # If the asset's parent_operation_id has no operation row, the guard
+        # fails closed before touching the resource.
+        conn, td, repo = self._setup_uploaded()
+        try:
+            conn.commit()
+            # detach the parent without cascading the asset (FK off) → dangling
+            conn.execute("PRAGMA foreign_keys=OFF")
+            conn.execute("BEGIN")
+            conn.execute("DELETE FROM heygen_operations WHERE operation_id='op1'")
+            row = self._row(conn)
+            with pytest.raises(OperationIntegrityError):
+                repo._mark_asset_cleanup_in_tx(
+                    conn, row=row, reason="consent_withdrawal",
+                    now_iso="2026-07-30T00:00:02Z")
+            assert self._row(conn)["status"] == "uploaded"
+            assert self._resource(conn)["deletion_status"] == "not_started"
         finally:
             conn.close()

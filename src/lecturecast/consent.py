@@ -1207,7 +1207,16 @@ class ConsentService:
             if not withdrawn_at:
                 raise ConsentIntegrityError(
                     f"receipt {existing_rc['receipt_digest']} withdrawn without withdrawn_at")
-            _canonical_decision_at(withdrawn_at)  # raises if naive / not ISO-8601
+            # A naive/malformed withdrawn_at must surface as a structured
+            # integrity error, NOT a raw ValueError: the fenced-apply caller
+            # only catches ConsentError, so a leaked ValueError rolls its tx
+            # back and orphans an already-returned remote asset (round-4 #1).
+            try:
+                _canonical_decision_at(withdrawn_at)
+            except (ValueError, TypeError) as exc:
+                raise ConsentIntegrityError(
+                    f"receipt {existing_rc['receipt_digest']} has invalid "
+                    f"withdrawn_at {withdrawn_at!r}: {exc}") from exc
         elif withdrawn_at:
             raise ConsentIntegrityError(
                 f"receipt {existing_rc['receipt_digest']} status {status!r} "
