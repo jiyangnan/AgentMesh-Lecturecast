@@ -328,7 +328,9 @@ def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
     if row is None:
         return  # nothing to rebuild
     current_sql = row[0] or ""
-    if "'cleanup_required'" in current_sql:
+    # Idempotent: detect a v6-shaped table by BOTH new status values (not just
+    # one substring — 'deleted' alone is too generic).
+    if "'cleanup_required'" in current_sql and "'deleted'" in current_sql:
         return  # already v6-shaped
     new_ddl = _ASSET_UPLOADS_DDL.replace(
         "CREATE TABLE IF NOT EXISTS heygen_asset_uploads",
