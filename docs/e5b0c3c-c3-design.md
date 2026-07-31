@@ -3,7 +3,7 @@
 > 技术规格 §3.5（`lecturecast-server/docs/DIGITAL-HUMAN-TECH-SPEC.md`）
 > 消费：c2 `resolve_deletion_plan_in_tx`（已锁）× c1 `AssetDeletionProcessor` / video `DeleteProcessor`（已锁）
 > 前置：c1 4 轮 + c2 2 轮 Codex 审阅后锁定；921 测试全绿
-> 本稿含：设计 + 盲预测 + 15 bypass risks 映射（12 调研 + R13 round-1 + R14 round-2 + R15 round-3）+ 34 测试矩阵 + Codex 问题
+> 本稿含：设计 + 盲预测 + 16 bypass risks 映射（12 调研 + R13 round-1 + R14 round-2 + R15 round-3 + R16 round-4）+ 35 测试矩阵 + Codex 问题
 
 ## 0. 范围
 
@@ -236,6 +236,12 @@ def recover_deletions(self, *, deleter, adapter, lease_owner: str, now_iso: str,
             # post_download / consent_withdrawal 是 pending/failed 资源唯一 claim-eligible 的 reason。
             # video 分支不限 reason：manual_force video 不可达（manual_force 只由 asset consent-apply
             # 路径产生），且非 deleted video 把 tail 挡在身后，deleted video 的 tail 合法（c2 锁定）。
+            # ⚠️ round-4 修正：上一段"video 分支不限 reason"的论证被 Codex round-4 推翻——删除子系统
+            # 的威胁模型是 schema-legal 异常态都 fail-closed（topology/matrix/retention 都是），"生产者
+            # 不生成"不是边界。deleted/manual_force video schema-legal，会当 witness 释放 tail。
+            # COMMON reason gate（Codex round-4 P1）：manual_force 在【每个】分支排除。
+            # (reason IS NULL OR reason IN (pd,cw))——NULL 支放行 not_started（合法 NULL reason），
+            # pd/cw 放行合法删除态；manual_force 全排除。
             rows = conn.execute(
                 "SELECT DISTINCT r.created_by_operation_id AS op_id "
                 "FROM heygen_remote_resources r "
@@ -246,6 +252,8 @@ def recover_deletions(self, *, deleter, adapter, lease_owner: str, now_iso: str,
                 "    SELECT 1 FROM heygen_remote_resources r2 "
                 "    WHERE r2.created_by_operation_id = r.created_by_operation_id "
                 "    AND r2.retention_mode != 'reusable_avatar' "
+                "    AND (r2.deletion_reason IS NULL"
+                "         OR r2.deletion_reason IN ('post_download','consent_withdrawal'))"
                 "    AND (r2.resource_kind = 'video'"
                 "         OR (r2.deletion_status IN ('deletion_pending','deletion_failed')"
                 "             AND r2.deletion_reason IN ('post_download','consent_withdrawal'))))"
@@ -280,6 +288,7 @@ def recover_deletions(self, *, deleter, adapter, lease_owner: str, now_iso: str,
 - **默认（force=False）= 删除已授权集**：op 有 video resource（含已 deleted 的——video claim 门禁 verified，resolver 把 asset 挡在 video 后；video 已 deleted 则 tail 合法）OR 有资源已在删除管线（deletion_pending/deletion_failed）。这把"只有 pre-video asset 在 not_started、无 video"的 in-flight op 排除掉——那种 op 的 asset 仍在生产使用，resolver 会因"无 video"直接释放 tail 误删。
   - **授权 witness 带 retention 门禁（round-2 P1）**：EXISTS 子查询里的 `r2` 也必须 `retention_mode != 'reusable_avatar'`。否则一个 reusable video 会充当"有 video"的假授权证据——外层 `r` 取的是 ephemeral asset（过外层 retention 过滤），witness `r2` 取 reusable video（无 retention 过滤）→ op 进候选 → resolver 跳过 reusable video → tail 失守 → 删掉生产中的 ephemeral asset。reusable pending/failed 资源同理（`deletion_status IN (...)` 分支也要堵）。**回归 T17c（reusable video witness）/ T17d（reusable pending witness）**，两测在未修代码上均失败复现。
   - **"在删除管线" witness 限到自动可恢复 reason（round-3 P1）**：pending/failed 分支再加 `deletion_reason IN ('post_download','consent_withdrawal')`，排除 `manual_force`。manual_force 是 operator-only integrity 路径（c1 claim not_ready，绝不自动删），不能授权 sweep sibling——否则 manual_force asset 把 op 楔进候选集，resolver 释放的 tail 被 asset claim 删掉（asset claim 的 not_started 分支**不复查 download_status**，只看矩阵可推进）。**回归 T17e（pending/manual_force witness）/ T17f（failed/manual_force witness）**，两测在未修代码上均失败复现。video 分支不限 reason：manual_force video 不可达（manual_force 只由 asset consent-apply 路径产生），且非 deleted video 把 tail 挡在身后。
+  - **COMMON reason gate，manual_force 每个分支排除（round-4 P1）**：上一条的"video 分支不限 reason"论证被 Codex round-4 推翻——删除子系统的威胁模型是 **schema-legal 异常态都 fail-closed**（topology/matrix/retention 都是），"生产者不生成 manual_force video"不是边界。一个 schema-legal 的 `deleted/manual_force` video 仍会当 witness（video 分支无 reason 门禁）→ resolver 跳过 deleted video → 释放 tail → sibling 被删。修复：witness 加**公共**门禁 `(deletion_reason IS NULL OR deletion_reason IN ('post_download','consent_withdrawal'))`，把 manual_force 从 video 分支也排除。NULL 支放行 not_started（合法 NULL reason 的 video 仍是 witness——resolver 把 tail 挡在非 deleted video 后，video claim 门禁 download_status）。**回归 T17g（deleted/manual_force video witness）**，未修代码上失败复现。**残留边（已记，交 Codex round-5 判）**：schema CHECK 不强制"删除态必有 reason"，所以 `deleted+NULL` video 也 schema-legal；Option A 的 `reason IS NULL` 支仍会放行它当 witness。合法流程里 deleted video 必带 pd/cw reason（video apply 继承 claim 设的 reason，claim 从 not_started 必设 post_download），故 deleted+NULL 只能 corrupt/直插——是否要再收紧成 `(status='not_started' AND reason IS NULL) OR reason IN (...)` 待 Codex 判。
 - **force=True = 宽集**：任意 non-deleted non-reusable resource（显式 operator 授权的 force-cleanup）。
 
 resolver + claim 仍逐 op 精细化（无作用域的候选 op 返空 plan → `ops_empty`）。已完全删除的 op 不进候选（外层 `deletion_status != 'deleted'`）。**幂等重跑安全**（T21）：已删除资源 resolver 跳过 → 空 plan → no-op。
@@ -306,7 +315,10 @@ resolver + claim 仍逐 op 精细化（无作用域的候选 op 返空 plan → 
 > **诚实记录 #3（round-3）**：round-2 修了 retention，但"在删除管线"witness 只看 `deletion_status`、不看 `deletion_reason`——Codex round-3 抓的 P1，我盲预测 + R1–R14 第三次漏掉。归因：我把"pending/failed 资源 = 已进入删除管线 = 可恢复"当成等价类，没区分 reason；忘了 c1 早已锁定 `manual_force → not_ready，绝不自动删`这条更强的不变量。manual_force 资源自身虽被 claim 保护，却能当楔子把 op 楔进候选集，resolver 释放 tail 后，**asset claim 的 not_started 分支不复查 download_status**（只看矩阵可推进），于是 sibling 被删。这条机制（asset claim 不复查 download_status）是 c1 已锁的设计（comment: "c2/c3 resolver gates ordering + receipt; c1 only requires the matrix to be advanceable"），本身没错——错在候选门禁没把 manual_force 排除出 witness。教训延续 R13/R14：**"资源充当授权证据"的 SQL，每一处都要逐字重申所有已锁不变量**（这次轮到 reason 不变量）。Codex 实测：`adapter_calls: ["pLive"]`, attempted 2 / deleted 1，sibling portrait deleted/post_download。修复：pending/failed witness 加 `deletion_reason IN ('post_download','consent_withdrawal')`，回归 T17e（pending/manual_force）/ T17f（failed/manual_force），两测未修代码上均失败。round-3 同时确认 retention 修复闭合、T17c/T17d 真实覆盖、合法 tail / consent / retry / force 宽集不受影响。
 13. **【round-3 才发现】"在删除管线" witness 漏 reason 门禁 → manual_force 假授权（R15）**：默认候选 pending/failed witness 若不限 reason，一个 `manual_force` 资源（c1 锁定：绝不自动删）能当授权证据，让它的 sibling（uploaded/not_started）被自动删（asset claim not_started 分支不复查 download_status）。→ pending/failed witness 加 `deletion_reason IN ('post_download','consent_withdrawal')`（自动可恢复 reason 全集 = 这两个；manual_force 排除）。回归 T17e/T17f。video 分支不限 reason（manual_force video 不可达 + tail 门禁保护）。
 
-## 4. bypass risks × 防御映射（12 来自调研 + R13 round-1 + R14 round-2 + R15 round-3）
+> **诚实记录 #4（round-4）**：round-3 我在 design 里写了"video 分支不限 reason 安全，因 manual_force video 不可达"——**这个论证被 Codex round-4 直接推翻**，是本次最该记的元教训。我把"当前生产路径不产生 manual_force video"当成了安全边界，但**删除子系统的威胁模型一直是对 schema-legal 异常态 fail-closed**——c1/c2/c3 的 topology（exclusive ref binding）、matrix（asset↔resource 对应）、retention（reusable 全 kind 跳过）防御全都把"schema 允许但生产者不生成"的篡改/异常态纳入威胁模型。我 round-3 复核时甚至**自己识别到了 deleted/manual_force video 这条边**（design §2.6 原文写了），却用"不可达"把它打发掉——属于"看到了却判错"。Codex 实测：deleted/manual_force video + sibling → `adapter_calls:["aLive"]`, asset deleted。教训（元级）：**已锁子系统的威胁模型是 schema-legal 态全 fail-closed，"生产者不生成 X"永远不能当 X 的安全边界**；以及——我自己识别到的边界，别用启发式打发，要么 fail-closed 要么交审。修复：witness 加**公共** reason 门禁 `(reason IS NULL OR reason IN ('post_download','consent_withdrawal'))`，manual_force 每分支排除；回归 T17g。残留：`deleted+NULL` video（schema CHECK 不强制删除态带 reason）仍被 NULL 支放行——合法流程不会产生（video apply 继承 claim 的非 NULL reason），但是否要再收紧成 `(status='not_started' AND reason IS NULL) OR ...` 交 Codex round-5 判（我不再单边判边界）。
+14. **【round-4 才发现】video witness 分支无 reason 门禁 → deleted/manual_force video 假授权（R16）**：round-3 只给 pending/failed 分支加了 reason 门禁，video 分支不限 reason。一个 schema-legal 的 `deleted/manual_force` video（生产者不生成，但 schema 允许）当 witness → resolver 跳过 deleted video → 释放 tail → sibling 被删。→ witness 加**公共** reason 门禁 `(reason IS NULL OR reason IN ('post_download','consent_withdrawal'))`，manual_force 从所有分支排除。回归 T17g。
+
+## 4. bypass risks × 防御映射（12 来自调研 + R13 round-1 + R14 round-2 + R15 round-3 + R16 round-4）
 
 | Risk | 一句话 | 防御 | 测试 |
 |---|---|---|---|
@@ -325,8 +337,9 @@ resolver + claim 仍逐 op 精细化（无作用域的候选 op 返空 plan → 
 | **R13** | **sweep 候选门禁太宽 → 误删 in-flight asset（round-1）** | **默认候选 = 删除已授权（有 video OR pending/failed）；force 保留宽集** | **T17 + 回归×2** |
 | **R14** | **EXISTS 授权 witness 漏 retention → reusable 假授权（round-2）** | **witness `r2` 带与外层相同的 `retention_mode != 'reusable_avatar'`** | **T17c/T17d** |
 | **R15** | **"在删除管线" witness 漏 reason → manual_force 假授权（round-3）** | **pending/failed witness 加 `deletion_reason IN ('post_download','consent_withdrawal')`（排除 manual_force）** | **T17e/T17f** |
+| **R16** | **video witness 分支无 reason 门禁 → deleted/manual_force video 假授权（round-4）** | **witness 加**公共**reason 门禁 `(reason IS NULL OR reason IN ('post_download','consent_withdrawal'))`，manual_force 从所有分支排除** | **T17g** |
 
-## 5. 测试矩阵（34，新文件 `tests/test_deletion_coordinator.py`）
+## 5. 测试矩阵（35，新文件 `tests/test_deletion_coordinator.py`）
 
 > 跨 video+asset+routing，区别于 `test_deletion.py`（video-only）与 `test_asset_journal.py`（asset/planner）。
 > House style：`_db()` tempdir / `tmp_path`；模块级 NOW/OWNER/LEASE；**重开 fresh `sqlite3.connect` row_factory=Row 断言最终 DB**（不读同 conn）；attribute access on result；`@parametrize` 矩阵。Fakes：`_StubDeleter`（`test_deletion.py:73`）、`_FakeAdapter`（`test_asset_journal.py:2174`）、`_Boom`（`test_asset_journal.py:2278`）。
@@ -354,6 +367,7 @@ resolver + claim 仍逐 op 精细化（无作用域的候选 op 返空 plan → 
 - **T17d**【round-2 回归镜像】reusable pending 资源假授权：同 op + reusable_avatar portrait 在 `deletion_pending` + ephemeral asset → 默认 sweep **不**驱动（`deletion_status IN (...)` witness 分支也堵 reusable），asset 不变。未修代码上失败复现。
 - **T17e**【round-3 回归】manual_force pending 假授权：`submit_pending` + audio `cleanup_required/deletion_pending/manual_force`（带 consent_integrity_failure marker）+ portrait `uploaded/not_started` → 默认 sweep **不**驱动（pending/failed witness 加 `reason IN ('post_download','consent_withdrawal')` 排除 manual_force），adapter 不调，两 asset 均不变。未修代码上失败复现（`ops_driven==1`，sibling portrait 被删，复现 Codex `adapter_calls: ["pLive"]`）。
 - **T17f**【round-3 回归镜像】manual_force failed 假授权：同 op + audio `cleanup_required/deletion_failed/manual_force` + portrait → 默认 sweep **不**驱动（failed 分支也排除 manual_force），asset 不变。未修代码上失败复现。
+- **T17g**【round-4 回归】deleted/manual_force video 假授权：`submit_pending` + opLive asset uploaded/not_started + 一条 `deleted/manual_force` video（schema-legal 异常态，生产者不产生）→ 默认 sweep **不**驱动（witness **公共** reason 门禁把 manual_force 从 video 分支也排除），adapter 不调，sibling asset 仍 uploaded/not_started。未修代码上失败复现（`ops_driven==1`，sibling portrait 被删，复现 Codex round-4 `adapter_calls:["aLive"]`）。**这条直接推翻我 round-3"video 分支不限 reason 安全"的论证**——教训：schema-legal 异常态必须 fail-closed，"生产者不生成"不是边界。
 - **T18** maintenance 候选 SELECT tx **不**跨网络：instrument 断言候选 tx 在任何 `delete_pass_for_operation` 前已 close（R5 直接测试）。
 - **T19** maintenance `force=False` 默认全 sweep 尊重 video-verified 门禁：sweep 内任一 `download_status!='verified'` 的 op → 其 video 要么不在 plan、要么 `claim_status=not_ready`，绝不 deleted。
 - **T20** crash 中途恢复：stub 一 op 的 `delete_once` 在前面 op 成功后 `_Boom` → 前面 op 写入**已持久化**（独立 tx 已 commit），异常 op 零 phantom 写入，后续 op 仍被驱动（CONTINUE+告警）。
@@ -371,13 +385,14 @@ resolver + claim 仍逐 op 精细化（无作用域的候选 op 返空 plan → 
 8. ✅ **候选查询**（round-1 blocker）：Codex 判定原"超近似"候选集是 **P1 blocker**——会误删 in-flight op 的生产 asset。已收紧：默认 = 删除已授权（有 video OR pending/failed）；force = 宽集。回归 T17a/T17b。
 9. ✅ **EXISTS witness retention**（round-2 P1）：Codex round-2 判"不可锁"——EXISTS 授权 witness `r2` 漏带 `retention_mode != 'reusable_avatar'`，reusable video / reusable pending-failed 资源能假授权，让"reusable video + ephemeral asset + 无真实 video"的 in-flight op 进候选 → resolver 跳过 reusable video → tail 失守 → 删生产 asset（Codex 实测复现）。已修：witness `r2` 带与外层相同的 retention 门禁；回归 T17c/T17d（未修代码均失败）。Codex 同时确认：合法 tail（deleted ephemeral video）/ consent-withdrawal（ephemeral pending）/ retry（ephemeral failed）/ force 宽集均不受影响。
 10. ✅ **witness reason gate**（round-3 P1）：Codex round-3 判"不可锁"——retention 已闭合，但"在删除管线"witness 只看 `deletion_status`、不看 `deletion_reason`，`manual_force` 资源（c1 锁定：绝不自动删）能当授权证据，让 sibling uploaded/not_started 被自动删（asset claim not_started 分支不复查 download_status；Codex 实测 `adapter_calls:["pLive"]` / attempted 2 / deleted 1）。已修：pending/failed witness 加 `deletion_reason IN ('post_download','consent_withdrawal')`（自动可恢复 reason 全集），排除 manual_force；回归 T17e（pending/manual_force）/ T17f（failed/manual_force），未修代码均失败。Codex 同时确认 retention 修复闭合、T17c/T17d 真实覆盖、合法 tail / consent / retry / force 宽集不受影响。round-3 还复核：video 分支不限 reason 是安全的——manual_force video 不可达（manual_force 只由 asset consent-apply 路径产生），且非 deleted video 把 tail 挡在身后。
+11. ✅ **witness COMMON reason gate**（round-4 P1）：Codex round-4 推翻 round-3 的"video 分支不限 reason 安全"论证——`deleted/manual_force` video 是 schema-legal 异常态（生产者不产生，但 schema CHECK 不禁），video 分支无 reason 门禁时它仍当 witness → resolver 跳过 deleted video → 释放 tail → sibling 被删（Codex 实测 `adapter_calls:["aLive"]` / asset deleted）。元教训：**已锁子系统的威胁模型是 schema-legal 态全 fail-closed，"生产者不生成 X"永远不能当 X 的安全边界**（topology/matrix/retention 防御都遵循此模型）。已修：witness 加**公共** reason 门禁 `(deletion_reason IS NULL OR deletion_reason IN ('post_download','consent_withdrawal'))`，manual_force 从所有分支排除；回归 T17g（deleted/manual_force video witness），未修代码失败复现。**残留边交 round-5 判**：schema CHECK 不强制"删除态必有 reason"，`deleted+NULL` video 也 schema-legal、被 NULL 支放行当 witness；合法流程里 deleted video 必带 pd/cw reason（video apply 继承 claim 设的 reason），故 deleted+NULL 只能 corrupt/直插——是否要再收紧成 `(status='not_started' AND reason IS NULL) OR reason IN (...)` 待 Codex 判（不再单边判边界）。
 
 ## 7. 实现顺序
 
 1. 加 `DeletionEntryAttempt` / `DeletionPassResult` dataclass（counts 派生 property）。
 2. 加 `DeletionCoordinator.__init__` + `delete_pass_for_operation` + `_attempt_entry`（路由 + per-item 异常）。
 3. 加 `DeletionCoordinator.recover_deletions`（候选 SELECT 关 tx → 逐 op 驱动）。
-4. 写 `tests/test_deletion_coordinator.py`（34 测）。
-5. 全量 `pytest`（921 + 34 = 955 全绿）。
-6. commit → 发 Codex round-1 → **round-1 抓 1 个 P1（候选门禁太宽）→ 修 + 回归×2 → round-2 锁定复审 → round-2 抓 1 个 P1（EXISTS witness 漏 retention）→ 修 + 回归×2 → round-3 锁定复审 → round-3 抓 1 个 P1（witness 漏 reason，manual_force 假授权）→ 修 + 回归×2 → round-4 锁定复审**。
+4. 写 `tests/test_deletion_coordinator.py`（35 测）。
+5. 全量 `pytest`（921 + 35 = 956 全绿）。
+6. commit → 发 Codex round-1 → **round-1 抓 1 个 P1（候选门禁太宽）→ 修 + 回归×2 → round-2 锁定复审 → round-2 抓 1 个 P1（EXISTS witness 漏 retention）→ 修 + 回归×2 → round-3 锁定复审 → round-3 抓 1 个 P1（witness 漏 reason，manual_force 假授权）→ 修 + 回归×2 → round-4 锁定复审 → round-4 抓 1 个 P1（video witness 漏 reason，deleted/manual_force video 假授权）→ 修 + 回归×1 → round-5 锁定复审（待发，含 deleted+NULL 残留问题）**。
 
