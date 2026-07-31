@@ -44,6 +44,7 @@
 | §5.5e5b0b | asset upload adapter + 安全 multipart（digest re-verify/streaming iterator/shared path helper/forged command/error matrix/MIME binding） | ✅ |
 | §5.5e5b1 | HeyGen Videos v3 adapter（封闭 descriptor + 响应资源绑定 + fail-closed reconcile + token cycle 检测 + canonical title 校验；4 轮 Codex 审阅后锁定） | ✅ |
 | §5.5e5b0c1 | asset journal v5 表 + consent guard + repo 原语（canonical 身份派生 + fenced lease/apply + 冻结 24h deadline + 崩溃超窗防重传 + 完整 resource 拓扑校验 + v5 迁移契约；5 轮 Codex 审阅后锁定） | ✅ |
+| §5.5e5b0c2 | AssetUploadProcessor（guard+claim 同 tx → adapter 事务外 → fenced apply；claim 状态原样转发 + result-vs-command 校验 + 确定性双 worker/崩溃超窗契约；3 轮 Codex 审阅后锁定） | ✅ |
 
 ## §6 跨仓 contract tests（commit bcec6f3，待 Codex 复审）
 
@@ -63,12 +64,11 @@
 
 ### 还没做
 
-- §5.5e5b0c2 AssetUploadProcessor（guard+claim 同 BEGIN IMMEDIATE → adapter 事务外 → fenced apply）+ crash/并发契约（**当前进行中**，e5b0c1 锁定后按 Codex 顺序开干）
-- §5.5e5b0c3 asset GET/delete + consent-withdrawal + 视频完成后的资源清理
+- §5.5e5b0c3 asset GET/delete + consent-withdrawal + 视频完成后的 ephemeral 资源清理（**当前进行中**，e5b0c2 锁定后按 Codex 顺序开干）
 - §5.5e5c/d capability wiring + doctor/canary
 - §5.5e6 RecoveryDirectiveCatalog 验签 + failure mapping + 宿主 workflow（§6 #14 依赖它）
 
-客户端 772 测试全绿。分支 `feat/digital-human-protocol-v1_1`。
+客户端 782 测试全绿。分支 `feat/digital-human-protocol-v1_1`。
 
 ## Codex 审阅工作流
 
