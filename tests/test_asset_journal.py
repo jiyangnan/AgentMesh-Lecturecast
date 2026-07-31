@@ -274,6 +274,28 @@ class TestAssetClaim:
         finally:
             conn.close()
 
+    def test_repeated_crash_does_not_extend_24h_window(self):
+        # t0 send + crash, t23 reclaim (within window) + crash, t46 reclaim must
+        # STILL be past the window — the deadline is frozen at the t0 send, not
+        # recomputed from the t23 reclaim's attempt_started_at (blocker #1).
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            _do_claim(repo, conn, now="2026-07-30T00:00:00Z")        # t0
+            mid = _do_claim(repo, conn, now="2026-07-30T23:00:00Z")  # t23 reclaim
+            assert mid.status == "claimed"  # within 24h of t0
+            # the frozen deadline must be anchored at t0, not t23
+            frozen = conn.execute(
+                "SELECT idempotency_expires_at FROM heygen_asset_uploads "
+                "WHERE upload_id=?", (_U1,)).fetchone()[0]
+            assert frozen is not None
+            assert frozen < "2026-07-31T00:00:00Z"  # ≈ t0+24h, well before t23+24h
+            final = _do_claim(repo, conn, now="2026-07-31T22:00:00Z")  # t46
+            assert final.status == "terminal"  # past the t0-anchored deadline
+        finally:
+            conn.close()
+
     def test_non_canonical_identity_rejected(self):
         # The repository re-derives upload_id + idempotency_key from
         # (parent, role, digest) and rejects any non-canonical pair — a forged
