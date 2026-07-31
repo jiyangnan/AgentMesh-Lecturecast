@@ -3804,7 +3804,16 @@ class DeletionCoordinator:
         not_started: the resolver would release such assets (no video to gate
         them behind), deleting assets still in production use. ``force=True``
         (explicit operator authorization) broadens the candidate set to every
-        non-deleted non-reusable resource."""
+        non-deleted non-reusable resource.
+
+        The authorization witness carries the SAME retention gate as the outer
+        candidate row (Codex round-2 blocker): a reusable_avatar resource is
+        resolver-filtered for every kind, so it can never authorize deleting
+        sibling ephemeral assets — neither as a "video present" witness (a
+        reusable video is skipped, leaving the tail ungated) nor as a
+        "deletion pipeline" witness. Only a NON-reusable video (any status — a
+        deleted ephemeral video still legitimates tail cleanup) or a
+        NON-reusable pending/failed resource counts as authorization."""
         if type(force) is not bool:
             raise ValueError("force must be a bool")
         _require_lease_owner(lease_owner)
@@ -3823,6 +3832,13 @@ class DeletionCoordinator:
                     "ORDER BY r.created_by_operation_id").fetchall()
             else:
                 # Default sweep: deletion-AUTHORIZED ops only (see docstring).
+                # The EXISTS witness r2 must carry the SAME retention gate as
+                # the outer row (Codex round-2 P1): a reusable_avatar resource
+                # is filtered by the resolver for every kind, so it can never
+                # authorize deleting sibling ephemeral assets — neither as a
+                # "video present" witness (a reusable video is skipped, leaving
+                # the tail ungated) nor as a "deletion pipeline" witness (a
+                # reusable pending/failed resource says nothing about siblings).
                 rows = conn.execute(
                     "SELECT DISTINCT r.created_by_operation_id AS op_id "
                     "FROM heygen_remote_resources r "
@@ -3832,6 +3848,7 @@ class DeletionCoordinator:
                     "AND EXISTS ("
                     " SELECT 1 FROM heygen_remote_resources r2 "
                     " WHERE r2.created_by_operation_id = r.created_by_operation_id "
+                    " AND r2.retention_mode != 'reusable_avatar' "
                     " AND (r2.resource_kind = 'video'"
                     "      OR r2.deletion_status IN ('deletion_pending',"
                     "                               'deletion_failed'))"
