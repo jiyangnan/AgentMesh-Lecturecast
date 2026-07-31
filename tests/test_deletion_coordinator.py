@@ -1427,6 +1427,259 @@ class TestRecoverDeletions:
         finally:
             conn.close()
 
+    def test_b2_post_download_asset_witness_on_unverified_op_does_not_authorize_default_sweep(self, tmp_path):
+        # round-8 P1 regression (B2 download_status mirror — the 8th class an
+        # independent workflow audit caught after round-7). The VIDEO claim gates
+        # post_download on op.download_status='verified'; the ASSET claim does NOT
+        # (claim_asset_deletion_in_tx reads only credential_profile_id from the
+        # op), and the resolver only carries download_status as informational
+        # context. B1 (deleted-video witness) mirrors download_status; B2 (non-
+        # video asset witness) did not. So a B2-only op (no live/verified video)
+        # had NO layer enforcing "delivery verified before asset cleanup": a 直插
+        # deletion_pending/post_download asset witness with a fully matrix-
+        # consistent, role-kind-paired cleanup_required upload authorized the op,
+        # the resolver released the tail, and the asset claim deleted a pre-delivery
+        # sibling portrait (still not_started/uploaded) without ever checking
+        # download_status. The fix mirrors B1's clause into B2. (A-vs-B probe
+        # isolates download_status: the IDENTICAL unverified op + sibling under a
+        # B1 deleted-video witness was already correctly blocked — only B2 admitted
+        # it.) Same schema-legal-anomalous-state threat model as round-4/5/6/7.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="not_started")  # ANOMALOUS
+            # fully legit B2 witness: pending/post_download + cleanup_required
+            # upload + role-kind pair + matrix all consistent.
+            _add_asset(conn, op_id="opLive", role="synthetic_narration_audio",
+                       upload_id="uBad", remote_id="aBad",
+                       ds="deletion_pending", asset_status="cleanup_required")
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_reason='post_download' "
+                "WHERE remote_id='aBad'")
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] != "deleted"          # pre-delivery sibling untouched
+        finally:
+            conn.close()
+
+    def test_b2_post_download_asset_witness_on_verified_op_authorizes_default_sweep(self, tmp_path):
+        # round-8 control: the fix must NOT over-block. The identical B2 witness on
+        # a download-VERIFIED op IS a legit post-delivery asset cleanup and must
+        # still authorize the sweep (the delivery happened, the assets are now
+        # expendable). This is the (C) arm of the probe.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified")
+            _add_asset(conn, op_id="opLive", role="synthetic_narration_audio",
+                       upload_id="uBad", remote_id="aBad",
+                       ds="deletion_pending", asset_status="cleanup_required")
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_reason='post_download' "
+                "WHERE remote_id='aBad'")
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 1               # legit post-delivery cleanup
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] == "deleted"          # sibling cleaned (delivery done)
+        finally:
+            conn.close()
+
+    def test_b2_consent_asset_witness_on_unverified_op_authorizes_default_sweep(self, tmp_path):
+        # round-8 control: consent_withdrawal cleanup is delivery-INDEPENDENT (a
+        # hard constraint since round-4). A B2 consent_withdrawal asset witness on
+        # an UNVERIFIED op must STILL authorize the sweep — the download_status
+        # mirror's `!= 'post_download'` short-circuit keeps consent exempt. This is
+        # the (L) arm of the probe and guards against the fix regressing consent.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="not_started")
+            _add_asset(conn, op_id="opLive", role="synthetic_narration_audio",
+                       upload_id="uBad", remote_id="aBad",
+                       ds="deletion_pending", asset_status="cleanup_required")
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_reason='consent_withdrawal' "
+                "WHERE remote_id='aBad'")
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 1               # consent cleanup is delivery-free
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] == "deleted"          # sibling cleaned (consent)
+        finally:
+            conn.close()
+
+    def test_b2_post_download_asset_witness_on_double_video_op_does_not_authorize_default_sweep(self, tmp_path):
+        # round-9 P1 regression (B2 single-video mirror — the 9th class a second
+        # independent workflow re-audit caught after round-8). The VIDEO claim's
+        # _single_video gate is an OP-LEVEL invariant (resolver contract "at
+        # most one video per op"), enforced ONLY on the live-video path; the
+        # ASSET claim reads zero video count and the resolver only comments on
+        # it (trusting the video claim to fail-closed on doubles — a trust
+        # broken once the videos are already deleted/skipped). B1 (deleted-
+        # video witness) mirrors single-video; B2 (non-video asset witness)
+        # did not. So a 直插 double-video op (COUNT==2, both deleted/
+        # post_download with valid terminal proof) admitted a
+        # deletion_pending/post_download asset witness: B1 refused (COUNT==1
+        # fails its gate), B2 authorized, the resolver skipped both deleted
+        # videos -> released the tail -> the coordinator swept individually-
+        # eligible assets (the witness audio AND an innocent not_started/
+        # uploaded portrait sibling) on a structurally-corrupt op that B1's
+        # gate exists to freeze for human reconciliation. Same B1↔B2 asymmetry
+        # class as round-8's download_status (A-vs-B probe isolates the branch:
+        # the IDENTICAL double-video op + sibling is SAFE under B1-only).
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified")
+            # TWO 直插 deleted/post_download videos (valid terminal proof) —
+            # the schema-legal corruption B1's count gate refuses.
+            _add_resource(conn, op_id="opLive", kind="video",
+                          remote_id="v1", ds="deleted", reason="post_download")
+            _add_resource(conn, op_id="opLive", kind="video",
+                          remote_id="v2", ds="deleted", reason="post_download")
+            # fully legit B2 witness: pending/post_download + cleanup_required
+            # upload + role-kind pair + matrix all consistent.
+            _add_asset(conn, op_id="opLive", role="synthetic_narration_audio",
+                       upload_id="uBad", remote_id="aBad",
+                       ds="deletion_pending", asset_status="cleanup_required")
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_reason='post_download' "
+                "WHERE remote_id='aBad'")
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] != "deleted"          # sibling untouched (op frozen)
+        finally:
+            conn.close()
+
+    def test_b2_post_download_asset_witness_on_single_video_op_authorizes_default_sweep(self, tmp_path):
+        # round-9 field control: the count mirror must NOT over-block legit
+        # single-video cleanup. The IDENTICAL setup but with exactly ONE deleted
+        # video (COUNT==1) is a legit post-delivery op whose pending audio +
+        # not_started portrait must still be swept. This is the (C) arm of the
+        # probe and guards against the mirror regressing the normal path.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified")
+            _add_resource(conn, op_id="opLive", kind="video",
+                          remote_id="v1", ds="deleted", reason="post_download")
+            _add_asset(conn, op_id="opLive", role="synthetic_narration_audio",
+                       upload_id="uBad", remote_id="aBad",
+                       ds="deletion_pending", asset_status="cleanup_required")
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_reason='post_download' "
+                "WHERE remote_id='aBad'")
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 1               # legit single-video cleanup
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] == "deleted"          # sibling cleaned
+        finally:
+            conn.close()
+
+    def test_b2_consent_asset_witness_on_double_video_op_authorizes_default_sweep(self, tmp_path):
+        # round-9 consent control: consent_withdrawal cleanup is delivery- AND
+        # structure-independent (a hard constraint since round-4, mirrored in
+        # round-8's download_status exemption). A B2 consent_withdrawal asset
+        # witness on a DOUBLE-VIDEO op (B1 blocked on count) must STILL
+        # authorize the sweep — the single-video mirror's `!= 'post_download'`
+        # short-circuit keeps consent exempt. Guards against the count mirror
+        # regressing consent cleanup on structurally-anomalous ops.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified")
+            _add_resource(conn, op_id="opLive", kind="video",
+                          remote_id="v1", ds="deleted", reason="post_download")
+            _add_resource(conn, op_id="opLive", kind="video",
+                          remote_id="v2", ds="deleted", reason="post_download")
+            _add_asset(conn, op_id="opLive", role="synthetic_narration_audio",
+                       upload_id="uBad", remote_id="aBad",
+                       ds="deletion_pending", asset_status="cleanup_required")
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_reason='consent_withdrawal' "
+                "WHERE remote_id='aBad'")
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 1               # consent cleanup is structure-free
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] == "deleted"          # sibling cleaned (consent)
+        finally:
+            conn.close()
+
     def test_candidate_tx_closed_before_any_pass_runs(self, tmp_path, monkeypatch):
         # T18 / R5 — the candidate-listing tx is closed before any network
         # deletion. The open-tx counter must read 0 at every deleter/adapter call.
