@@ -287,6 +287,7 @@ def test_path_intermediate_symlink_rejected(tmp_path):
     (outside / "evil.png").write_bytes(_png_bytes())
     os.symlink(outside, runtime / "link")
     cmd = AssetUploadCommand(
+        upload_id="lc-hg-asset-test",
         operation_id="op1", asset_role="portrait_photo",
         local_output_ref="link/evil.png",
         expected_asset_digest="sha256:" + "a"*64,

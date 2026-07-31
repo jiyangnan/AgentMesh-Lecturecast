@@ -178,9 +178,17 @@ class TestAssetConsentGuard:
 
 # === repository claim / apply / failure ====================================
 
-def _do_claim(repo, conn, upload_id="u1", parent="op1", role="portrait_photo",
-              digest=D_PORT, idem="k1", now=NOW, size=1024,
+# Canonical derived identity for the default (op1, portrait_photo, D_PORT).
+from lecturecast.heygen_asset_adapter import derive_asset_identity
+_U1, _K1 = derive_asset_identity("op1", "portrait_photo", D_PORT)
+
+
+def _do_claim(repo, conn, parent="op1", role="portrait_photo",
+              digest=D_PORT, now=NOW, size=1024,
               ctype="image/png", fname="portrait.png", lref="r/p.png"):
+    # upload_id + idempotency_key are ALWAYS derived from (parent, role, digest);
+    # the caller cannot forge them.
+    upload_id, idem = derive_asset_identity(parent, role, digest)
     return repo.claim_asset_upload_in_tx(
         conn, upload_id=upload_id, parent_operation_id=parent, asset_role=role,
         content_digest=digest, local_ref=lref, content_type=ctype,
@@ -200,7 +208,7 @@ class TestAssetClaim:
             assert r.fence == 1 and r.attempts == 1
             row = conn.execute(
                 "SELECT status, lease_fence, attempts FROM heygen_asset_uploads "
-                "WHERE upload_id=?", ("u1",)).fetchone()
+                "WHERE upload_id=?", (_U1,)).fetchone()
             assert row["status"] == "uploading"
             assert row["lease_fence"] == 1
         finally:
@@ -212,7 +220,7 @@ class TestAssetClaim:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
             c = _do_claim(repo, conn)
-            repo.apply_asset_outcome_in_tx(conn, upload_id="u1", asset_id="ax",
+            repo.apply_asset_outcome_in_tx(conn, upload_id=_U1, asset_id="ax",
                 now_iso="2026-07-30T00:00:01Z",
                 lease_owner=LEASE, expected_fence=c.fence)
             again = _do_claim(repo, conn, now="2026-07-30T00:00:02Z")
@@ -259,22 +267,40 @@ class TestAssetClaim:
             assert reclaim.status == "terminal"
             st = conn.execute("SELECT status, maybe_sent_at, idempotency_expires_at "
                               "FROM heygen_asset_uploads WHERE upload_id=?",
-                              ("u1",)).fetchone()
+                              (_U1,)).fetchone()
             assert st["status"] == "manual_reconciliation_required"
             assert st["maybe_sent_at"] is not None
             assert st["idempotency_expires_at"] is not None
         finally:
             conn.close()
 
-    def test_idempotency_key_mismatch_on_replay_raises(self):
+    def test_non_canonical_identity_rejected(self):
+        # The repository re-derives upload_id + idempotency_key from
+        # (parent, role, digest) and rejects any non-canonical pair — a forged
+        # caller cannot write a mismatched identity (blocker #2).
         conn, td = _db()
         try:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
-            _do_claim(repo, conn, idem="k1")
+            _, valid_idem = derive_asset_identity("op1", "portrait_photo", D_PORT)
             from lecturecast.operation_repository import OperationIntegrityError
             with pytest.raises(OperationIntegrityError):
-                _do_claim(repo, conn, idem="different-key")
+                repo.claim_asset_upload_in_tx(
+                    conn, upload_id=_U1, parent_operation_id="op1",
+                    asset_role="portrait_photo", content_digest=D_PORT,
+                    local_ref="r/p.png", content_type="image/png", size_bytes=1024,
+                    provider_filename="portrait.png",
+                    idempotency_key="forged-not-canonical",  # != derived
+                    lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
+            # A mismatched upload_id is likewise rejected.
+            with pytest.raises(OperationIntegrityError):
+                repo.claim_asset_upload_in_tx(
+                    conn, upload_id="forged-upload-id",
+                    parent_operation_id="op1", asset_role="portrait_photo",
+                    content_digest=D_PORT, local_ref="r/p.png",
+                    content_type="image/png", size_bytes=1024,
+                    provider_filename="portrait.png", idempotency_key=valid_idem,
+                    lease_owner=LEASE, now_iso=NOW, lease_seconds=60)
         finally:
             conn.close()
 
@@ -286,12 +312,12 @@ class TestAssetApplyOutcome:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
             c = _do_claim(repo, conn)
-            rid = repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
+            rid = repo.apply_asset_outcome_in_tx(conn, upload_id=_U1,
                 asset_id="ax", now_iso="2026-07-30T00:00:01Z",
                 lease_owner=LEASE, expected_fence=c.fence)
             up = conn.execute("SELECT status, remote_resource_id FROM "
                               "heygen_asset_uploads WHERE upload_id=?",
-                              ("u1",)).fetchone()
+                              (_U1,)).fetchone()
             assert up["status"] == "uploaded"
             assert up["remote_resource_id"] == rid
             res = conn.execute("SELECT resource_kind, remote_id, "
@@ -318,7 +344,7 @@ class TestAssetApplyOutcome:
             c = _do_claim(repo, conn, role="synthetic_narration_audio",
                       digest=D_AUDIO, ctype="audio/wav", fname="narration.wav",
                       lref="r/n.wav")
-            rid = repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
+            rid = repo.apply_asset_outcome_in_tx(conn, upload_id=c.upload_id,
                 asset_id="aud", now_iso="2026-07-30T00:00:01Z",
                 lease_owner=LEASE, expected_fence=c.fence)
             kind = conn.execute("SELECT resource_kind FROM heygen_remote_resources "
@@ -335,7 +361,7 @@ class TestAssetApplyOutcome:
             conn.execute("BEGIN"); _add_parent_op(conn)  # credential=heygen_env_default
             repo = OperationRepository(Path(td))
             c = _do_claim(repo, conn)
-            rid = repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
+            rid = repo.apply_asset_outcome_in_tx(conn, upload_id=_U1,
                 asset_id="ax", now_iso="2026-07-30T00:00:01Z",
                 lease_owner=LEASE, expected_fence=c.fence)
             res = conn.execute("SELECT credential_profile_id, retention_mode "
@@ -354,14 +380,14 @@ class TestAssetApplyOutcome:
             conn.execute("BEGIN")
             _add_parent_op(conn, "op_a"); _add_parent_op(conn, "op_b")
             repo = OperationRepository(Path(td))
-            ca = _do_claim(repo, conn, upload_id="ua", parent="op_a", idem="ka")
-            repo.apply_asset_outcome_in_tx(conn, upload_id="ua", asset_id="dup",
+            ca = _do_claim(repo, conn, parent="op_a")
+            repo.apply_asset_outcome_in_tx(conn, upload_id=ca.upload_id, asset_id="dup",
                 now_iso="2026-07-30T00:00:01Z",
                 lease_owner=LEASE, expected_fence=ca.fence)
-            cb = _do_claim(repo, conn, upload_id="ub", parent="op_b", idem="kb")
+            cb = _do_claim(repo, conn, parent="op_b")
             from lecturecast.operation_repository import OperationIntegrityError
             with pytest.raises(OperationIntegrityError):
-                repo.apply_asset_outcome_in_tx(conn, upload_id="ub", asset_id="dup",
+                repo.apply_asset_outcome_in_tx(conn, upload_id=cb.upload_id, asset_id="dup",
                     now_iso="2026-07-30T00:00:02Z",
                     lease_owner=LEASE, expected_fence=cb.fence)
         finally:
@@ -373,10 +399,10 @@ class TestAssetApplyOutcome:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
             c = _do_claim(repo, conn)
-            rid1 = repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
+            rid1 = repo.apply_asset_outcome_in_tx(conn, upload_id=_U1,
                 asset_id="ax", now_iso="2026-07-30T00:00:01Z",
                 lease_owner=LEASE, expected_fence=c.fence)
-            rid2 = repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
+            rid2 = repo.apply_asset_outcome_in_tx(conn, upload_id=_U1,
                 asset_id="ax", now_iso="2026-07-30T00:00:02Z",
                 lease_owner=LEASE, expected_fence=c.fence)
             assert rid1 == rid2  # no duplicate resource
@@ -393,7 +419,7 @@ class TestAssetApplyOutcome:
             repo = OperationRepository(Path(td))
             c = _do_claim(repo, conn)
             with pytest.raises(ValueError):
-                repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
+                repo.apply_asset_outcome_in_tx(conn, upload_id=_U1,
                     asset_id="  ", now_iso=NOW,
                     lease_owner=LEASE, expected_fence=c.fence)
         finally:
@@ -406,12 +432,12 @@ class TestAssetApplyOutcome:
             conn.execute("BEGIN"); _add_parent_op(conn)
             repo = OperationRepository(Path(td))
             c = _do_claim(repo, conn)
-            repo.apply_asset_outcome_in_tx(conn, upload_id="u1", asset_id="ax",
+            repo.apply_asset_outcome_in_tx(conn, upload_id=_U1, asset_id="ax",
                 now_iso="2026-07-30T00:00:01Z",
                 lease_owner=LEASE, expected_fence=c.fence)
             from lecturecast.operation_repository import OperationIntegrityError
             with pytest.raises(OperationIntegrityError):
-                repo.apply_asset_outcome_in_tx(conn, upload_id="u1",
+                repo.apply_asset_outcome_in_tx(conn, upload_id=_U1,
                     asset_id="different", now_iso="2026-07-30T00:00:02Z",
                     lease_owner=LEASE, expected_fence=c.fence)
         finally:
@@ -426,14 +452,14 @@ class TestAssetFailure:
             repo = OperationRepository(Path(td))
             c = _do_claim(repo, conn)
             status = repo.apply_asset_upload_failure_in_tx(
-                conn, upload_id="u1", error_code="network_timeout",
+                conn, upload_id=_U1, error_code="network_timeout",
                 submission_certainty="maybe_sent", retryable=True,
                 now_iso="2026-07-30T00:00:30Z",
                 lease_owner=LEASE, expected_fence=c.fence)
             assert status == "reconciliation_required"
             row = conn.execute("SELECT maybe_sent_at, idempotency_expires_at, "
                                "last_error_code FROM heygen_asset_uploads "
-                               "WHERE upload_id=?", ("u1",)).fetchone()
+                               "WHERE upload_id=?", (_U1,)).fetchone()
             assert row["maybe_sent_at"] is not None
             assert row["idempotency_expires_at"] is not None
             assert row["last_error_code"] == "network_timeout"
@@ -447,7 +473,7 @@ class TestAssetFailure:
             repo = OperationRepository(Path(td))
             c = _do_claim(repo, conn)
             status = repo.apply_asset_upload_failure_in_tx(
-                conn, upload_id="u1", error_code="auth_failed",
+                conn, upload_id=_U1, error_code="auth_failed",
                 submission_certainty="not_sent", retryable=False, now_iso=NOW,
                 lease_owner=LEASE, expected_fence=c.fence)
             assert status == "failed"
@@ -461,12 +487,12 @@ class TestAssetFailure:
             repo = OperationRepository(Path(td))
             c = _do_claim(repo, conn)
             status = repo.apply_asset_upload_failure_in_tx(
-                conn, upload_id="u1", error_code="connection_error",
+                conn, upload_id=_U1, error_code="connection_error",
                 submission_certainty="not_sent", retryable=True, now_iso=NOW,
                 lease_owner=LEASE, expected_fence=c.fence)
             assert status == "upload_pending"
             nr = conn.execute("SELECT next_retry_at FROM heygen_asset_uploads "
-                              "WHERE upload_id=?", ("u1",)).fetchone()[0]
+                              "WHERE upload_id=?", (_U1,)).fetchone()[0]
             assert nr is not None
         finally:
             conn.close()
@@ -481,7 +507,7 @@ class TestAssetFailure:
             repo = OperationRepository(Path(td))
             c = _do_claim(repo, conn, now="2026-07-30T00:00:00Z")
             repo.apply_asset_upload_failure_in_tx(
-                conn, upload_id="u1", error_code="network_timeout",
+                conn, upload_id=_U1, error_code="network_timeout",
                 submission_certainty="maybe_sent", retryable=True,
                 now_iso="2026-07-30T00:00:30Z",
                 lease_owner=LEASE, expected_fence=c.fence)
@@ -489,7 +515,7 @@ class TestAssetFailure:
             reclaim = _do_claim(repo, conn, now="2026-07-31T01:00:30Z")
             assert reclaim.status == "terminal"
             st = conn.execute("SELECT status FROM heygen_asset_uploads "
-                              "WHERE upload_id=?", ("u1",)).fetchone()[0]
+                              "WHERE upload_id=?", (_U1,)).fetchone()[0]
             assert st == "manual_reconciliation_required"
         finally:
             conn.close()
@@ -507,7 +533,7 @@ class TestAssetFailure:
             from lecturecast.operation_repository import OperationIntegrityError
             with pytest.raises(OperationIntegrityError):
                 repo.apply_asset_outcome_in_tx(
-                    conn, upload_id="u1", asset_id="ax",
+                    conn, upload_id=_U1, asset_id="ax",
                     now_iso="2026-07-30T00:02:30Z",
                     lease_owner=LEASE, expected_fence=c1.fence)
         finally:
