@@ -54,11 +54,23 @@ def _add_op(conn, op_id, *, download_status="verified",
 
 def _add_resource(conn, *, op_id, kind, remote_id, retention="ephemeral",
                   ds="not_started", reason=None, credential="heygen_env_default"):
+    # A 'deleted' resource carries the apply terminal proof —
+    # apply_deletion_outcome_in_tx always sets deleted_at NOT NULL and the claim
+    # bumps deletion_attempts (>=1) before apply succeeds. Fixtures model the
+    # REAL terminal state so the round-7 B1 witness gate (which requires this
+    # proof) is satisfiable by legit deleted witnesses, and bypass tests hit
+    # their INTENDED dimension instead of being short-circuited by deleted_at.
+    # Tests that need an ANOMALOUS deleted row (no terminal proof) UPDATE it
+    # away explicitly.
+    deleted_at = "t" if ds == "deleted" else None
+    attempts = 1 if ds == "deleted" else 0
     cur = conn.execute(
         "INSERT INTO heygen_remote_resources (credential_profile_id, resource_kind,"
         " remote_id, retention_mode, created_by_operation_id, deletion_status,"
-        " deletion_reason, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
-        (credential, kind, remote_id, retention, op_id, ds, reason, "t", "t"))
+        " deletion_reason, deleted_at, deletion_attempts, created_at, updated_at)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (credential, kind, remote_id, retention, op_id, ds, reason,
+         deleted_at, attempts, "t", "t"))
     rid = cur.lastrowid
     conn.execute(
         "INSERT INTO heygen_resource_operation_refs (resource_id, operation_id,"
@@ -1263,6 +1275,139 @@ class TestRecoverDeletions:
                           retention="ephemeral", ds="deleted", reason="post_download")
             _add_resource(conn, op_id="opLive", kind="video", remote_id="v2",
                           retention="ephemeral", ds="deleted", reason="post_download")
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] != "deleted"          # sibling untouched
+        finally:
+            conn.close()
+
+    def test_pending_asset_matrix_mismatch_does_not_authorize_default_sweep(self, tmp_path):
+        # round-7 P1 regression (B2 asset-binding MATRIX dimension). A
+        # deletion_pending/post_download asset witness whose upload is matrix-
+        # INCONSISTENT (uploaded, not cleanup_required — _check_asset_resource_
+        # consistency would raise) still passed the round-6 "upload EXISTS"
+        # witness: it authorized the op, the resolver released the sibling tail,
+        # the witness's own claim alerted on the matrix mismatch, and the
+        # coordinator's dumb iterator deleted the legit sibling. The asset
+        # witness must mirror the SAME asset<->resource matrix the claim enforces
+        # (deletion_pending <-> upload cleanup_required), not merely "an upload
+        # row exists". Same fail-closed-against-schema-legal-anomalous-states
+        # threat model as round-4/5/6 (corrupt 直插 uploaded+pending pair, not
+        # producer-reachable, still in-model).
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified")
+            # deletion_pending resource paired with an UPLOADED upload (the
+            # claim would raise on this matrix mismatch).
+            _add_asset(conn, op_id="opLive", role="synthetic_narration_audio",
+                       upload_id="uBad", remote_id="aBad",
+                       ds="deletion_pending", asset_status="uploaded")
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deletion_reason='post_download' "
+                "WHERE remote_id='aBad'")
+            _add_asset(conn, op_id="opLive", role="portrait_photo",
+                       upload_id="uLive", remote_id="pLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] != "deleted"          # sibling untouched
+        finally:
+            conn.close()
+
+    def test_pending_asset_role_kind_mismatch_does_not_authorize_default_sweep(self, tmp_path):
+        # round-7 P1 regression (B2 asset-binding ROLE<->KIND dimension). A
+        # deletion_pending/post_download audio_asset resource with a cleanup_
+        # required upload whose asset_role is portrait_photo (role->kind mismatch
+        # — _validate_asset_binding maps portrait_photo to portrait_asset, not
+        # audio_asset) still passed the round-6 witness: the upload EXISTS and is
+        # cleanup_required, but the role does not match the resource kind. The
+        # witness's own claim raises on the role-kind mismatch; the coordinator
+        # continues and deletes the legit sibling. The asset witness must mirror
+        # the role<->kind pair the claim's _validate_asset_binding enforces.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified")
+            rid = _add_resource(conn, op_id="opLive", kind="audio_asset",
+                                remote_id="aBad", retention="ephemeral",
+                                ds="deletion_pending", reason="post_download")
+            # upload claims portrait_photo role but is bound to an audio_asset.
+            conn.execute(
+                "INSERT INTO heygen_asset_uploads (upload_id, parent_operation_id,"
+                " asset_role, content_digest, local_ref, content_type, size_bytes,"
+                " provider_filename, idempotency_key, remote_resource_id, status,"
+                " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("uBad", "opLive", "portrait_photo", "sha256:aBad", "loc",
+                 "application/octet-stream", 1, "aBad.bin", "idem-uBad", rid,
+                 "cleanup_required", "t", "t"))
+            # sibling is a LEGIT audio (synthetic_narration_audio / audio_asset).
+            _add_asset(conn, op_id="opLive", role="synthetic_narration_audio",
+                       upload_id="uLive", remote_id="aLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            assert a["status"] != "deleted"          # sibling untouched
+        finally:
+            conn.close()
+
+    def test_deleted_video_without_terminal_proof_does_not_authorize_default_sweep(self, tmp_path):
+        # round-7 P1 regression (B1 apply-TERMINAL-PROOF dimension). A successful
+        # video delete via apply_deletion_outcome_in_tx ALWAYS writes deleted_at
+        # NOT NULL + deletion_attempts>=1 (the claim bumps it before apply) +
+        # deletion_next_retry_at IS NULL + last_deletion_error IS NULL. A 直插
+        # 'deleted'/post_download video with deleted_at=NULL, deletion_attempts=0
+        # is schema-legal but unreachable via apply; the round-6 witness admitted
+        # it (it only checked status/reason/topology/count/download_status/lease)
+        # and released the tail. The deleted-video witness branch must require
+        # the apply terminal proof, mirroring the only state the live apply path
+        # can actually produce.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="verified")
+            _add_resource(conn, op_id="opLive", kind="video", remote_id="vDel",
+                          retention="ephemeral", ds="deleted", reason="post_download")
+            # strip the terminal proof _add_resource now sets — model the anomaly.
+            conn.execute(
+                "UPDATE heygen_remote_resources SET deleted_at=NULL,"
+                " deletion_attempts=0 WHERE remote_id='vDel'")
             _add_asset(conn, op_id="opLive", role="portrait_photo",
                        upload_id="uLive", remote_id="pLive")
             conn.commit()
