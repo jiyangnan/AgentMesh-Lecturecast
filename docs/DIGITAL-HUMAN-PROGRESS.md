@@ -48,6 +48,7 @@
 | §5.5e5b0c3a | asset GET/DELETE adapter（GET 验存在+id/type 无 digest；DELETE 验回显 data.id；独立 AssetReadError + AssetProbeResult 严格不变量；2 轮 Codex 审阅后锁定） | ✅ |
 | §5.5e5b0c3b | asset 删除 repo + withdrawal/in-flight-upload 竞态闭合（journal v6 + fenced-apply consent 重检 + AssetApplyOutcome + enqueue_consent_withdrawal_cleanup + withdraw 接线 + recover maintenance；deletion_reason/error_code 矩阵 + enqueue fail-closed 边界 + _mark_asset_cleanup 四 guard；6 轮 Codex 审阅后锁定） | ✅ |
 | §5.5e5b0c3c-c1 | asset deletion fenced claim/apply 原语 + AssetDeletionProcessor.delete_once（asset 自身 lease fence；claim 同 tx 翻 uploaded→cleanup_required + not_started→deletion_pending(post_download)；apply CAS 绑 resource_id + expected_remote_id + 矩阵 + reason gate；manual_force 不自动删；4 轮 Codex 审阅后锁定） | ✅ |
+| §5.5e5b0c3c-c2 | resolve_deletion_plan_in_tx 消费门禁 resolver（纯读 §3.5 规划：正常 [video]→deleted 后 [audio,portrait]；force 排除 video；reusable_avatar 全 kind 跳过；已 deleted/foreign op 跳过；download_status advisory 不 gate；force 严格 bool 守卫；2 轮 Codex 审阅后锁定） | ✅ |
 
 ## §6 跨仓 contract tests（commit bcec6f3，待 Codex 复审）
 
@@ -67,51 +68,51 @@
 
 ### 还没做
 
-- §5.5e5b0c3c-c2 消费门禁 resolver（给定 op，按 §3.5 返回有序可删 resource 列表 + force 模式：正常 video verified→deleted→audio→portrait；force 跳过 video；reusable_avatar 的 portrait 跳过）
-- §5.5e5b0c3c-c3 正常顺序 coordinator（c2 决策 × c1/video processor）+ maintenance 恢复接线（recover 调度入口 + deletion 恢复 pass）
+- §5.5e5b0c3c-c3 正常顺序 coordinator（消费 c2 plan × c1/video processor，哑迭代器 video→audio→portrait）+ maintenance 恢复接线（recover 调度入口 + deletion 恢复 pass）
 - §5.5e5c/d capability wiring + doctor/canary
 - §5.5e6 RecoveryDirectiveCatalog 验签 + failure mapping + 宿主 workflow（§6 #14 依赖它）
 - §6 收尾：补 #9 定价下发 / #10 M1 门禁跨仓契约 + #14（依赖 e6）+ 三仓 CI gate
 
-客户端 **896 测试全绿**。分支 `feat/digital-human-protocol-v1_1`。
+客户端 **921 测试全绿**。分支 `feat/digital-human-protocol-v1_1`。
 
 ---
 
-## 下次会话接续点（交接）—— e5b0c3c-c1 已锁定，c2 起步
+## 下次会话接续点（交接）—— e5b0c3c-c2 已锁定，c3 起步
 
-**当前状态**：e5b0c3c-c1 已锁定（4 轮 Codex 审阅后锁定，commit `333b6e7`+`a3c`，896 测试全绿）。审阅轨迹：round-1（2 blocker：apply 未绑 resource_id + claim/apply 未调矩阵）→ round-2（remote_id 篡改：apply 未绑远端身份）→ round-3（必填 kwarg 仍可显式传 None）→ round-4（可锁）。
+**当前状态**：e5b0c3c-c2 已锁定（2 轮 Codex 审阅后锁定，commit `f01b3dc` + `04d1d8a`，921 测试全绿）。审阅轨迹：round-1（1 blocker：`force` 无严格 bool 守卫，truthy 非布尔 `"false"`/`1`/`[]` 绕过 video 门禁——resolver 自身作用域授权，下游 claim 兜不住）→ round-2（可锁）。c2 设计稿 `docs/e5b0c3c-c2-design.md`。
 
-### c1 已落地的关键不变量（改动时不能放松）
+### c2 已落地的关键不变量（改动时不能放松）
 
-- **claim 同 tx 自洽**：claim 在一个 tx 内翻 asset `uploaded→cleanup_required` + resource `not_started→deletion_pending(post_download)`，矩阵始终自洽；claim 在任何 eligibility 分支前调 `_check_asset_resource_consistency`（非法起点 fail-closed，不静默修正）。
-- **apply 三重身份绑定**：lease CAS 绑 `remote_resource_id=resource_id`（本地行身份）；`_validate_asset_binding(expected_remote_id=...)` 绑远端身份（claim/apply 间改名 remote_id 被拒）；`expected_remote_id` 必填 + 运行时 regex 守卫（防显式传 None 绕过）。所有维度（resource_id / remote_id / kind / created_by / credential / retention / refs / deletion_status / reason / manual-force marker）在 claim/apply 两 tx 间都被重验。
-- **矩阵 + reason gate**：apply 落库前重读 resource 全状态调矩阵 + reason allowlist（只 post_download/consent_withdrawal；manual_force 永不自动删、永不清 integrity marker）。
-- **幂等 + 崩溃安全**：claim(tx1)→adapter.DELETE(tx 外，AssetReadError 捕获为 outcome)→apply(tx2)；200/404→deleted；retryable→deletion_failed+backoff；耗尽/永久→terminal manual code；非 AssetReadError 异常传播留 lease 到期恢复。
+- **纯读规划**：`resolve_deletion_plan_in_tx` 不写 DB、不开 claim、不删任何东西；只返回结构化"当前可尝试"的有序列表。
+- **eligibility 归 claim，不归 resolver**（c1 教训）：verified 门禁/manual_force/retry/矩阵/topology 全部权威地封在各自 claim 里；resolver 只做 claim 做不了的——跨资源 ORDER（§3.5 video→audio→portrait）、结构化作用域、§3.5 顺序门禁。
+- **§3.5 顺序门禁（多 pass）**：正常模式下非 deleted 的 video 存在 → 只返 `[video]`（audio/portrait 被门禁）；video deleted/不存在 → `[audio, portrait]`。单 pass 内 video 删成功不继续删 audio；coordinator 是哑迭代器，全清理跨多 pass（每 pass 独立 claim/apply，crash-safe）。
+- **force 严格 bool**：`type(force) is not bool` → ValueError（防 `"false"`/`1`/`[]` 等 truthy 绕过）。force 是 resolver 自身的作用域/顺序授权，下游 asset claim 不知道 video 是否仍在，无法兜底——必须入口拒。
+- **reusable_avatar 全 kind 跳过**：按 `retention_mode`（非 kind）过滤，对 video/audio/portrait 统一生效（retention 是生命周期语义，撤销走 dashboard）。
+- **作用域确定性**：unknown kind → order_key=9 surfaced（不 drop）；unknown op → 空 plan（不抛）；download_status 只作 advisory（不 gate）；entries 按 (order_key, upload_id/resource_id) 严格有序；frozen dataclass。
 
-### c1 审阅中暴露的系统性教训（适用于 c2/c3）
+### c2 审阅遗留的两个非阻塞观察（c3 处理）
 
-每轮 Codex 都找到一个**同类的身份/契约绕过**，模式高度一致——值得记取：
-1. **round-1**：apply 信任了入参但没把它绑进 CAS（resource_id 被忽略）；"必填"原语跳过了已锁的矩阵。
-2. **round-2**：CAS 绑了本地行身份（resource_id）却漏了远端身份（remote_id）。
-3. **round-3**：必填 kwarg 只防"省略"不防"显式传 None"，而 None 在下游语义是"跳过"。
-→ **c2/c3 写任何 fencing/门禁原语时，每个身份维度都要：(a) 绑进 CAS 或显式校验，(b) 运行时拒 None/空/非法，(c) 复用已锁的不变量而不是绕过，(d) 写直接篡改测试而非只测 happy path。**
+1. **LEFT JOIN 未限制 `u.parent_operation_id`**：损坏库可能让 plan 带出 foreign `upload_id`；asset claim 的 created_by/topology mismatch 会拒绝，不跨作用域删除（Codex + 我均认同可接受，c2 不改）。
+2. **bare asset resource（`upload_id=None`）被 surfaced**：c3 coordinator 对 `resource_kind != video` 且 `upload_id is None` 的 entry 必须**跳过 + 告警**（asset processor 拿不到 upload_id 无法执行）——这是 c3 的路由契约，不是 c2 漏洞。
 
-### e5b0c3c-c2 范围（下一步）
+### e5b0c3c-c3 范围（下一步）
 
-消费门禁 resolver：`resolve_deletion_plan(conn, operation_id, *, force=False) → 有序可删 resource 列表`。
-- 正常模式（§3.5）：video（需 download_status=verified）→ audio_asset → portrait_asset（reusable_avatar 的 portrait 跳过，retention）。
-- force 模式：跳过 video 阶段（用户主动/隐私紧急/video 持续下载失败）。
-- 进 c2 前先写盲预测 + 设计稿，再发 Codex round-1（**建议新开 Codex session**，019fb840 已跑 4 轮上下文较长）。
+正常顺序 coordinator：消费 `DeletionPlan.entries` × 已锁的 c1 `AssetDeletionProcessor` / video `DeleteProcessor`。
+- **哑迭代器**：遍历 entries，按 `resource_kind` 路由——`video` → `DeleteProcessor.delete_once`；`audio_asset`/`portrait_asset` → `AssetDeletionProcessor.delete_once(upload_id=...)`；`upload_id is None` 的 asset entry → 跳过 + 告警（上面观察 #2）。
+- 因 c2 resolver 已保证"正常模式下 audio/portrait 仅在 video 删除后才出现"+"force 下无 video"，coordinator 无需自己判序。
+- 每资源独立 claim/apply（各自 tx），逐资源可恢复。
+- **maintenance 接线**：recover 调度入口 + deletion 恢复 pass（周期性调 coordinator）。
+- 盲预测要点：(a) coordinator 必须把 c2 的 `force` 当 bool 透传（别再引入 truthy 来源）；(b) 单 pass 内某资源 claim not_ready/busy 不阻塞同 pass 后续资源（各自独立 tx）；(c) coordinator 不重判 eligibility（复用 c1/video claim）。
 
 ### 恢复操作（下次会话）
 
 ```bash
 cd ~/AgentMesh-Lecturecast
-git log --oneline -6   # 最近：333b6e7 round-3 None 守卫（c1 锁定）
-UV_CACHE_DIR=/tmp/lc-uv-cache uv run --project . pytest tests/ -c pyproject.toml -q   # 应 896 passed
+git log --oneline -4   # 最近：04d1d8a round-1 force 守卫（c2 锁定）；f01b3dc c2 resolver
+UV_CACHE_DIR=/tmp/lc-uv-cache uv run --project . pytest tests/ -c pyproject.toml -q   # 应 921 passed
 ```
 
-Codex e5b0c3c-c1 会话（4 轮）: `019fb840-a93b-73e1-b56c-a29b07a15e3d`；c2 建议开新 session。发审命令同前（`codex exec resume <session> "<prompt>" -c 'model_reasoning_effort="low"' --json`，**务必 effort=low**，medium 在新 session 会挂）。
+Codex e5b0c3c 会话（c1 4 轮 + c2 2 轮）: `019fb840-a93b-73e1-b56c-a29b07a15e3d`；c3 可继续 resume（持 c1/c2 已锁不变量上下文）。发审命令：`cat prompt.txt | codex exec -C ~/AgentMesh-Lecturecast resume <session> - -c 'model_reasoning_effort="low"' --json`（**务必 effort=low**，medium 在新 session 会挂；`-C` 必须在 `resume` 之前）。
 
 ### 关键不变量（已落地的安全边界，改动时不能放松）
 
