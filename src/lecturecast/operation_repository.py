@@ -305,6 +305,46 @@ class AssetDeletionOnceResult:
     outcome: AssetDeletionOutcome | None
 
 
+# --- deletion plan (§5.5e5b0c3c-c2) --------------------------------------
+#
+# resolve_deletion_plan_in_tx is a PURE read-only planning primitive: given an
+# operation + force flag, it returns the §3.5-ordered list of resources that
+# are structurally in scope to ATTEMPT deleting now. It deliberately does NOT
+# re-derive per-resource eligibility (verified gate / manual_force / retry
+# backoff / matrix / topology) — that stays authoritative inside each claim
+# (video claim_deletion_in_tx / c1 claim_asset_deletion_in_tx), per the c1
+# lesson of reusing locked invariants instead of building a looser parallel
+# one. The resolver owns only what claims cannot: cross-resource ORDER (§3.5
+# fixed sequence), structural scope (reusable_avatar skip, force excludes
+# video, already-deleted skip), and the §3.5 sequencing gate (normal mode
+# holds audio/portrait behind video to protect the deliverable).
+
+@dataclass(frozen=True)
+class DeletionPlanEntry:
+    """One candidate resource in a DeletionPlan. deletion_status is advisory
+    (the claim is authoritative on whether it can actually advance)."""
+    resource_id: int
+    resource_kind: str            # video / audio_asset / portrait_asset
+    upload_id: str | None         # set for assets (AssetDeletionProcessor); None for video
+    retention_mode: str           # ephemeral (reusable_avatar is already filtered out)
+    deletion_status: str
+    order_key: int                # 0=video, 1=audio, 2=portrait (deterministic)
+
+
+@dataclass(frozen=True)
+class DeletionPlan:
+    operation_id: str
+    force: bool
+    video_download_status: str | None   # op.download_status, context for the coordinator
+    entries: tuple[DeletionPlanEntry, ...]   # §3.5-ordered, deterministic
+
+
+# §3.5 fixed deletion order (lower first). Unknown kinds land in a trailing
+# bucket (order_key 9) so they are surfaced to the coordinator, never silently
+# dropped; reusable_avatar rows are filtered out before this applies.
+_DELETION_ORDER_KEY = {"video": 0, "audio_asset": 1, "portrait_asset": 2}
+
+
 # --- repository --------------------------------------------------------
 
 
@@ -2156,6 +2196,94 @@ class OperationRepository:
             "updated_at=? WHERE upload_id=?",
             (now_c, upload_id))
         return AssetDeletionOutcome(upload_id, rid, "failed", fence, code, None)
+
+    def resolve_deletion_plan_in_tx(
+        self, conn: sqlite3.Connection, *, operation_id: str,
+        force: bool = False,
+    ) -> DeletionPlan:
+        """Pure read-only §3.5 deletion planner. Returns the ordered list of
+        resources structurally in scope to ATTEMPT deleting now — eligibility
+        (verified gate / manual_force / retry / matrix / topology) stays
+        authoritative in each claim; this only owns cross-resource ORDER,
+        structural scope, and the §3.5 sequencing gate.
+
+        Normal mode (force=False): if a non-deleted video resource exists, ONLY
+        that video is returned (audio/portrait are gated behind it — §3.5
+        protects the deliverable by deleting video first); once the video is
+        deleted, audio→portrait become available. Force mode (force=True):
+        video is excluded entirely (privacy emergency bypasses the video stage,
+        §3.5 force-cleanup); audio→portrait returned. reusable_avatar rows are
+        always skipped (retention — revocation is via the HeyGen dashboard).
+        Unknown op → empty plan (never raises). Deterministic ordering."""
+        self._require_tx(conn)
+        conn.row_factory = sqlite3.Row
+        if not isinstance(operation_id, str) or not operation_id:
+            raise ValueError("operation_id must be a non-empty string")
+        op = conn.execute(
+            "SELECT download_status FROM heygen_operations WHERE operation_id=?",
+            (operation_id,)).fetchone()
+        if op is None:
+            return DeletionPlan(operation_id, force, None, ())
+        download_status = op["download_status"]
+
+        # All resources created by this op (video + one-shot assets + any avatar),
+        # LEFT JOIN asset uploads so asset entries carry their upload_id for the
+        # coordinator to route to AssetDeletionProcessor.
+        rows = conn.execute(
+            "SELECT r.resource_id, r.resource_kind, r.retention_mode, "
+            "r.deletion_status, u.upload_id "
+            "FROM heygen_remote_resources r "
+            "LEFT JOIN heygen_asset_uploads u ON u.remote_resource_id = r.resource_id "
+            "WHERE r.created_by_operation_id = ? "
+            "ORDER BY r.resource_id",
+            (operation_id,)).fetchall()
+
+        video_entry = None
+        audio_entries: list[DeletionPlanEntry] = []
+        portrait_entries: list[DeletionPlanEntry] = []
+        other_entries: list[DeletionPlanEntry] = []
+        for r in rows:
+            # Structural scope filters (the authority here; eligibility is the
+            # claim's job).
+            if r["retention_mode"] == "reusable_avatar":
+                continue  # retention: kept across ops, revocation via dashboard
+            if r["deletion_status"] == "deleted":
+                continue  # already done — nothing to attempt
+            kind = r["resource_kind"]
+            entry = DeletionPlanEntry(
+                resource_id=r["resource_id"], resource_kind=kind,
+                upload_id=r["upload_id"], retention_mode=r["retention_mode"],
+                deletion_status=r["deletion_status"],
+                order_key=_DELETION_ORDER_KEY.get(kind, 9))
+            if kind == "video":
+                # _single_video contract: at most one video per op; last wins if
+                # data is corrupt (the video claim will fail-closed on doubles).
+                video_entry = entry
+            elif kind == "audio_asset":
+                audio_entries.append(entry)
+            elif kind == "portrait_asset":
+                portrait_entries.append(entry)
+            else:
+                # Unexpected ephemeral kind (avatar_look/group are normally
+                # reusable and filtered above); surface, don't silently drop.
+                other_entries.append(entry)
+        # Deterministic intra-bucket order.
+        audio_entries.sort(key=lambda e: e.upload_id or "")
+        portrait_entries.sort(key=lambda e: e.upload_id or "")
+        other_entries.sort(key=lambda e: e.resource_id)
+        tail = (tuple(audio_entries) + tuple(portrait_entries)
+                + tuple(other_entries))
+
+        if force:
+            # §3.5 force-cleanup: bypass the video stage; video excluded.
+            return DeletionPlan(operation_id, True, download_status, tail)
+        # Normal mode: §3.5 fixed order video→audio→portrait. A non-deleted
+        # video gates audio/portrait (return only the video this pass); once it
+        # is deleted the tail becomes available.
+        if video_entry is not None:
+            return DeletionPlan(operation_id, False, download_status,
+                                (video_entry,))
+        return DeletionPlan(operation_id, False, download_status, tail)
 
     @staticmethod
     def _single_video(conn, operation_id):
