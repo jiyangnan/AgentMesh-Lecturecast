@@ -2557,12 +2557,14 @@ def _check_asset_resource_consistency(
     "corrected" (blocker #3, round-3 #2).
 
     The manual_force reason is produced ONLY by the fenced-apply integrity
-    path, which always records consent_integrity_failure on the asset. So
-    while the resource is still deletion_pending/deletion_failed (the
-    cleanup_required stage that awaits action) that error code must still be
-    present on the asset; once the resource is deleted the resource row itself
-    is the durable record, so the asset's upload-time error code is no longer
-    the signal and is not re-checked."""
+    path, which records consent_integrity_failure on the asset. The resource
+    row's deletion_reason is a generic cause marker that does NOT durably
+    encode consent_integrity_failure, so the asset's last_error_code is the
+    ONLY durable integrity-cause signal — and it must persist through EVERY
+    deletion state (deletion_pending / deletion_failed / deleted). We do NOT
+    stop re-checking it once the resource reaches 'deleted': a deleted
+    resource with manual_force but a missing/cleared error code is still a
+    forgery of the integrity path (round-4 #2)."""
     expected = _ASSET_STATUS_FOR_DELETION.get(deletion_status)
     if expected is None:
         raise OperationIntegrityError(
@@ -2584,12 +2586,12 @@ def _check_asset_resource_consistency(
                 f"deletion_reason (one of {sorted(_DELETION_REASON_VALUES)}), "
                 f"got {deletion_reason!r}")
         if (deletion_reason == "manual_force"
-                and deletion_status in ("deletion_pending", "deletion_failed")
                 and last_error_code != _CONSENT_INTEGRITY_ERROR_CODE):
             raise OperationIntegrityError(
                 f"manual_force deletion_reason requires asset last_error_code="
-                f"{_CONSENT_INTEGRITY_ERROR_CODE!r} while resource is "
-                f"{deletion_status!r}, got {last_error_code!r}")
+                f"{_CONSENT_INTEGRITY_ERROR_CODE!r} (the durable integrity-cause "
+                f"marker) on deletion_status {deletion_status!r}, "
+                f"got {last_error_code!r}")
 
 
 # --- asset upload processor (§5.5e5b0c2) --------------------------------
