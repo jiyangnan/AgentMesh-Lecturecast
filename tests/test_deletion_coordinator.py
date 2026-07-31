@@ -2250,6 +2250,69 @@ class TestRecoverDeletions:
         finally:
             conn.close()
 
+    def test_asset_apply_rejects_live_video_with_no_ref_row_between_claim_and_apply(self, tmp_path):
+        # T19d / round-13 Codex finding (F5 topology-domain mismatch). The resolver
+        # (resolve_deletion_plan_in_tx) selects the gating video_entry by
+        # created_by_operation_id — NO ref row required (@2399-2406). So a video
+        # with created_by_operation_id=op1 but NO heygen_resource_operation_refs row
+        # still GATES the resolver (withholds the asset tail). The op-level helper's
+        # F5 live-video check must inspect the resolver's exact population
+        # (created_by, kind=video, non-deleted, non-reusable); an earlier draft JOINed
+        # refs and was blind to this no-ref video -> resolver gated the tail but the
+        # asset was still auto-deleted (BYPASS). This is the schema-legal incomplete-
+        # topology state earlier rounds treat fail-closed. (F4 COUNT stays on the refs
+        # domain — its authority is _single_video/B2, not the resolver; a created_by
+        # COUNT would over-block legit double-DELETED-video ops whose tail the resolver
+        # correctly releases.)
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "op1", download_status="verified")
+            rid = _add_asset(conn, op_id="op1", role="synthetic_narration_audio",
+                             upload_id="u1", remote_id="a1")
+            conn.commit()
+        finally:
+            conn.close()
+        repo = OperationRepository(td)
+        with repo.begin_immediate() as conn:
+            claim = repo.claim_asset_deletion_in_tx(
+                conn, upload_id="u1", lease_owner=OWNER, now_iso=NOW,
+                lease_seconds=LEASE_SECONDS)
+        assert claim.status == "claimed"
+        # Between txs: a LIVE video appears with created_by_operation_id=op1 but NO
+        # ref row (incomplete topology). The resolver would gate the tail on it.
+        conn = _fresh_conn(td)
+        try:
+            conn.execute(
+                "INSERT INTO heygen_remote_resources (credential_profile_id,"
+                " resource_kind, remote_id, retention_mode, created_by_operation_id,"
+                " deletion_status, deletion_reason, deleted_at, deletion_attempts,"
+                " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                ("heygen_env_default", "video", "vlive-noref", "ephemeral", "op1",
+                 "not_started", None, None, 0, "t", "t"))
+            conn.commit()
+        finally:
+            conn.close()
+        with repo.begin_immediate() as conn:
+            outcome = repo.apply_asset_deletion_outcome_in_tx(
+                conn, upload_id="u1", resource_id=rid, lease_owner=OWNER,
+                fence=claim.fence, now_iso=NOW, expected_remote_id=claim.remote_id,
+                result=AssetDeleteResult("deleted"))
+        assert outcome.status == "fence_conflict"
+        conn = _fresh_conn(td)
+        try:
+            r = conn.execute(
+                "SELECT deletion_status FROM heygen_remote_resources "
+                "WHERE resource_id=?", (rid,)).fetchone()
+            assert r["deletion_status"] == "deletion_pending"  # survived
+            u = conn.execute(
+                "SELECT lease_owner FROM heygen_asset_uploads WHERE upload_id='u1'"
+            ).fetchone()
+            assert u["lease_owner"] == OWNER  # asset lease NOT cleared
+        finally:
+            conn.close()
+
     def test_asset_op_level_check_exempts_consent_withdrawal(self, tmp_path):
         # T19-ctrl-consent / round-13: consent_withdrawal cleanup is delivery- AND
         # structure-independent (a hard constraint since round-4). A consent asset
