@@ -157,8 +157,8 @@ def test_populated_v5_upgrades_to_v6_data_preserved():
 
 
 def test_v6_rebuild_preserves_fk_unique_index():
-    # The rebuild must retain FK, UNIQUE, and indexes — verify via pragmas +
-    # actual constraint violations after a populated v5→v6 upgrade.
+    # The rebuild must retain BOTH outbound FK, UNIQUE, and indexes — verify via
+    # pragmas + actual constraint violations after a populated v5→v6 upgrade.
     conn, _ = _fresh()
     try:
         conn.execute("DROP TABLE heygen_asset_uploads")
@@ -166,15 +166,19 @@ def test_v6_rebuild_preserves_fk_unique_index():
         conn.commit()
         conn.execute("PRAGMA user_version = 5")
         _migrate(conn, 5)
-
-        # FK retained + enforced: a bogus parent_operation_id is rejected.
-        conn.execute(
-            "INSERT INTO heygen_operations (operation_id, kind, endpoint, "
-            "generation_id, manifest_digest, request_digest, idempotency_key, "
-            "heygen_title, credential_profile_id, created_at, updated_at) "
-            "VALUES ('op_f','video','/v3/videos','g','sha256:m','sha256:r',"
-            "'i_f','lc:op_f','heygen_env_default','t','t')")
         conn.execute("PRAGMA foreign_keys=ON")
+
+        def _op(op_id, idem):
+            conn.execute(
+                "INSERT INTO heygen_operations (operation_id, kind, endpoint, "
+                "generation_id, manifest_digest, request_digest, idempotency_key, "
+                "heygen_title, credential_profile_id, created_at, updated_at) "
+                "VALUES (?,'video','/v3/videos','g','sha256:m','sha256:r',"
+                "?,?,'heygen_env_default','t','t')",
+                (op_id, idem, f"lc:{op_id}"))
+
+        # --- FK #1 (parent_operation_id) retained + enforced ---------------
+        _op("op_f", "i_f")
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 "INSERT INTO heygen_asset_uploads (upload_id, parent_operation_id, "
@@ -182,13 +186,25 @@ def test_v6_rebuild_preserves_fk_unique_index():
                 "provider_filename, idempotency_key, status, created_at, updated_at) "
                 "VALUES ('u_fk','NONEXISTENT','portrait_photo','d','r','c',1,'f',"
                 "'kfk','upload_pending','t','t')")
-        # indexes recreated
+
+        # --- FK #2 (remote_resource_id) retained + enforced ----------------
+        _op("op_f2", "i_f2")
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO heygen_asset_uploads (upload_id, parent_operation_id, "
+                "asset_role, content_digest, local_ref, content_type, size_bytes, "
+                "provider_filename, idempotency_key, status, remote_resource_id, "
+                "created_at, updated_at) "
+                "VALUES ('u_rr','op_f2','portrait_photo','d','r','c',1,'f','krr',"
+                "'upload_pending',999999,'t','t')")   # bogus resource_id
+
+        # --- indexes recreated --------------------------------------------
         idx_names = {i[1] for i in conn.execute(
             "PRAGMA index_list(heygen_asset_uploads)").fetchall()}
         assert "idx_asset_uploads_parent" in idx_names
         assert "idx_asset_uploads_status" in idx_names
 
-        # functional UNIQUE: op_f already inserted above; violate UNIQUE(parent, role).
+        # --- UNIQUE(parent, role) ------------------------------------------
         conn.execute(
             "INSERT INTO heygen_asset_uploads (upload_id, parent_operation_id, "
             "asset_role, content_digest, local_ref, content_type, size_bytes, "
@@ -202,13 +218,58 @@ def test_v6_rebuild_preserves_fk_unique_index():
                 "provider_filename, idempotency_key, status, created_at, updated_at) "
                 "VALUES ('u2','op_f','portrait_photo','d2','r','c',1,'f','k2',"
                 "'upload_pending','t','t')")
-        with pytest.raises(sqlite3.IntegrityError):   # duplicate idempotency_key
+
+        # --- UNIQUE(idempotency_key): op_f2 NOW exists so the parent FK is
+        # satisfied, leaving the duplicate 'k1' as the genuine rejection cause
+        # (this previously passed for the WRONG reason — the FK rejected the
+        # nonexistent op_f2 before the UNIQUE constraint was ever evaluated).
+        with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 "INSERT INTO heygen_asset_uploads (upload_id, parent_operation_id, "
                 "asset_role, content_digest, local_ref, content_type, size_bytes, "
                 "provider_filename, idempotency_key, status, created_at, updated_at) "
                 "VALUES ('u3','op_f2','portrait_photo','d3','r','c',1,'f','k1',"
                 "'upload_pending','t','t')")
+
+        # --- parent_operation_id FK ON DELETE CASCADE ----------------------
+        _op("op_casc", "i_casc")
+        conn.execute(
+            "INSERT INTO heygen_asset_uploads (upload_id, parent_operation_id, "
+            "asset_role, content_digest, local_ref, content_type, size_bytes, "
+            "provider_filename, idempotency_key, status, created_at, updated_at) "
+            "VALUES ('u_casc','op_casc','portrait_photo','d','r','c',1,'f','kc',"
+            "'upload_pending','t','t')")
+        conn.execute("DELETE FROM heygen_operations WHERE operation_id='op_casc'")
+        assert conn.execute(
+            "SELECT COUNT(*) FROM heygen_asset_uploads WHERE upload_id='u_casc'"
+        ).fetchone()[0] == 0
+
+        # --- remote_resource_id FK ON DELETE SET NULL ----------------------
+        conn.execute(
+            "INSERT INTO heygen_remote_resources (credential_profile_id, "
+            "resource_kind, remote_id, retention_mode, deletion_status, "
+            "created_at, updated_at) VALUES ('heygen_env_default','portrait_asset',"
+            "'rr1','ephemeral','not_started','t','t')")
+        rid = conn.execute(
+            "SELECT resource_id FROM heygen_remote_resources WHERE remote_id='rr1'"
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO heygen_asset_uploads (upload_id, parent_operation_id, "
+            "asset_role, content_digest, local_ref, content_type, size_bytes, "
+            "provider_filename, idempotency_key, status, remote_resource_id, "
+            "created_at, updated_at) "
+            "VALUES ('u_sn','op_f2','portrait_photo','d','r','c',1,'f','ksn',"
+            "'upload_pending',?,'t','t')",
+            (rid,))
+        conn.execute("DELETE FROM heygen_remote_resources WHERE resource_id=?", (rid,))
+        row = conn.execute(
+            "SELECT remote_resource_id FROM heygen_asset_uploads "
+            "WHERE upload_id='u_sn'").fetchone()
+        assert row[0] is None                       # SET NULL
+        # the asset row itself survives (SET NULL, not CASCADE)
+        assert conn.execute(
+            "SELECT COUNT(*) FROM heygen_asset_uploads WHERE upload_id='u_sn'"
+        ).fetchone()[0] == 1
     finally:
         conn.close()
 
