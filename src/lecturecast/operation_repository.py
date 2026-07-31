@@ -345,6 +345,68 @@ class DeletionPlan:
 _DELETION_ORDER_KEY = {"video": 0, "audio_asset": 1, "portrait_asset": 2}
 
 
+# --- deletion pass result (§5.5e5b0c3c-c3) --------------------------------
+#
+# DeletionCoordinator drives one §3.5-ordered pass over a single operation:
+# it resolves the c2 DeletionPlan in its OWN (immediately-closed) tx, then
+# routes each frozen entry to the c1/video processor by resource_kind. It is a
+# DUMB iterator — eligibility stays authoritative in each processor's claim
+# (c1 lesson: reuse locked invariants, build no parallel gate). Counts below
+# derive from `attempts` so they cannot drift from the per-entry record.
+
+@dataclass(frozen=True)
+class DeletionEntryAttempt:
+    """One routed entry in a deletion pass. ``routed`` names what happened:
+    video/asset = a processor was driven; skipped_* = the resolver surfaced
+    the entry but it is not drivable (never silently dropped); alerted =
+    the processor raised an untyped exception, so the remote result is
+    unknowable — NOTHING is written for this resource and the held lease
+    expires naturally (never a fabricated phantom outcome)."""
+    entry: DeletionPlanEntry
+    routed: str                   # video | asset | skipped_no_upload_id | skipped_unknown_kind | alerted_exception
+    claim_status: str | None      # processor claim status; None when skipped/alerted
+    outcome_status: str | None    # processor outcome status; None when not claimed/skipped/alerted
+    last_error: str | None
+    next_retry_at: str | None
+
+
+@dataclass(frozen=True)
+class DeletionPassResult:
+    """Result of one deletion pass over a single operation. ``attempts`` is
+    authoritative; the counts are derived from it."""
+    operation_id: str
+    force: bool
+    video_download_status: str | None
+    attempts: tuple[DeletionEntryAttempt, ...]
+
+    @property
+    def attempted(self) -> int:
+        return len(self.attempts)
+
+    @property
+    def deleted(self) -> int:
+        return sum(1 for a in self.attempts if a.outcome_status == "deleted")
+
+    @property
+    def failed(self) -> int:
+        return sum(1 for a in self.attempts if a.outcome_status == "failed")
+
+    @property
+    def not_advanced(self) -> int:
+        # claimed-but-fence_conflict, or non-claimed (busy/retry_wait/not_ready).
+        return sum(1 for a in self.attempts
+                   if a.claim_status is not None
+                   and a.outcome_status in (None, "fence_conflict"))
+
+    @property
+    def skipped(self) -> int:
+        return sum(1 for a in self.attempts if a.routed.startswith("skipped"))
+
+    @property
+    def alerted(self) -> int:
+        return sum(1 for a in self.attempts if a.routed == "alerted_exception")
+
+
 # --- repository --------------------------------------------------------
 
 
@@ -3560,6 +3622,218 @@ class AssetDeletionProcessor:
                 expected_remote_id=claim.remote_id,
                 result=result, max_attempts=max_attempts)
         return AssetDeletionOnceResult(claim=claim, outcome=outcome)
+
+
+class DeletionCoordinator:
+    """§3.5 normal-order deletion coordinator (§5.5e5b0c3c-c3). Consumes the
+    c2 DeletionPlan × the c1/video processors.
+
+    A DUMB iterator: resolve the frozen, §3.5-ordered plan.entries in ONE
+    (immediately-closed) transaction, then route each entry to a processor by
+    resource_kind. Per-resource eligibility (verified gate / manual_force /
+    retry / matrix / topology) STAYS authoritative inside each processor's
+    claim — the coordinator never re-sorts, re-filters, or re-judges (c1
+    lesson: reuse locked invariants, build no parallel gate). Each resource
+    is driven in its own claim/apply transactions (owned by the processors),
+    so a crash mid-pass leaves a clean, resumable state.
+
+    No coordinator-level transaction is open while a processor runs: the plan
+    is resolved in a `begin_immediate` that closes before the entry loop, and
+    each processor opens its own. A single ``lease_owner`` / ``now_iso`` is
+    forwarded to every processor call in the pass (no per-item drift)."""
+
+    def __init__(self, project_dir: str | Path) -> None:
+        self._project_dir = Path(project_dir)
+        self._repository = OperationRepository(self._project_dir)
+        self._video_processor = DeleteProcessor(self._project_dir)
+        self._asset_processor = AssetDeletionProcessor(self._project_dir)
+
+    def delete_pass_for_operation(
+        self, *, operation_id: str, force: bool = False,
+        deleter, adapter, lease_owner: str, now_iso: str,
+        lease_seconds: int, max_attempts: int = DELETION_MAX_ATTEMPTS,
+    ) -> DeletionPassResult:
+        """Drive one §3.5-ordered deletion pass over ``operation_id``. Returns a
+        DeletionPassResult whose attempts are the per-entry records (counts
+        derive from them). Non-claimed / failed / skipped entries do NOT block
+        later entries in the same pass — each is independent."""
+        # Entry guards (defense in depth on top of the resolver's own guards).
+        # force is this pass's OWN scope/order authorization (like the
+        # resolver's), so a truthy non-bool cannot be recovered downstream —
+        # reject before any DB read. Never coerce (bool(force)) and never
+        # branch on `if force:` truthiness before forwarding.
+        if not isinstance(operation_id, str) or not operation_id:
+            raise ValueError("operation_id must be a non-empty string")
+        if type(force) is not bool:
+            raise ValueError("force must be a bool")
+        _require_lease_owner(lease_owner)
+
+        # Resolve the §3.5 plan in its OWN tx, then CLOSE it (resolve is
+        # read-only; the connection must not survive across the network DELETEs
+        # driven by the processors below — each opens its own begin_immediate).
+        with self._repository.begin_immediate() as conn:
+            plan = self._repository.resolve_deletion_plan_in_tx(
+                conn, operation_id=operation_id, force=force)
+        # From here, no coordinator-level transaction is open while processors
+        # run. Iterate the frozen entries verbatim — no re-sort / re-filter.
+        attempts = tuple(
+            self._attempt_entry(
+                operation_id=plan.operation_id, entry=entry,
+                deleter=deleter, adapter=adapter, lease_owner=lease_owner,
+                now_iso=now_iso, lease_seconds=lease_seconds,
+                max_attempts=max_attempts)
+            for entry in plan.entries)
+        return DeletionPassResult(
+            operation_id=plan.operation_id, force=plan.force,
+            video_download_status=plan.video_download_status, attempts=attempts)
+
+    def _attempt_entry(self, *, operation_id, entry, deleter, adapter,
+                       lease_owner, now_iso, lease_seconds,
+                       max_attempts) -> DeletionEntryAttempt:
+        """Route one frozen plan entry strictly by resource_kind. The kind
+        dispatch is the ONLY routing authority here — never guess a route for
+        an unknown kind, and never hand an asset without upload_id to the
+        asset processor (upload_id is its claim key)."""
+        kind = entry.resource_kind
+        if kind == "video":
+            return self._drive_video(
+                operation_id=operation_id, entry=entry, deleter=deleter,
+                lease_owner=lease_owner, now_iso=now_iso,
+                lease_seconds=lease_seconds, max_attempts=max_attempts)
+        if kind in ("audio_asset", "portrait_asset"):
+            if entry.upload_id is None:
+                # Bare asset resource (orphan row / broken LEFT JOIN): the
+                # resolver surfaced it (deletion_status != 'deleted'); never
+                # silently drop — the asset processor cannot execute without
+                # upload_id (c2 observation #2).
+                return DeletionEntryAttempt(
+                    entry=entry, routed="skipped_no_upload_id",
+                    claim_status=None, outcome_status=None,
+                    last_error=None, next_retry_at=None)
+            return self._drive_asset(
+                entry=entry, adapter=adapter, lease_owner=lease_owner,
+                now_iso=now_iso, lease_seconds=lease_seconds,
+                max_attempts=max_attempts)
+        # Unexpected ephemeral kind (order_key 9) — surfaced, not dropped.
+        return DeletionEntryAttempt(
+            entry=entry, routed="skipped_unknown_kind",
+            claim_status=None, outcome_status=None,
+            last_error=None, next_retry_at=None)
+
+    @staticmethod
+    def _attempt_from_video(entry, res) -> DeletionEntryAttempt:
+        outcome = res.outcome
+        return DeletionEntryAttempt(
+            entry=entry, routed="video", claim_status=res.claim.status,
+            outcome_status=outcome.status if outcome else None,
+            last_error=outcome.last_error if outcome else None,
+            next_retry_at=outcome.next_retry_at if outcome else None)
+
+    @staticmethod
+    def _attempt_from_asset(entry, res) -> DeletionEntryAttempt:
+        outcome = res.outcome
+        return DeletionEntryAttempt(
+            entry=entry, routed="asset", claim_status=res.claim.status,
+            outcome_status=outcome.status if outcome else None,
+            last_error=outcome.last_error if outcome else None,
+            next_retry_at=outcome.next_retry_at if outcome else None)
+
+    def _drive_video(self, *, operation_id, entry, deleter, lease_owner, now_iso,
+                     lease_seconds, max_attempts) -> DeletionEntryAttempt:
+        try:
+            res = self._video_processor.delete_once(
+                operation_id=operation_id, resource_id=entry.resource_id,
+                lease_owner=lease_owner, deleter=deleter, now_iso=now_iso,
+                lease_seconds=lease_seconds, max_attempts=max_attempts)
+        except Exception:
+            # Untyped exception (non-DeleteAdapterError): the remote DELETE
+            # result is unknowable. Write NOTHING for this resource — any lease
+            # the processor acquired expires naturally and the next pass
+            # re-claims. Never fabricate a phantom outcome (deleted/failed).
+            return DeletionEntryAttempt(
+                entry=entry, routed="alerted_exception",
+                claim_status=None, outcome_status=None,
+                last_error=None, next_retry_at=None)
+        return self._attempt_from_video(entry, res)
+
+    def _drive_asset(self, *, entry, adapter, lease_owner, now_iso, lease_seconds,
+                     max_attempts) -> DeletionEntryAttempt:
+        try:
+            res = self._asset_processor.delete_once(
+                upload_id=entry.upload_id, lease_owner=lease_owner,
+                adapter=adapter, now_iso=now_iso, lease_seconds=lease_seconds,
+                max_attempts=max_attempts)
+        except Exception:
+            # Same certainty-unknowable contract as the asset processor: a
+            # non-AssetReadError raise leaves the result unknowable. The
+            # processor already wrote nothing; mirror that here and continue.
+            return DeletionEntryAttempt(
+                entry=entry, routed="alerted_exception",
+                claim_status=None, outcome_status=None,
+                last_error=None, next_retry_at=None)
+        return self._attempt_from_asset(entry, res)
+
+    def recover_deletions(
+        self, *, deleter, adapter, lease_owner: str, now_iso: str,
+        lease_seconds: int, force: bool = False,
+        max_attempts: int = DELETION_MAX_ATTEMPTS,
+    ) -> dict[str, int]:
+        """Maintenance deletion sweep (§5.5e5b0c3c-c3): list candidate
+        operations, then drive ``delete_pass_for_operation`` for each. This is
+        the network-bound counterpart to ``recover_withdrawn_asset_cleanups``
+        (which only reconciles journal state); unlike that DB-only method, the
+        candidate-listing transaction MUST be closed before any pass runs.
+
+        ``force`` defaults to False — the sweep respects the §3.5 video-verified
+        gate op by op. A force sweep (operator-only, audited) applies force to
+        every candidate; that is §3.5 force-cleanup in sweep form and is never
+        the default. Idempotent: a re-run only re-attempts ops with surviving
+        non-deleted resources."""
+        if type(force) is not bool:
+            raise ValueError("force must be a bool")
+        _require_lease_owner(lease_owner)
+
+        # Candidate SELECT in its own tx, then CLOSE it. The per-op
+        # delete_pass_for_operation is network-bound; holding this tx across it
+        # would nest begin_immediate (SQLite allows one writer) and deadlock.
+        # The candidate set is an over-approximation: the resolver + each
+        # claim refine per op (an op whose resources are all out of scope yields
+        # an empty plan → ops_empty).
+        with self._repository.begin_immediate() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT r.created_by_operation_id AS op_id "
+                "FROM heygen_remote_resources r "
+                "WHERE r.deletion_status != 'deleted' "
+                "AND r.retention_mode != 'reusable_avatar' "
+                "AND r.created_by_operation_id IS NOT NULL "
+                "ORDER BY r.created_by_operation_id").fetchall()
+        op_ids = [r["op_id"] for r in rows]
+
+        aggregate = {"ops_driven": 0, "ops_empty": 0, "ops_alerted": 0,
+                     "attempted": 0, "deleted": 0, "failed": 0,
+                     "skipped": 0, "alerted": 0}
+        for op_id in op_ids:
+            # Each op is independent (its own processor txs). An unexpected
+            # raise for ONE op records an alert and continues — earlier ops'
+            # writes are already committed, later ops are still driven.
+            try:
+                result = self.delete_pass_for_operation(
+                    operation_id=op_id, force=force, deleter=deleter,
+                    adapter=adapter, lease_owner=lease_owner, now_iso=now_iso,
+                    lease_seconds=lease_seconds, max_attempts=max_attempts)
+            except Exception:
+                aggregate["ops_alerted"] += 1
+                continue
+            if not result.attempts:
+                aggregate["ops_empty"] += 1
+                continue
+            aggregate["ops_driven"] += 1
+            aggregate["attempted"] += result.attempted
+            aggregate["deleted"] += result.deleted
+            aggregate["failed"] += result.failed
+            aggregate["skipped"] += result.skipped
+            aggregate["alerted"] += result.alerted
+        return aggregate
 
 
 def _has_any_video(conn: sqlite3.Connection, operation_id: str) -> bool:
