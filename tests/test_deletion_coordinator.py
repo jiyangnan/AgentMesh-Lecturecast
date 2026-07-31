@@ -633,8 +633,9 @@ class TestDeletePassIdentityBinding:
 
 class TestRecoverDeletions:
     def test_drives_only_candidates_and_aggregates(self, tmp_path):
-        # T17 — op_A (deletable video), op_B (deletable audio), op_C (fully
-        # deleted → not a candidate). The sweep drives A+B and skips C.
+        # T17 — op_A (post-download video, deletable), op_B (video already
+        # deleted → audio tail cleanup is authorized), op_C (fully deleted →
+        # not a candidate). The sweep drives A+B and skips C.
         td = _db()
         conn = _fresh_conn(td)
         try:
@@ -642,6 +643,8 @@ class TestRecoverDeletions:
             _add_op(conn, "opA", download_status="verified")
             _add_resource(conn, op_id="opA", kind="video", remote_id="vA")
             _add_op(conn, "opB", download_status="verified")
+            _add_resource(conn, op_id="opB", kind="video", remote_id="vB",
+                          ds="deleted")  # video deleted → audio tail authorized
             _add_asset(conn, op_id="opB", role="synthetic_narration_audio",
                        upload_id="uB", remote_id="aB")
             _add_op(conn, "opC", download_status="verified")
@@ -658,8 +661,8 @@ class TestRecoverDeletions:
         assert agg["ops_driven"] == 2
         assert agg["ops_empty"] == 0
         assert agg["deleted"] == 2
-        assert deleter.calls == ["vA"]   # op_A video
-        assert adapter.calls == ["aB"]   # op_B audio
+        assert deleter.calls == ["vA"]   # op_A video (op_B video already deleted)
+        assert adapter.calls == ["aB"]   # op_B audio tail
         # op_C never touched.
         conn = _fresh_conn(td)
         try:
@@ -667,6 +670,69 @@ class TestRecoverDeletions:
                 "SELECT deletion_status FROM heygen_remote_resources "
                 "WHERE remote_id='vC'").fetchone()
             assert c["deletion_status"] == "deleted"
+        finally:
+            conn.close()
+
+    def test_inflight_asset_only_op_not_swept_by_default(self, tmp_path):
+        # Codex round-1 blocker regression: an op that is still in flight
+        # (submit_pending, assets uploaded at not_started, NO video resource)
+        # must NOT be swept by the default pass — those assets are still in
+        # production use and the resolver would release them ungated (no video
+        # to hold them behind).
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="not_started")  # in flight
+            _add_asset(conn, op_id="opLive", role="synthetic_narration_audio",
+                       upload_id="uLive", remote_id="aLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS)
+        assert agg["ops_driven"] == 0
+        assert adapter.calls == []
+        conn = _fresh_conn(td)
+        try:
+            a = conn.execute(
+                "SELECT status FROM heygen_asset_uploads WHERE upload_id='uLive'").fetchone()
+            r = conn.execute(
+                "SELECT deletion_status FROM heygen_remote_resources "
+                "WHERE remote_id='aLive'").fetchone()
+            assert a["status"] == "uploaded"          # untouched
+            assert r["deletion_status"] == "not_started"
+        finally:
+            conn.close()
+
+    def test_force_sweep_does_delete_inflight_asset_only_op(self, tmp_path):
+        # The mirror of the blocker: an explicit force sweep IS authorized to
+        # delete the in-flight asset (operator force-cleanup). This keeps the
+        # broad candidate set for force while the default sweep stays gated.
+        td = _db()
+        conn = _fresh_conn(td)
+        try:
+            conn.execute("BEGIN")
+            _add_op(conn, "opLive", download_status="not_started")
+            _add_asset(conn, op_id="opLive", role="synthetic_narration_audio",
+                       upload_id="uLive", remote_id="aLive")
+            conn.commit()
+        finally:
+            conn.close()
+        adapter = _FakeAdapter()
+        agg = _coord(td).recover_deletions(
+            deleter=_StubDeleter(), adapter=adapter, lease_owner=OWNER,
+            now_iso=NOW, lease_seconds=LEASE_SECONDS, force=True)
+        assert agg["ops_driven"] == 1
+        assert adapter.calls == ["aLive"]
+        conn = _fresh_conn(td)
+        try:
+            r = conn.execute(
+                "SELECT deletion_status FROM heygen_remote_resources "
+                "WHERE remote_id='aLive'").fetchone()
+            assert r["deletion_status"] == "deleted"
         finally:
             conn.close()
 

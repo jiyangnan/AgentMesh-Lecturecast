@@ -3747,9 +3747,11 @@ class DeletionCoordinator:
                 lease_seconds=lease_seconds, max_attempts=max_attempts)
         except Exception:
             # Untyped exception (non-DeleteAdapterError): the remote DELETE
-            # result is unknowable. Write NOTHING for this resource — any lease
-            # the processor acquired expires naturally and the next pass
-            # re-claims. Never fabricate a phantom outcome (deleted/failed).
+            # result is unknowable. The processor's claim may have legitimately
+            # written deletion_pending + acquired a lease; this path applies NO
+            # outcome — it writes neither deleted nor failed, sets no error /
+            # retry, and leaves the held lease to expire so the next pass
+            # re-claims. Never fabricate a phantom outcome.
             return DeletionEntryAttempt(
                 entry=entry, routed="alerted_exception",
                 claim_status=None, outcome_status=None,
@@ -3766,7 +3768,9 @@ class DeletionCoordinator:
         except Exception:
             # Same certainty-unknowable contract as the asset processor: a
             # non-AssetReadError raise leaves the result unknowable. The
-            # processor already wrote nothing; mirror that here and continue.
+            # processor's claim may have legitimately written deletion_pending +
+            # acquired a lease; mirror the video path — apply NO outcome, write
+            # neither deleted nor failed, leave the lease to expire.
             return DeletionEntryAttempt(
                 entry=entry, routed="alerted_exception",
                 claim_status=None, outcome_status=None,
@@ -3788,7 +3792,19 @@ class DeletionCoordinator:
         gate op by op. A force sweep (operator-only, audited) applies force to
         every candidate; that is §3.5 force-cleanup in sweep form and is never
         the default. Idempotent: a re-run only re-attempts ops with surviving
-        non-deleted resources."""
+        non-deleted resources.
+
+        Candidate gating differs by mode (Codex round-1 blocker): the DEFAULT
+        sweep only visits DELETION-AUTHORIZED ops — those that have a video
+        resource (generation produced a deliverable; the video claim then gates
+        on download_status=verified, and the resolver holds assets behind the
+        video) OR a resource already in the deletion pipeline
+        (deletion_pending/deletion_failed — consent withdrawal / retry). This
+        excludes in-flight ops whose only resources are pre-video assets at
+        not_started: the resolver would release such assets (no video to gate
+        them behind), deleting assets still in production use. ``force=True``
+        (explicit operator authorization) broadens the candidate set to every
+        non-deleted non-reusable resource."""
         if type(force) is not bool:
             raise ValueError("force must be a bool")
         _require_lease_owner(lease_owner)
@@ -3796,17 +3812,30 @@ class DeletionCoordinator:
         # Candidate SELECT in its own tx, then CLOSE it. The per-op
         # delete_pass_for_operation is network-bound; holding this tx across it
         # would nest begin_immediate (SQLite allows one writer) and deadlock.
-        # The candidate set is an over-approximation: the resolver + each
-        # claim refine per op (an op whose resources are all out of scope yields
-        # an empty plan → ops_empty).
         with self._repository.begin_immediate() as conn:
-            rows = conn.execute(
-                "SELECT DISTINCT r.created_by_operation_id AS op_id "
-                "FROM heygen_remote_resources r "
-                "WHERE r.deletion_status != 'deleted' "
-                "AND r.retention_mode != 'reusable_avatar' "
-                "AND r.created_by_operation_id IS NOT NULL "
-                "ORDER BY r.created_by_operation_id").fetchall()
+            if force:
+                rows = conn.execute(
+                    "SELECT DISTINCT r.created_by_operation_id AS op_id "
+                    "FROM heygen_remote_resources r "
+                    "WHERE r.deletion_status != 'deleted' "
+                    "AND r.retention_mode != 'reusable_avatar' "
+                    "AND r.created_by_operation_id IS NOT NULL "
+                    "ORDER BY r.created_by_operation_id").fetchall()
+            else:
+                # Default sweep: deletion-AUTHORIZED ops only (see docstring).
+                rows = conn.execute(
+                    "SELECT DISTINCT r.created_by_operation_id AS op_id "
+                    "FROM heygen_remote_resources r "
+                    "WHERE r.deletion_status != 'deleted' "
+                    "AND r.retention_mode != 'reusable_avatar' "
+                    "AND r.created_by_operation_id IS NOT NULL "
+                    "AND EXISTS ("
+                    " SELECT 1 FROM heygen_remote_resources r2 "
+                    " WHERE r2.created_by_operation_id = r.created_by_operation_id "
+                    " AND (r2.resource_kind = 'video'"
+                    "      OR r2.deletion_status IN ('deletion_pending',"
+                    "                               'deletion_failed'))"
+                    ") ORDER BY r.created_by_operation_id").fetchall()
         op_ids = [r["op_id"] for r in rows]
 
         aggregate = {"ops_driven": 0, "ops_empty": 0, "ops_alerted": 0,
