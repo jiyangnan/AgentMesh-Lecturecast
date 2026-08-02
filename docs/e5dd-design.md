@@ -271,18 +271,26 @@ def digital_human_decide(
 
 Codex 同时确认其余 6 项全过：触发四连合取无 false-positive（v1.0/none/absent/malformed/non-str avatar/configured live 均不 fire）；photo+unconfigured 不经 explicit flag 到不了 create_generation；configure 路由 read-only doctor（mutates=False）；invalid choice → LectureCastError(invalid_choice)；卡片 host_choice 与现有一致可执行；未动任一已锁子系统（deletion/consent/lease/fence/DirectorState schema）。
 
-### 逐子句核实（against source，[[feedback_no_trial_error]]）
+### 逐子句核实（against source，[[feedback_no_trial_error]]）— **round-2 纠正**
 
-Codex 的 gap 把两个子句合讲；逐条核后**一假一真**：
+> ⚠️ **round-2 纠错**：我 round-2 前**误判 `[]` 不可达**（错把 `tts_engines` 的 `minItems:1` 当成 `third_party_processors` 的）。经 Codex round-2 指出 + 源码复核，**两子句均 schema-valid + 守卫均捕获**（实现无 bug，仅文档论证错）。
 
-1. **`third_party_processors=[]`（空 list）子句 — 不可达，Codex 判断错**：`client-capabilities.schema.json:338` 顶层 `third_party_processors` 有 `"minItems": 1` → `parse_client_capabilities`（走 `Draft202012Validator`）拒空 list → 既不能 `save_capabilities` 存、也不能 `load` 出。capture 也永不产生空 list（capabilities.py:657-658 仅 `processor is not None` 时 set `[processor]`）。**该子句 provably unreachable。**
+1. **`third_party_processors=[]`（空 list）子句 — schema-valid + 守卫捕获**：
+   - schema 允许：`client-capabilities.schema.json:318-325` `third_party_processors` 只有 `maxItems:4`、**无 `minItems`**。我先前引用的 `minItems:1 @line 338` 实属 `tts_engines`（@326-341），非本字段 —— 跨字段误引 schema 邻居行号（[[feedback_doc_meta_claim_verification]] 第 4 类变体）。
+   - 故 `parse_client_capabilities`（Draft202012Validator）**接受空 list**；`save_capabilities({..."third_party_processors":[]})` 可存（digest 重算合法），`load` 时 `_verify_documents` 复算 digest 匹配 → 干净载入。
+   - capture 永不产生（capabilities.py:657-658 仅 `processor is not None` 时 set `[processor]`），但 crafted API 调用可达。
+   - **守卫捕获**：`_d13_heygen_configured` 对 `[]` = `any(... for p in [] or [])` = False → 守卫 fire → manifest_incompatible。✅ 回归测 `test_generate_guard_refuses_empty_third_party_processors_list`。
 
-2. **`[{heygen, configured:false}]` 子句 — schema-permitted + B1 放行 = REAL**：
-   - schema 允许：`client-capabilities.schema.json:170-172` `configured: {type: boolean}`（非 `const: true`），minItems 已满足 1。
+2. **`[{heygen, configured:false}]` 子句 — schema-permitted + B1 放行 + 守卫捕获**：
+   - schema 允许：`client-capabilities.schema.json:170-172` `configured: {type: boolean}`（非 `const: true`）。
    - capture 永不产生：`heygen_processor`（capabilities.py:472/474/478）只返 `None` 或 `configured: True`，**绝不** `configured: False`。
-   - **B1 放行（linchpin）**：`_stored_heygen_still_live`（director.py:843-844）`if not heygen_configured: return True` —— 对 `[configured:false]`，`heygen_configured = any(... and p.configured) = False` → 返 True（"nothing to invalidate"）→ stored doc **原样 reuse，不 recapture**。
-   - hand-tampering 被消化：digest 链（`_verify_documents` @project.py:241-249）会拒篡改件；但 `save_capabilities(crafted)` 会为 crafted 件重算合法 digest → 可经直接 API 调用产生（无现成 caller，但 schema+API 不禁）。
-   - **结论**：`[configured:false]` 件可达性 =「capture 不产 / 篡改被消化 / 唯通路是 crafted save_capabilities（无现成 caller）」。**对当前 production 不可达，但 schema+B1 不本地禁它**。
+   - **B1 放行（linchpin）**：`_stored_heygen_still_live`（director.py:843-844）`if not heygen_configured: return True` → stored doc **原样 reuse，不 recapture**。
+   - **守卫捕获**：`_d13_heygen_configured` False → fire。✅ 回归测 `test_generate_guard_refuses_present_but_not_configured_processor`。
+   - crafted `save_capabilities` 可达（digest 重算合法），production 无 caller。
+
+**两子句共同结论**：capture 永不产生 / hand-tampering 被 digest 链（`_verify_documents` @project.py:241-249）消化 / 唯通路是 crafted `save_capabilities`（无 production caller）→ **对当前 production 不可达，但 schema+B1 不本地禁**；故 upload-boundary 守卫是必要的本地执行层（不靠 capture 干净单层兜底）。
+
+**Codex round-2 另确认（均已源码复核）**：mixed `[{heygen,true},{heygen,false}]` 不可达（`models.py:278-281` `_ensure_unique(providers)` + schema `provider const heygen` → 至多一条 heygen 项）；`provider!=heygen` schema 拒（const @209）；空 `operations` 被 nested `minItems:1 @205` 拒；空 `features` 允许但不意味 not-live（`configured:true` 仍走 B1 live probe）；`model_dump` 纯 `copy.deepcopy(self._payload)`（models.py:196-197），两次调用确定性一致，谓词与转发 payload 无 drift。
 
 ### 裁决 + 修
 
@@ -291,4 +299,20 @@ Codex 的 gap 把两个子句合讲；逐条核后**一假一真**：
 - **修**：generate 在 create_generation 前加 **fail-closed 守卫**（director.py:1068 block）：v1.1 + `third_party_processors` key present + `_d13_heygen_configured(capabilities)` False → `raise LectureCastError(manifest_incompatible)`，create_generation **不调用**。守卫**绝不 add key**（非 force-include，非新 truthy 源，§2.4 不破）；digest-safe（不改 payload、不改 stored doc）；不动 locked B1/capture/deletion/consent（新下游 gate，非改既有锁逻辑）。prompt 用户 `project capabilities` 重采。
 - 测试：`test_generate_guard_refuses_present_but_not_configured_processor`（save schema-valid `[configured:false]` 件 → option B → 守卫 fire → manifest_incompatible + create_generation 0 调用）。全量 **1190 passed**（1189 + 1 守卫测）。
 
-留 round-2 确认：守卫谓词是否漏其他「present-but-not-live」形态；以及 schema 层是否应进一步把 `configured` 钉 `const: true`（schema 改动，跨 digest-stability，非 D13 scope，记为 follow-up）。
+### Codex round-2 裁决：**LOCKABLE**（commit 9cd8cf3 → +round-2 doc/test fix）
+
+Codex round-2（effort=low，源码审，无编辑/无跑测）裁决 **LOCKABLE — No invariant gap found**，逐项确认：
+
+1. **守卫完备**（director.py:1080-1090）：序列化 exact payload + 拒 v1.1 + key-present + 无 heygen-configured 的所有形态。路径分析：photo+option B（flag 绕卡 → 守卫拒 `configured:false` / `[]`）；photo+configured（stored `configured:true` 经 B1 live probe @999-1005，失败则 recapture、成功则转发）；M1/avatar none（正常 capture doc omit key → 原样到 create_generation；crafted present-but-unconfigured → 正确被拒）；v1.0（`protocol_version=="1.1"` 短路）。
+2. **谓词完备**（已源码复核，见上"另确认"）：validated 形态全过；"至少一条 heygen+configured=true" 在 B1 liveness 后 = 正确转发规则。
+3. **model/dump 一致**：`model_dump` = 纯 `deepcopy`（models.py:196），两次调用等价独立 dict，无 drift。
+4. **放置 + 错误流**：守卫在所有过卡路径上、唯一 paid call @1091 之前；raised `LectureCastError` 经 director.py:1121 捕获 → `fail()` → `typer.Exit(code=1)`（output.py:32），无栈逃逸。
+5. **locked 子系统无侵入**：9cd8cf3 只动下游 read/raise 边界 + 测试 + 文档；未改 DirectorState/capture/B1/deletion/consent/lease/fence/credentials/payload 数据。
+
+**Codex 同时纠正本文档 round-1 的 doc 误判**（见上"逐子句核实 — round-2 纠正"）：`third_party_processors` 无 `minItems`（我先前误引 `tts_engines` 的 `minItems:1`），故 `[]` **schema-valid**——round-1 把它当不可达是错的。但守卫同样捕获 `[]`（`_d13_heygen_configured([])=False`→fire），故**不重开 D13**。
+
+**round-2 落地**：纠正 §8 逐子句核实（`[]` 从"不可达"改为"schema-valid+守卫捕获"）+ 加 `[]` 回归测 `test_generate_guard_refuses_empty_third_party_processors_list`（锁 Codex 点名的子句，防未来谓词改写特判 `[]`）。
+
+### Follow-up（非 D13 scope，记给 schema hardening）
+
+Codex round-2 建议：未来 schema hardening 应**同时**加 `configured: {"const": true}` **和** `third_party_processors.minItems: 1`（单加 `const:true` 仍放行显式空 list）。跨 digest-stability，非 D13 scope；记为 follow-up（schema 改动需独立子步 + 迁移评估）。

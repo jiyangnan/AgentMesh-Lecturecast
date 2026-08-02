@@ -359,6 +359,33 @@ def test_generate_guard_refuses_present_but_not_configured_processor(
     assert capture.calls == []  # create_generation NOT called — fail-closed
 
 
+def test_generate_guard_refuses_empty_third_party_processors_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D13 guard catches the empty-list sub-clause Codex round-2 named.
+    third_party_processors has maxItems:4 but NO minItems
+    (client-capabilities.schema.json:318-325) — distinct from the
+    [configured:false] entry case. capture never produces [] (capabilities.py
+    sets [processor] only when non-None), but a crafted save_capabilities can
+    store it (digest re-binds). The guard must reject it: key present +
+    _d13_heygen_configured([]) = any(... for p in [] or []) = False -> fire.
+    Locks this sub-clause against a future predicate refactor that
+    special-cases [] vs [configured:false]."""
+    capture, _ = _setup_d13_project(tmp_path, monkeypatch, avatar="photo", configured=False)
+    project_store = ProjectStore(tmp_path)
+    project = project_store.load()
+    empty_caps = _fixture("client-capabilities-v1_1.json")
+    empty_caps["third_party_processors"] = []  # schema-valid (no minItems)
+    project_store.save_capabilities(
+        parse_client_capabilities(empty_caps), expected_revision=project.revision,
+    )
+    result = _invoke_generate(tmp_path, "--accept-digital-human-downgrade")
+    assert result.exit_code != 0
+    body = json.loads(result.output)
+    assert body["code"] == "manifest_incompatible"
+    assert capture.calls == []  # create_generation NOT called — fail-closed
+
+
 def test_generate_skips_card_for_v1_0(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
