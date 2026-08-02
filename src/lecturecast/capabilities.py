@@ -701,21 +701,24 @@ def build_heygen_doctor_section(
     warnings: list[str] = []
     if not key_present:
         blockers.append("key_missing")
-    # Adapter + journal failure modes are only meaningful once a key exists;
-    # without one they are redundant (key_missing already blocks).
-    if key_present and not adapter_ok:
+    if not adapter_ok:
         blockers.append("adapter_unimportable")
-    if key_present and adapter_ok:
-        if classification == "ahead":
-            blockers.append("journal_ahead")
-        elif classification == "behind":
-            warnings.append("journal_behind_head")
-        elif classification not in _JOURNAL_READY:
-            # Every other non-ready classification (missing_prior_use /
-            # shape_mismatch / canonical_unavailable / db_readonly /
-            # runtime_unwritable / unreadable / symlink / parent_unwritable)
-            # is a hard BLOCKER — the journal cannot serve reported operations.
-            blockers.append(f"journal_{classification}")
+    # Journal blockers/warnings are routed INDEPENDENTLY of key/adapter state —
+    # a missing key must not hide an ahead / shape-mismatch / behind journal
+    # (the operator should see the COMPLETE fix list in one doctor pass, not
+    # discover the journal issue only after rotating the key). `configured`
+    # still requires all three (AND); routing a blocker does not change the
+    # configured verdict, it only surfaces every issue currently blocking serve.
+    if classification == "ahead":
+        blockers.append("journal_ahead")
+    elif classification == "behind":
+        warnings.append("journal_behind_head")
+    elif classification not in _JOURNAL_READY:
+        # Every other non-ready classification (missing_prior_use /
+        # shape_mismatch / canonical_unavailable / db_readonly /
+        # runtime_unwritable / unreadable / symlink / parent_unwritable)
+        # is a hard BLOCKER — the journal cannot serve reported operations.
+        blockers.append(f"journal_{classification}")
 
     return {
         "provider": "heygen",
