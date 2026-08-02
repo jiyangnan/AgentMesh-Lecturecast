@@ -390,7 +390,7 @@ round-11 修正（3 site，纯 doc）：
 
 ### §1.13g round-12（Codex round-11 NOT LOCKABLE → 全闭合，待 Codex round-12 锁定复审）
 
-Codex round-11 裁定 **NOT LOCKABLE**，1 个纯 doc-only blocker（items 1–4 + 6 全 CONFIRMED accurate —— §1.13e/PROGRESS:83/PROGRESS:72 三处 "零命中" 已改为准确的 "零规范性残留 + 历史命中标注"、全仓猎无其他同类自指元 claim、doc-only/1169 不变）。唯一 blocker（item 5）：§1.13f 记录段写 "round-11 修正（2 site，纯 doc）" 但 commit `4c1c4fd` 实际改了 **3 site**（§1.13e + PROGRESS:83 + PROGRESS:72）—— PROGRESS handoff（@83）正确写 "三处"，§1.13f 却写 "2 site"，内部不一致。
+Codex round-11 裁定 **NOT LOCKABLE**，1 个纯 doc-only blocker（items 1–4 + 6 全 CONFIRMED accurate —— §1.13e/PROGRESS:83/PROGRESS:72 三处 "零命中/零残留" 同族表述已改为准确的 "零规范性残留 + 历史命中标注"、全仓猎无其他同类自指元 claim、doc-only/1169 不变）。唯一 blocker（item 5）：§1.13f 记录段写 "round-11 修正（2 site，纯 doc）" 但 commit `4c1c4fd` 实际改了 **3 site**（§1.13e + PROGRESS:83 + PROGRESS:72）—— PROGRESS handoff（@83）正确写 "三处"，§1.13f 却写 "2 site"，内部不一致。（round-13 修：本段原把三处原文统一标 "零命中"，但 PROGRESS:72 原文是 "零残留"；改为 "零命中/零残留" 同族。见 §1.13h。）
 
 round-12 修正（in-place 改 §1.13f site-count + 本 §1.13g 记录段，纯 doc）：
 - §1.13f 本节（@~382）："round-11 修正（2 site，纯 doc）" → "round-11 修正（3 site，纯 doc）"；补第三 bullet 记 `PROGRESS:72`（原 "零残留"→加 "规范性描述" 限定 + "历史/before-text 命中除外"，"残留" 非 "命中"，Codex round-10 归为历史记录未当 blocker 但属同族）；第二 bullet 末 "两处一起改" → "三处一起改"。
@@ -398,6 +398,16 @@ round-12 修正（in-place 改 §1.13f site-count + 本 §1.13g 记录段，纯 
 **元教训（#round-12，#5 次同一模式 + 又一变体）**：round-11 的自指陷阱是 "grep 结果元 claim"；这次的变体是**记录段自身的 site-count vs commit diff 对不上** —— 写 "N site" 这类关于上轮改动的元 claim 时，必须 against `git show <commit> --stat` 实际 diff 核实，不能凭上轮记忆里"Codex 点名了几个"来记（PROGRESS handoff 写 "三处" 正确，恰恰因为它是逐文件列的；§1.13f 写 "2 site" 错，因为它是凭 Codex round-10 只点了 §1.13e 的印象）。同 c3 "原则陈述正确 ≠ 实现穷举" 的 doc 元层版：**关于文档自身改动历史的元 claim，也要 against commit diff 实际核实**。
 
 **待 Codex round-12 锁定复审**（effort=low，invariant-completeness/doc-accuracy framing：(1) §1.13f site-count 现是否准确（3 site + 3 bullet，against commit `4c1c4fd` diff）；(2) 第二 bullet "三处一起改"、第三 bullet PROGRESS:72 描述是否准确无新不准；(3) 全仓是否还有其他 "N site/N 处" 类记录段与对应 commit diff 对不上的不一致（含 §1.13d/§1.13e 的 site-count）；(4) 纯 doc，零 runtime/SQL/test 变化，1169 全绿不变）。
+
+### §1.13h round-13（Codex round-12 NOT LOCKABLE → 全闭合，待 Codex round-13 锁定复审）
+
+Codex round-12 裁定 **NOT LOCKABLE**，1 个纯 doc-only blocker（items 1/2/4/6 全 CONFIRMED accurate —— §1.13f site-count 3 准确匹配 `git show 4c1c4fd`、§1.13d/§1.13e/§1.13f 三 section 的 site 列表/计数与对应 commit（`5e1512e`/`a6cb0b6`/`4c1c4fd`）diff 全匹配且计数规则一致（语义 phrasing site 计数，排除 round-number bump + 新 appended record section）、§1.13g 其余四 meta-claim（round-11 verdict/3 site/PROGRESS "三处"/#5 次计数）全准、commit `52e5a77` doc-only/1169 不变）。唯一 blocker（item 3 + 5 同源）：§1.13g:393 把三处原文统一标 "零命中"，但 PROGRESS:72 原文是 "零 owner-only 残留"（"零残留"），§1.13g:396 自己已正确区分 —— 分组引号 characterization 对 1/3 成员字面不准。
+
+round-13 修正（in-place，纯 doc）：§1.13g:393 `三处 "零命中" 已改` → `三处 "零命中/零残留" 同族表述已改`（§1.13e + PROGRESS:83 原文 = "零命中"；PROGRESS:72 原文 = "零残留"；同族 phrasing）。
+
+**元教训（#round-13，#6 次同族 + 又一变体）**：round-11 = grep 结果元 claim 自指；round-12 = site-count vs commit diff；这次 = **分组引号 characterization 对部分成员不准** —— 把 N 个 site 归入同一个引号词时，必须逐成员核实每个 site 原文是否真是该词（不能因 N-1 个是就笼统标）。同族根因不变：关于文档自身历史的元 claim，against 逐 site 原文核实。
+
+**待 Codex round-13 锁定复审**（effort=low，invariant-completeness/doc-accuracy framing：(1) §1.13g:393 分组标号现是否准确（"零命中/零残留" 同族，against 三 site 原文）；(2) 本 §1.13h 自身有无新分组/计数/引号 claim 对某成员不准（逐 site 原文核实）；(3) 全仓是否还有其他 "N 处 'X'" 类分组引号 characterization 对部分成员不准；(4) 纯 doc，零 runtime/SQL/test 变化，1169 全绿不变）。
 
 ---
 
