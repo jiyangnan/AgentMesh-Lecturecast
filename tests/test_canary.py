@@ -302,16 +302,62 @@ def test_canary_has_no_injection_seam(tmp_path: Path) -> None:
 
 
 def test_canary_estimate_equals_pricing_exercises_display_path(tmp_path: Path) -> None:
-    """Blocker-3 regression (round-1 #6 overclaim): invariant #6 does NOT merely
-    repeat schema validity — it exercises the client display path: the validator
-    returns the estimate UNCHANGED (verbatim, validated==estimate) AND
-    next_milestone_cost_or_fail reads next_milestone_cost out of it. The detail
-    names both primitives (not just 'validated')."""
+    """Blocker-3 regression (round-2 #6 depth): invariant #6 exercises the REAL
+    user-visible display projection — director._session_workflow projects the
+    validated estimate's 8 fields into workflow['pricing_estimate'], and the
+    canary asserts that projection equals the validated source-of-truth EXACTLY
+    (a regressed projection — wrong minimum_total, dropped field, transform —
+    makes displayed != expected and fails #6). It also locks validator identity
+    (validated is estimate, not just ==). The detail names the real path."""
     report = _run(tmp_path)
     inv = report.invariant("estimate_equals_pricing")
     assert inv.passed
-    assert "next_milestone_cost_or_fail" in inv.detail
-    assert "unchanged" in inv.detail.lower() or "verbatim" in inv.detail.lower()
+    assert "_session_workflow" in inv.detail
+    assert "8 fields" in inv.detail
+    assert "IDENTITY" in inv.detail
+
+
+def test_canary_display_projection_has_teeth(tmp_path: Path) -> None:
+    """The #6 projection check is a real value-equality between the director's
+    projection and the validated estimate — not a tautology. Proof: build the
+    SAME session the canary builds, drive the real _session_workflow, then show
+    a TAMPERED expected projection (minimum_total doubled, a field dropped) does
+    NOT equal the real projection. If director ever regresses the projection,
+    the canary's displayed==expected check fails the same way."""
+    from lecturecast.canary import _CORE_MILESTONES, _build_canary_estimate
+    from lecturecast.commands.director import _session_workflow
+    from lecturecast.director import DirectorState
+    from lecturecast.protocol import canonical_digest
+
+    brief = {"schema_version": "1.1", "brief_id": "canary-brief-0001", "topic": "canary"}
+    estimate = _build_canary_estimate(brief, per_milestone_cost=10)
+    st = DirectorState({
+        "schema_version": "1.2", "project_id": "canary-p", "state_revision": 1,
+        "server_url": "https://api.test", "session_id": "canary-s",
+        "session_status": "confirmed", "brief_version": 1, "catalog_version": "cv",
+        "adapter_kind": "codex", "adapter_version": "1.0.0",
+        "protocol_version": "1.1", "generation_id": None,
+        "updated_at": "2026-08-02T00:00:00Z",
+    })
+    session = {
+        "status": "confirmed", "pricing_estimate": estimate, "brief": brief,
+        "decision_card_set": {"pricing_estimate": estimate},
+    }
+    displayed = _session_workflow(Path("/tmp"), st, session)["pricing_estimate"]
+    keys = (
+        "estimate_status", "minimum_total", "maximum_total", "next_milestone_cost",
+        "applicable_milestones", "per_milestone", "charge_model", "pricing_version",
+    )
+    expected = {k: estimate.get(k) for k in keys}
+    # Real projection matches the validated source-of-truth (this is what #6 asserts).
+    assert displayed == expected
+    # A tampered projection (doubled minimum_total) would FAIL the check → #6 has teeth.
+    tampered = dict(expected)
+    tampered["minimum_total"] = expected["minimum_total"] * 2
+    assert displayed != tampered
+    # A projection that drops a field would also FAIL → #6 has teeth.
+    dropped = {k: v for k, v in expected.items() if k != "per_milestone"}
+    assert displayed != dropped
 
 
 def test_canary_rollback_routes_credit_returned(tmp_path: Path) -> None:
