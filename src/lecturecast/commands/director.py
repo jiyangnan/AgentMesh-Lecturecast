@@ -11,6 +11,7 @@ from ..capabilities import (
     capture_capabilities_v1_1,
     default_heygen_adapter_probe,
     default_heygen_journal_probe,
+    heygen_processor,
 )
 from ..commercial import require_commercial_access
 from ..director import (
@@ -729,6 +730,35 @@ def _stored_capabilities(
     return document
 
 
+def _stored_heygen_still_live(
+    document: ClientCapabilities, directory: Path
+) -> bool:
+    """§5.5e5c round-2 (Codex round-1 B1): a stored capability snapshot
+    reflects host state AT capture time. The M2 gate bills real PresenterPlan
+    credits on third_party_processors[heygen].configured, so before Director
+    reuses a stored snapshot it must confirm the live probes still agree. If
+    the key was removed, an adapter method disappeared, or the journal was
+    deleted / corrupted / downgraded since capture, the stored configured=true
+    is now a false claim -> return False so the caller drops the snapshot and
+    re-captures (which omits HeyGen).
+
+    No HeyGen claim in the stored document -> nothing to invalidate -> True.
+    Only the v1.1 path stores third_party_processors, so this is a no-op for
+    v1.0 snapshots."""
+    payload = document.model_dump()
+    heygen_configured = any(
+        processor.get("provider") == "heygen" and processor.get("configured")
+        for processor in (payload.get("third_party_processors") or [])
+    )
+    if not heygen_configured:
+        return True
+    live = heygen_processor(
+        adapter_probe=default_heygen_adapter_probe,
+        journal_probe=lambda: default_heygen_journal_probe(directory),
+    )
+    return live is not None
+
+
 @app.command("generate")
 def generate(
     directory: Path = typer.Argument(Path(".")),
@@ -772,6 +802,13 @@ def generate(
             adapter_version=adapter_version,
             protocol_version=state.protocol_version,
         )
+        if capabilities is not None and state.protocol_version == "1.1":
+            # §5.5e5c round-2 (B1): the stored snapshot only proves digest /
+            # adapter / schema consistency — it does NOT re-probe HeyGen. Drop
+            # it if the live host can no longer serve what the snapshot claims,
+            # so a stale configured=true cannot bill an unexecutable capability.
+            if not _stored_heygen_still_live(capabilities, directory):
+                capabilities = None
         if capabilities is None:
             if state.protocol_version == "1.1":
                 # §5.5e5c: pass real adapter + journal probes so the HeyGen
