@@ -143,35 +143,6 @@ def _valid_tally(tally: object, keys: frozenset[str]) -> bool:
     return all(type(v) is int and v >= 0 for v in tally.values())
 
 
-def _safe_key_repr(k) -> str:
-    """``repr(k)`` that CANNOT raise (Codex round-4 blocker 1 / round-5 fix).
-
-    The malformed-tally diagnostics below render ``sorted(repr(k) for k in
-    tally.keys())`` to build a human skip_reason. ``_valid_tally`` has already
-    gated ``type(tally) is dict`` (so ``.keys()`` is the builtin + safe), and
-    ``repr()`` is total for the key types the locked primitives actually produce
-    (str/int). BUT the invariant-completeness rule (原则陈述正确 ≠ 实现穷举) is
-    that NOTHING running OUTSIDE the recovery try-block may be able to escape as
-    exit 1 — and ``repr()`` is NOT total: a key can implement a custom
-    ``__repr__`` that raises (``class BadKey: def __repr__(self): raise
-    RuntimeError``). A plain dict carrying such a key passes ``type() is dict``,
-    fails ``_valid_tally`` on its key set, then raises while the diagnostic
-    builds ``keys_repr`` → exit 1.
-
-    Wrapping ``repr`` here makes the diagnostic TOTAL: a hostile key renders as
-    the fixed string ``"<unprintable key>"`` instead of escaping. The locked
-    primitives never produce such a key (their aggregates are ``{}`` literals
-    with str keys), so this is pure defense-in-depth / type-stability discipline
-    — but it is the SAME discipline as ``type() is dict`` (reject subclasses),
-    ``type() is bool`` (reject int 1), and the boundary shape checks: the
-    diagnostic path must be as type-stable as the validation path.
-    """
-    try:
-        return repr(k)
-    except Exception:
-        return "<unprintable key>"
-
-
 @dataclass(frozen=True)
 class MaintenanceReport:
     """Aggregate maintenance result.
@@ -476,22 +447,31 @@ def run_maintenance(
     if not _valid_tally(db_tally, _DB_TALLY_KEYS):
         if type(db_tally) is not dict:
             got = f"non-dict {type(db_tally).__name__}"
-            keys_repr: list[str] = []
         else:
-            got = "畸形"
-            # type-stable: _safe_key_repr() any key (handles mixed int/str keys
-            # without the TypeError ``sorted()`` raises on non-comparable key
-            # types — Codex round-3 blocker 2A; AND handles a hostile __repr__
-            # that raises — Codex round-4 blocker 1 / round-5 fix). Sort the
-            # REPR strings (always str, never raise), never the raw keys.
-            keys_repr = sorted(_safe_key_repr(k) for k in db_tally.keys())
+            # Codex round-6 (G1 residual, strictly-total fix): do NOT introspect
+            # malformed keys via ``repr()``. ``repr()`` is NOT total — a key can
+            # implement ``__repr__`` that raises, INCLUDING ``BaseException``
+            # subclasses (``KeyboardInterrupt`` / ``SystemExit``) that ``except
+            # Exception`` cannot catch and ``except BaseException`` must not
+            # catch (it would swallow the user's Ctrl+C). The round-5
+            # ``_safe_key_repr`` (``except Exception``) closed the ordinary-
+            # Exception case but its "CANNOT raise / ANY exception" claim was
+            # still false for ``BaseException``. The strictly-total fix is to
+            # not call ``repr()`` at all: ``len()`` on a plain dict is the
+            # builtin (cannot raise) and conveys the shape mismatch (wrong key
+            # count); the skip_reason already states the expected key set, and a
+            # malformed tally is a programming error caught in tests (its exact
+            # keys carry no operational value for the operator action: run
+            # doctor). ``type(x).__name__`` for the non-dict branch is the same
+            # builtin-safe pattern used at lines 379/384/389.
+            got = f"dict 含 {len(db_tally)} 键"
         return MaintenanceReport(
             db_recovery={},
             db_recovery_failed=True,
             network_skipped=True,
             skip_reason=(
                 f"recover_withdrawn_asset_cleanups 返回畸形 tally（期望 5 键非负 "
-                f"int dict {sorted(_DB_TALLY_KEYS)}，实际 {got} {keys_repr}）— "
+                f"int dict {sorted(_DB_TALLY_KEYS)}，实际 {got}）— "
                 f"网络删除恢复未执行。请运行 `lecturecast doctor`。"
             ),
             force=force,
@@ -566,25 +546,18 @@ def run_maintenance(
     if not _valid_tally(del_tally, _DEL_TALLY_KEYS):
         if type(del_tally) is not dict:
             got = f"non-dict {type(del_tally).__name__}"
-            keys_repr: list[str] = []
         else:
-            got = "畸形"
-            # Codex round-3 blocker 2A (type-stability): do NOT ``sorted()`` the
-            # raw keys — a dict carrying mixed-type keys (e.g. a valid 8 str
-            # keys PLUS an int key) cannot be ordered (``TypeError: '<' not
-            # supported between 'int' and 'str'``), and this diagnostic runs
-            # OUTSIDE the recovery try-block, so that TypeError would escape as
-            # exit 1. Codex round-4 blocker 1 (hostile repr): ``repr()`` itself
-            # is NOT total — a key whose ``__repr__`` raises would escape the
-            # same way. ``_safe_key_repr()`` wraps repr in try/except (total);
-            # sort the repr strings (always str, never raise), never raw keys.
-            keys_repr = sorted(_safe_key_repr(k) for k in del_tally.keys())
+            # Codex round-6 (G1 residual, strictly-total): symmetric with the
+            # DB-tally diagnostic above — do NOT ``repr()`` malformed keys
+            # (``BaseException``-raising ``__repr__`` escapes ``except
+            # Exception``). ``len()`` on a plain dict is builtin-safe.
+            got = f"dict 含 {len(del_tally)} 键"
         return MaintenanceReport(
             db_recovery=db_tally,
             network_skipped=True,
             skip_reason=(
                 f"recover_deletions 返回畸形 tally（期望 8 键非负 int dict "
-                f"{sorted(_DEL_TALLY_KEYS)}，实际 {got} {keys_repr}）— "
+                f"{sorted(_DEL_TALLY_KEYS)}，实际 {got}）— "
                 f"请运行 `lecturecast doctor`。"
             ),
             force=force,
