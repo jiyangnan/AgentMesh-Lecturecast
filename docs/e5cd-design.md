@@ -321,6 +321,23 @@ Codex round-6 复审裁定 **NOT LOCKABLE**，1 code blocker（B2 共享谓词 +
 
 **待 Codex round-7 锁定复审**（effort=low，invariant-completeness framing：B1 闭合是否穷举 —— (1) `_valid_tally` 的 str-guard 是否真的在 hash 任何键之前跑、`type(k) is str` 是否真的不调 dunder、builtin str 的 `str.__hash__` 是否真的不能抛；(2) diagnostic non-dict 分支改 `"non-dict"` 后是否还有任何残留 `.__name__` / `repr()` / 用户 dunder 调用；残留猎：`_valid_tally` 是否还有第 3 个 totality 洞（如 `tally.values()` 的 `type(v) is int` 是否 builtin-safe、`v >= 0` 是否调 `__ge__`）；doc c1/c2 区分是否与 consent.py:591 实际行为一致）。
 
+### 1.13c round-8 闭合（Codex round-7 NOT LOCKABLE，1 doc-only blocker）
+
+Codex round-7 复审裁定 **NOT LOCKABLE**，**唯一**剩余 blocker 是 round-7 c2 文档的三处不准确（**executable invariant + 两 strict-totality blocker B1 hash/name + residual totality 全部 CONFIRMED closed**；7 个其他 `.__name__` site CONFIRMED scoped —— 我的 scope reasoning 成立，**非** c3 asymmetry；111 测全过；两 RED/GREEN probe 经 Codex 在 `fef403f^` 实测确认 round-6 下确抛 `KeyboardInterrupt`）。三处 doc 不准确（Codex 逐条点名，我已 against source 核实）：
+
+| # | round-7 doc 不准确 | round-8 修正 |
+|---|-------------------|--------------|
+| 1 | c2 docstring 说 `withdraw` "UPDATE only the receipt"（consent.py:591）| **不准确**：`_withdraw_in_tx`（consent.py:657-673）UPDATE receipt **AND** `heygen_operations` —— pristine op 改 `status='cancelled'` + 清 `consent_receipt_digest` + `updated_at`；非 pristine 清 `consent_receipt_digest` + `updated_at`。**窄claim 才真**：**不动 lease**（`lease_owner`/`lease_expires_at`/`lease_fence`/`attempt_started_at` 全不变）。修：c2 文案改 "UPDATEs the receipt AND the op's consent-lifecycle fields (status for pristine, consent_receipt_digest, updated_at) but does NOT clear/modify the op lease"，引 consent.py:591-673 |
+| 2 | c2 说 op 非 selectable 是因 "active lease **和/或无 video**" | **夸大**：branch B2 witness **显式允许 zero-video op**（`COUNT(video) <= 1` 非 `== 1`；常量 @4091-4134 注释明言 "zero is allowed"，"B2's witness is a non-video ASSET, so the op may legitimately have 0 video rows"）。所以**无 video 单独不构成 non-selectability**——一个 properly-bound asset 在 lease 清后即使 0 video 也经 B2 witness。**唯一** c2 non-selectability 因由是 active lease（branch B 的 `o.lease_owner IS NULL` gate @4031）。修：删 "and/or that has no video yet" / "no video yet on a pre-video op"，改为 "the active lease makes branch B's `o.lease_owner IS NULL` gate reject"；"NOT counted" 段同改（"no witness — leased or pre-video" → "no witness — typically an ACTIVE LEASE; `no video` alone does NOT make an op non-selectable, since branch B2 admits zero-video ops"）|
+| 3 | c2 说 auto-resolve 需 "lease 清 **且 video 出现**（for post_download）" | **过强**：download-verified op 上一个 properly-bound B2 `post_download` asset 可在 0 video 行下 witness（video 可能已被 hard-purged）。新 video 非必需。修：auto-resolve 改 "once the lease clears independently (expired/fenced/released), branch B's lease gate passes; a properly-bound asset then witnesses via B2（`consent_withdrawal` delivery-independent；`post_download` 需 `download_status='verified'` + `COUNT(video) <= 1`，均可 0 video 满足）" |
+
+> **round-8 元教训（doc 也要 against source 核实，不能想当然）**：round-7 我写 c2 docstring 时，凭"withdraw 不清 lease"的正确直觉，顺手写了"只 UPDATE receipt"和"无 video 也阻塞"—— 两处都没 against `_withdraw_in_tx` 实际 SQL + B2 witness 常量核实。Codex 读了源码（consent.py:657-673 + 常量 @4091-4134）当场抓到。这和 c3 的 "原则陈述正确 ≠ 实现穷举" 同构：**doc 也不能只凭原则直觉写，每个事实claim 要 against ground-truth source 核实**（"先查已有参考别试错" 纪律对 doc 同样适用）。幸而纯 doc，无 runtime/SQL 改动，executable invariant 不受影响。
+
+**round-8 改动**（纯 doc，零 runtime/SQL/test 变化，1169 全绿不变）——
+1. `src/lecturecast/operation_repository.py`：`count_recovery_attention` docstring (c) 段重写（删 "no video yet on a pre-video op" cause；c2 重写为 "active lease 是唯一 non-selectability 因由 + withdraw UPDATE receipt+consent-lifecycle 但不动 lease + B2 允许 zero-video + auto-resolve 不需新 video"）；SQL COMMENT (c2) 同步；"NOT counted" 段改 selectability 交叉引用（删 "pre-video"，明言 "no video alone does NOT make an op non-selectable"）。
+
+**待 Codex round-8 锁定复审**（effort=low，invariant-completeness framing：三处 doc 修正是否 against source 准确 —— (1) `_withdraw_in_tx` consent.py:657-673 是否真的 UPDATE receipt+op consent-lifecycle 但不动 lease；(2) B2 常量 @4091-4134 是否真的 `COUNT(video) <= 1` 允许 zero-video；(3) "NOT counted" 段 selectability 区分是否与 candidate SELECT 严格一致；残留猎：是否还有 c2 相关 doc 不准确、round-7 的 c1 描述是否也有同类问题）。
+
 ---
 
 ## 2. 盲预测（实现前先写死的契约）
