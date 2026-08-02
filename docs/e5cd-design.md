@@ -255,6 +255,27 @@ line 489 pass criteria：
 
 **待 Codex round-4 锁定复审**（effort=low，invariant-completeness framing：5 blocker 闭合是否穷举 + `count_recovery_attention` 只读方法是否引入新不变量回归 / SQL 注入面 / TOCTOU + #3 push-back 的 §3.5 在途论证是否成立 + attention audit 是否漏计其他 operator-attention 态）。
 
+**Codex round-4 复审结果（2026-08-02，effort=low）—— NOT LOCKABLE，3 gap**（2 blocker + 1 residual；2A/2B/3/#1/#2/#3 全部 CONFIRMED closed）：
+
+| # | finding | 闭合方式（round-5） |
+|---|---------|---------------------|
+| 2A 残留（hostile `__repr__`）| `_valid_tally` 已拒混合型键 + diagnostic 已改 `repr(k)`；但 `repr()` **非 total** —— 键可实现 `__repr__` 抛异常（`class BadKey: def __repr__(self): raise RuntimeError`）；diagnostic 在 try 块外 → RuntimeError 逃逸 exit 1 | **round-5 修**：抽 `_safe_key_repr(k)` helper（try/except 包 repr，抛则返 `"<unprintable key>"`，total 不抛）；DB + deletion 两 diagnostic 改 `sorted(_safe_key_repr(k) ...)` —— 与 `type() is dict` / `type() is bool` 同一 type-stability 纪律（诊断路径与校验路径同等 type-stable） |
+| 残留 1（attention tally 边界未校验）| DB + deletion 两 tally 在 `run_maintenance` 边界 `_valid_tally` 校验，但 attention **不**校验 —— `count_recovery_attention` 返回 dict 子类 / 非法形时流入 report，CLI formatter `isinstance(at, dict)` 通过后 `at.get(...)` 抛 → exit 1（`clean` 虽校验 attention 形状但 formatter 先于 `clean` 读）| **round-5 修**：audit 后边界校验 `_valid_tally(attention, _ATTENTION_KEYS)` → 畸形则 `attention_audit_failed=True` + `attention={}` + 结构化 skip（exit 2 非 1）；formatter 三守卫 `isinstance` → `type() is dict`（db/deletion/attention defense-in-depth 一致） |
+| 残留 2（unrecoverable 异常态不可见）| attention audit 只计 manual_uploads + manual_force；但 schema CHECK 允许 **schema-legal 异常 (status, reason) 对**（`deletion_pending+NULL` / `deletion_failed+NULL` / `not_started+reason`）—— 候选 SELECT 的 witness STATE-MATRIX 门禁**自身**对这些 fail-closed（op_repo:4190-4322 显式 "schema-legal corrupt/直插 states"），即删除子系统已认定它们 attention-needed；但两 recovery primitive + attention audit 都不碰 → exit 0 谎报 clean | **round-5 修**：`count_recovery_attention` 加第 3 键 `unrecoverable_resources` —— 计非 deleted、非 manual_force、非 reusable 的资源中：(a) `not_started + non-NULL reason`、(b) `(pending|failed) + NULL reason`、(c) `created_by_operation_id IS NULL`（孤儿）。三类均 primitive-unreachable（claim 同 UPDATE 设 status+reason；heygen_operations 永不 DELETE → FK SET NULL 不触发），即仅 corruption/直插 产生；计它们不破正常 exit 0（producer-valid journal 上恒为 0）。与候选 SELECT 的 fail-closed 姿态**一致**（exit-0 契约不能对删除子系统自身拒绝驱动的行谎报 clean） |
+
+> **round-5 关键论证（为何 unrecoverable 计数是正确的，而非 TOCTOU 类）**：候选 SELECT 的 docstring 明确把这些状态标为 "schema-legal corrupt/直插 states, not just producer-reachable ones" 并 fail-closed。即删除子系统**已承认**它们 attention-needed。maintenance exit-0 契约是「journal 最终态无需人介入」—— 若审计时此类行存在（无论怎么产生的），exit-0 就是谎报。fail-closed 覆盖**最终 journal 态**，非仅 primitive-reachable 态。这与已文档化的 journal-replacement TOCTOU 类**不同**：TOCTOU 是维护运行**期间**并发替换 journal；unrecoverable 是审计**时刻**已存在的行。`原则陈述正确 ≠ 实现穷举` —— 候选 SELECT 已穷举这些态，attention audit 必须镜像同一穷举。
+>
+> **范围裁定（为何不全量镜像候选谓词的 6 类拓扑）**：broken-topology 资源（合法 state-matrix 但缺 ref / credential 不匹配 / role-kind 错配）若其 op 仍被候选 SELECT 选出（有合法 witness 兄弟），per-op pass 会 claim 它 → 抛 OperationIntegrityError → `ops_alerted` → exit 2（**已可见**，非 invisible）。仅当 broken-topology 资源是 op 的**唯一**资源且非合法 witness 时才 invisible —— 这要求直接破坏 ref/credential（primitives 先校验再 INSERT），属已文档化的 journal-replacement TOCTOU 类。state-matrix 异常 + 孤儿是**廉价、明确正确**的子集（schema CHECK 直接可查），不需要镜像 6 类拓扑谓词。
+
+**round-5 改动** ——
+1. `src/lecturecast/maintenance.py`：新增 `_safe_key_repr(k)` helper（try/except 包 repr → total）；DB + deletion 两 diagnostic 改 `sorted(_safe_key_repr(k) ...)`（2A 残留）；audit 调用后加 `_valid_tally(attention, _ATTENTION_KEYS)` 边界校验 → 畸形则 `attention_audit_failed=True` + `attention={}` + 结构化 skip（残留 1）；`_ATTENTION_KEYS` 扩 3 键（加 `unrecoverable_resources`）；`clean` (h) gate 加 `unrecoverable_resources` 维；`MaintenanceReport.attention` docstring 同步。
+2. `src/lecturecast/operation_repository.py`：`count_recovery_attention()` 加第 3 个 COUNT（`unrecoverable_resources`）—— 镜像候选 SELECT 的 state-matrix 门禁 + 孤儿子句；返回 3 键 dict。**纯加法只读诊断，不改任何 locked mutation primitive**。
+3. `src/lecturecast/commands/maintenance.py`：exit-code docstring 扩（exit 2 含 unrecoverable）；`_format_message` 三守卫 `isinstance` → `type() is dict`（defense-in-depth）；浮出 `unrecoverable_resources` count。
+
+**round-5 测试加固（92 → 105 测，+13）** —— `test_db_tally_malformed_hostile_repr_key_wrapped_to_skip`（2A 残留：`__repr__` 抛的键 → `_safe_key_repr` 兜住 → exit 2 非 1）；`test_deletion_tally_malformed_hostile_repr_key_wrapped_to_skip`（deletion 对称）；`test_attention_tally_malformed_wrapped_to_audit_failed`（6 例参数化：dict 子类 / None / list / 错键 / 负值 / extra 键 → 边界校验 → `attention_audit_failed` + exit 2 非 1）；`test_attention_audit_unrecoverable_pending_null_reason_gates_clean`（残留 2-a：`pending+NULL` → unrecoverable=1 → exit 2）；`test_attention_audit_unrecoverable_not_started_with_reason_gates_clean`（残留 2-b：`not_started+post_download` → exit 2）；`test_attention_audit_unrecoverable_failed_null_reason_gates_clean`（残留 2-c：`failed+NULL` → exit 2）；`test_attention_audit_unrecoverable_orphan_resource_gates_clean`（孤儿：`created_by_operation_id IS NULL` → exit 2）；`test_attention_audit_normal_inflight_states_not_counted_unrecoverable`（control：5 种正常态 + reusable_avatar 全不计 → 正常 journal 仍达 exit 0，不破在途可达性）。全量 **1163 测全绿**（1150 + 13 新，零回归）。注：round-4 设计稿曾误记 maintenance "96 测"（实际 92，已修正）；全量 1150 数字正确。
+
+**待 Codex round-5 锁定复审**（effort=low，invariant-completeness framing：3 gap 闭合是否穷举 —— `_safe_key_repr` 是否 total、attention 边界是否对称 DB/deletion、unrecoverable SQL 是否正确镜像候选 state-matrix 门禁且不破正常 exit 0；残留猎：是否还有 operator-attention 态未被三 tally + unrecoverable 覆盖；broken-topology 范围裁定是否成立）。
+
 ---
 
 ## 2. 盲预测（实现前先写死的契约）
