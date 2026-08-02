@@ -16,8 +16,6 @@ from typer.testing import CliRunner
 from lecturecast.canary import (
     CANARY_CREDIT_CAP,
     CanaryReport,
-    _StubAdapter,
-    _StubDeleter,
     run_canary,
 )
 from lecturecast.cli import app
@@ -155,16 +153,14 @@ def test_canary_deletion_recovery_per_resource_deleted(tmp_path: Path) -> None:
 
 
 def test_canary_deletion_uses_real_locked_coordinator_entry(tmp_path: Path) -> None:
-    """The canary drives the LOCKED DeletionCoordinator (no bypass); the stub
-    deleter/adapter record the exact §3.5 routing — video→deleter, assets→adapter."""
-    deleter, adapter = _StubDeleter(), _StubAdapter()
-    report = run_canary(
-        tmp_path, now_iso=NOW, deleter=deleter, adapter=adapter,
-    )
+    """The canary drives the LOCKED DeletionCoordinator (no bypass); the §3.5
+    routing is exposed via report.deletion_calls — video→deleter, assets→adapter.
+    No stub injection: the canary drives its own in-module stubs (constraint b)."""
+    report = _run(tmp_path)
     assert report.passed
     # §3.5 routing: video (v1) → deleter.delete_video; audio + portrait → adapter.delete_asset
-    assert deleter.calls == ["v1"]
-    assert sorted(adapter.calls) == ["a1", "p1"]
+    assert report.deletion_calls["video"] == ("v1",)
+    assert sorted(report.deletion_calls["asset"]) == ["a1", "p1"]
 
 
 def test_canary_deletion_force_is_literal_bool(tmp_path: Path) -> None:
@@ -214,15 +210,15 @@ def test_canary_writes_only_to_its_sandbox(tmp_path: Path) -> None:
 
 
 def test_canary_zero_real_network_stubs_only(tmp_path: Path) -> None:
-    """Constraint (b): the default canary uses deterministic stubs — no real
-    HeyGen transport is constructed, no real network calls made, no real
-    credits spent. The stubs are in-module and record their calls."""
-    deleter, adapter = _StubDeleter(), _StubAdapter()
-    report = run_canary(tmp_path, now_iso=NOW, deleter=deleter, adapter=adapter)
+    """Constraint (b): the canary uses deterministic in-module stubs BY
+    CONSTRUCTION (no injection seam) — no real HeyGen transport is constructed,
+    no real network calls made, no real credits spent. The stub routing is
+    observable via report.deletion_calls."""
+    report = _run(tmp_path)
     assert report.passed
     # The stubs were driven (proving the mock path ran, not a real transport).
-    assert len(deleter.calls) >= 1
-    assert len(adapter.calls) >= 2
+    assert len(report.deletion_calls["video"]) >= 1
+    assert len(report.deletion_calls["asset"]) >= 2
 
 
 # ----- depth honesty (lesson #13) -----
@@ -251,6 +247,86 @@ def test_canary_rejects_malformed_estimate(tmp_path: Path) -> None:
     assert report.passed is False
     assert report.invariant("estimate_equals_pricing").passed is False
     assert report.invariant("core_3_cost").passed is False
+
+
+# ----- round-2 blocker regressions (one per round-1 blocker) -----
+
+def test_canary_invalid_estimate_fails_closed_refuses_deletion(tmp_path: Path) -> None:
+    """Blocker-1 regression (round-1 fail-open): a malformed estimate with an
+    understated minimum_total (3×100 per-milestone costs but minimum_total=0)
+    FAILS validation → the cap fails CLOSED (it must NOT fall back to the
+    untrusted minimum_total=0 and pass) → credit_cap_30.passed=False AND the
+    deletion drive is REFUSED. The round-1 fail-open let this exact estimate
+    pass the cap and drive all 3 deletions."""
+    bad = {
+        "estimate_status": "final",
+        "minimum_total": 0,            # understated — sum(per_milestone)=300 ≠ 0
+        "maximum_total": 0,
+        "charge_model": "per_milestone_success",
+        "pricing_version": "pricing.v1",
+        "next_milestone_cost": 100,
+        "applicable_milestones": ["manifest", "presenter_plan", "orchestration"],
+        "per_milestone": {"manifest": 100, "presenter_plan": 100, "orchestration": 100},
+        # brief_digest / estimate_digest omitted → validation fails (final requires them)
+    }
+    report = run_canary(
+        tmp_path, now_iso=NOW, pricing_estimate=bad,
+        brief={"brief_id": "x", "schema_version": "1.1", "topic": "t"},
+    )
+    cap = report.invariant("credit_cap_30")
+    assert cap.passed is False
+    assert "REFUSED" in cap.detail
+    assert "validation" in cap.detail.lower() or "unknowable" in cap.detail.lower()
+    # The deletion drive was REFUSED — nothing driven, no resources touched.
+    assert report.deletion_summary["driven"] == 0
+    assert report.deletion_summary["resources"] == 0
+    assert report.deletion_calls == {"video": (), "asset": ()}
+    assert report.invariant("ledger_awaiting_deletion_recovery").passed is False
+    assert report.passed is False
+
+
+def test_canary_has_no_injection_seam(tmp_path: Path) -> None:
+    """Blocker-2 regression (round-1 injection seam): run_canary has NO deleter/
+    adapter parameters — zero-network is enforced BY CONSTRUCTION (constraint b),
+    not by policing an injection seam. A caller cannot route the deletion drive
+    through a real network-capable adapter."""
+    import inspect
+    sig = inspect.signature(run_canary)
+    assert "deleter" not in sig.parameters
+    assert "adapter" not in sig.parameters
+    # Passing deleter=/adapter= is rejected at the call boundary (no such param).
+    with pytest.raises(TypeError):
+        run_canary(tmp_path, now_iso=NOW, deleter=object())  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        run_canary(tmp_path, now_iso=NOW, adapter=object())  # type: ignore[call-arg]
+
+
+def test_canary_estimate_equals_pricing_exercises_display_path(tmp_path: Path) -> None:
+    """Blocker-3 regression (round-1 #6 overclaim): invariant #6 does NOT merely
+    repeat schema validity — it exercises the client display path: the validator
+    returns the estimate UNCHANGED (verbatim, validated==estimate) AND
+    next_milestone_cost_or_fail reads next_milestone_cost out of it. The detail
+    names both primitives (not just 'validated')."""
+    report = _run(tmp_path)
+    inv = report.invariant("estimate_equals_pricing")
+    assert inv.passed
+    assert "next_milestone_cost_or_fail" in inv.detail
+    assert "unchanged" in inv.detail.lower() or "verbatim" in inv.detail.lower()
+
+
+def test_canary_rollback_routes_credit_returned(tmp_path: Path) -> None:
+    """Blocker-4 regression (round-1 #8 overclaim): invariant #8 does NOT merely
+    repeat the charge_model field — it exercises the client's rollback routing
+    via the real director._status_workflow: credit_returned →
+    estimate_refresh_required AND awaiting_credits → credit_resume_required.
+    The detail names both routed phases (the client-depth 处理方案)."""
+    report = _run(tmp_path)
+    inv = report.invariant("rollback_charged")
+    assert inv.passed
+    assert "credit_returned" in inv.detail
+    assert "estimate_refresh_required" in inv.detail
+    assert "awaiting_credits" in inv.detail
+    assert "credit_resume_required" in inv.detail
 
 
 # ----- CLI leaf (commands/canary.py) -----

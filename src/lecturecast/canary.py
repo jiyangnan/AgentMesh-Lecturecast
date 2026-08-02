@@ -41,7 +41,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from .capabilities import (
     _journal_state,
@@ -53,7 +53,7 @@ from .heygen_adapter import DeleteResult
 from .heygen_asset_adapter import AssetDeleteResult
 from .heygen_journal import _SCHEMA_VERSION, init_database
 from .operation_repository import DeletionCoordinator
-from .pricing import validate_pricing_estimate
+from .pricing import next_milestone_cost_or_fail, validate_pricing_estimate
 from .protocol import canonical_digest
 
 # §5 line 489: "一次最多 30 credits" — hard cap on the projected cost of a
@@ -96,6 +96,10 @@ class CanaryReport:
     total_credits_projected: int
     credit_cap: int
     deletion_summary: dict[str, int]
+    # Routing proof: which remote_ids the stub deleter (video route) vs the stub
+    # asset adapter (asset route) actually drove. Populated from the canary's own
+    # in-module stubs (zero injection seam — constraint b enforced by construction).
+    deletion_calls: dict[str, tuple[str, ...]]
     passed: bool
 
     def invariant(self, key: str) -> CanaryInvariantResult:
@@ -248,8 +252,6 @@ def run_canary(
     now_iso: str,
     lease_owner: str = "lecturecast-canary",
     lease_seconds: int = 300,
-    deleter: Any = None,
-    adapter: Any = None,
     env: dict[str, str] | None = None,
     brief: dict[str, Any] | None = None,
     pricing_estimate: dict[str, Any] | None = None,
@@ -265,16 +267,22 @@ def run_canary(
     §3.4 commentary), then the 8 invariants are asserted and the deletion
     recovery is driven through the locked ``DeletionCoordinator``.
 
-    Stubs: ``deleter`` / ``adapter`` default to in-module deterministic stubs
-    (zero real HeyGen calls). ``pricing_estimate`` defaults to a built final
-    estimate over the 3 core milestones at ``per_milestone_cost`` each.
+    Zero-network is enforced BY CONSTRUCTION (constraint b): the canary creates
+    its own in-module ``_StubDeleter`` / ``_StubAdapter`` — there is NO deleter/
+    adapter injection seam, so no caller can route the deletion drive through a
+    real HeyGen transport. The stubs' observed routing is exposed via
+    ``report.deletion_calls`` (the §3.5 video→deleter / assets→adapter proof).
+    ``pricing_estimate`` defaults to a built final estimate over the 3 core
+    milestones at ``per_milestone_cost`` each.
     """
     project_dir = Path(project_dir)
     sources = env if env is not None else {}
     brief_dict = brief if brief is not None else _CANARY_BRIEF
 
-    deleter_obj = deleter if deleter is not None else _StubDeleter()
-    adapter_obj = adapter if adapter is not None else _StubAdapter()
+    # Zero-network enforced by construction: the canary ALWAYS drives its own
+    # in-module stubs. No injection seam → no path to a real transport.
+    deleter_obj = _StubDeleter()
+    adapter_obj = _StubAdapter()
 
     # 1. Isolated journal — the one accepted write into the canary's own sandbox.
     try:
@@ -349,20 +357,32 @@ def run_canary(
         passed3, detail3 = False, "estimate is not a digest-valid final estimate"
     invariants.append(CanaryInvariantResult("digest_chain", "digest 链四项 + 补跑案例", passed3, detail3))
 
-    # #4: 一次最多 30 credits — HARD GATE (D7). The projected cost is the sum of
-    # the validated per-milestone costs. If it exceeds the cap, the invariant
-    # FAILS and the deletion drive is REFUSED (constraint b: no spend beyond cap
-    # — even mock spend is gated, modeling the real-credit guard).
+    # #4: 一次最多 30 credits — HARD GATE (D7), fail-closed. The projected cost
+    # is derived ONLY from the VALIDATED estimate's per-milestone sum. If the
+    # estimate did not validate, the projected cost is UNKNOWABLE and the cap
+    # FAILS CLOSED (cap_held=False) — an invalid estimate must NOT reach the
+    # deletion drive on the strength of its own untrusted minimum_total field
+    # (the round-1 fail-open: 3×100 costs but minimum_total=0 slipped through).
     if estimate_ok:
         total_projected = int(sum((validated.get("per_milestone") or {}).values()))
     else:
-        total_projected = int(estimate.get("minimum_total", 0)) if isinstance(estimate, dict) else 0
-    cap_held = total_projected <= credit_cap
-    detail4 = (
-        f"projected={total_projected} ≤ cap={credit_cap}"
-    ) if cap_held else (
-        f"projected={total_projected} > cap={credit_cap} — deletion drive REFUSED"
-    )
+        # Display the raw per-milestone sum if parseable (for debugging) — but
+        # cap_held below is False regardless. The drive is refused (fail-closed).
+        raw_pm = (estimate.get("per_milestone") or {}) if isinstance(estimate, dict) else {}
+        try:
+            total_projected = int(sum(raw_pm.values()))
+        except Exception:
+            total_projected = 0
+    cap_held = bool(estimate_ok) and (total_projected <= credit_cap)
+    if not estimate_ok:
+        detail4 = (
+            f"estimate failed validation — projected cost unknowable, cap fails "
+            f"closed (deletion drive REFUSED). raw_per_milestone_sum={total_projected}"
+        )
+    elif total_projected <= credit_cap:
+        detail4 = f"projected={total_projected} ≤ cap={credit_cap}"
+    else:
+        detail4 = f"projected={total_projected} > cap={credit_cap} — deletion drive REFUSED"
     invariants.append(CanaryInvariantResult("credit_cap_30", "一次最多 30 credits", cap_held, detail4))
 
     # ----- deletion recovery (invariant #5) — only drive when the cap holds -----
@@ -374,7 +394,9 @@ def run_canary(
     # milestone status strings; the server canary owns the ledger depth (§6).
     deletion_summary: dict[str, int] = {"driven": 0, "deleted": 0, "resources": 0}
     deletion_skipped_reason: str | None = None
-    if not cap_held:
+    if not estimate_ok:
+        deletion_skipped_reason = "estimate invalid — projected cost unknowable, drive refused (fail-closed)"
+    elif not cap_held:
         deletion_skipped_reason = "credit cap exceeded — drive refused"
     if deletion_skipped_reason is None:
         op_id = "canary-op-0001"
@@ -433,14 +455,37 @@ def run_canary(
         passed5, detail5,
     ))
 
-    # #6: client 展示 estimate == server pricing_estimate — the estimate the
-    # client displays is exactly the server-sent one, validated by the locked
-    # validator (no client-side recompute / hardcode).
-    passed6 = estimate_ok
+    # #6: client 展示 estimate == server pricing_estimate — exercises the actual
+    # client display path, not just schema validity: (a) validate_pricing_estimate
+    # accepts the estimate AND returns it verbatim (validated == estimate — the
+    # client does not mutate / recompute / hardcode any field between receiving
+    # the server estimate and displaying it); (b) next_milestone_cost_or_fail —
+    # the display-read primitive the client uses to read the cost out of the
+    # session estimate — yields the expected next_milestone_cost from this exact
+    # estimate without raising. The director session↔card estimate-equality
+    # boundary (director.py) is exercised in director's own tests + §5.5e5c.
+    try:
+        cost_displayed = next_milestone_cost_or_fail(
+            {"pricing_estimate": estimate, "brief": brief_dict},
+            protocol_version="1.1", brief=brief_dict,
+        )
+        display_ok = isinstance(cost_displayed, int) and not isinstance(cost_displayed, bool)
+        if estimate_ok and validated.get("next_milestone_cost") is not None:
+            display_ok = display_ok and (cost_displayed == validated.get("next_milestone_cost"))
+    except Exception as exc:
+        display_ok = False
+        cost_displayed = f"{type(exc).__name__}: {exc}"
+    verbatim = estimate_ok and (validated == estimate)
+    passed6 = bool(verbatim and display_ok)
     detail6 = (
-        "client displays the server pricing_estimate verbatim; "
-        "validate_pricing_estimate accepts it (no client recompute)."
-    ) if passed6 else f"estimate rejected by validator: {estimate_err}"
+        "client displays the server pricing_estimate verbatim — validate_pricing_"
+        "estimate returns it UNCHANGED (validated==estimate, no recompute/hardcode) "
+        f"AND next_milestone_cost_or_fail reads next_milestone_cost={cost_displayed} "
+        "from it (the display-read primitive works on the server estimate)."
+    ) if passed6 else (
+        f"verbatim={verbatim} (validated==estimate); display-read ok={display_ok} "
+        f"(next_milestone_cost_or_fail → {cost_displayed!r}); estimate_ok={estimate_ok}"
+    )
     invariants.append(CanaryInvariantResult(
         "estimate_equals_pricing", "client 展示 estimate == server pricing_estimate", passed6, detail6,
     ))
@@ -472,20 +517,73 @@ def run_canary(
         passed7, detail7 = False, f"capture_capabilities_v1_1 raised: {type(exc).__name__}: {exc}"
     invariants.append(CanaryInvariantResult("m1_independence", "M1 不依赖 HeyGen 配置", passed7, detail7))
 
-    # #8: rollback 已 charged 处理方案 — CLIENT-OBSERVABLE: the charge contract
-    # in force is per_milestone_success (the granularity under which per-milestone
-    # refund is well-defined). The actual refund execution is the SERVER refund
-    # worker (§5.3.10b/c/d) + the client RecoveryDirectiveCatalog mapping (§5.5e6,
-    # not yet wired) — both out of e5d-b scope.
+    # #8: rollback 已 charged 处理方案 — exercises the CLIENT-OBSERVABLE rollback
+    # surface, not just the charge-model field: (a) the charge contract in force
+    # is per_milestone_success (the granularity under which per-milestone refund
+    # is well-defined); (b) the client RECOGNIZES + ROUTES the rollback billing
+    # vocabulary — director._status_workflow maps credit_returned →
+    # estimate_refresh_required (v1.1: director.next to refresh after credit
+    # return) and awaiting_credits+resume_available → credit_resume_required.
+    # This is the client-depth "处理方案"; the actual refund execution is the
+    # SERVER refund worker (§5.3.10b/c/d) + the client RecoveryDirectiveCatalog
+    # mapping (§5.5e6, not yet wired) — both out of e5d-b scope.
     charge_model_ok = estimate_ok and validated.get("charge_model") == "per_milestone_success"
+    routing_ok = False
+    route_detail = ""
+    try:
+        from .commands.director import _status_workflow
+        from .director import DirectorState
+
+        base_state = {
+            "schema_version": "1.2", "project_id": "canary-p", "state_revision": 1,
+            "server_url": "https://api.test", "session_id": "canary-s",
+            "session_status": "confirmed", "brief_version": 1, "catalog_version": "cv",
+            "adapter_kind": "codex", "adapter_version": "1.0.0",
+            "protocol_version": "1.1", "generation_id": "canary-g",
+            "updated_at": now_iso,
+        }
+        # credit_returned → estimate_refresh_required (the v1.1 rollback route).
+        st_returned = DirectorState({
+            **base_state, "generation_status": "credit_returned",
+            "billing_state": "credit_returned",
+        })
+        wf_returned = _status_workflow(
+            st_returned,
+            {"generation_id": "canary-g", "status": "credit_returned", "updated_at": now_iso},
+            "/tmp",
+        )
+        # awaiting_credits + resume_available → credit_resume_required.
+        st_awaiting = DirectorState({
+            **base_state, "generation_status": "queued",
+            "billing_state": "awaiting_credits", "resume_available": True,
+            "billing_updated_at": now_iso,
+        })
+        wf_awaiting = _status_workflow(
+            st_awaiting,
+            {"generation_id": "canary-g", "status": "ready", "updated_at": now_iso,
+             "billing_state": "awaiting_credits", "resume_available": True},
+            "/tmp",
+        )
+        routing_ok = (
+            wf_returned["phase"] == "estimate_refresh_required"
+            and wf_awaiting["phase"] == "credit_resume_required"
+        )
+        route_detail = (
+            f"credit_returned→{wf_returned['phase']}; "
+            f"awaiting_credits→{wf_awaiting['phase']}"
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        route_detail = f"routing exercise raised: {type(exc).__name__}: {exc}"
+    passed8 = bool(charge_model_ok and routing_ok)
     detail8 = (
-        "charge contract = per_milestone_success (per-milestone refund granularity). "
+        "charge contract = per_milestone_success (per-milestone refund granularity) "
+        f"AND the client routes the rollback vocabulary ({route_detail}). "
         "Refund execution = server refund worker (§5.3.10b/c/d) + client "
         "RecoveryDirectiveCatalog mapping (§5.5e6) — out of e5d-b scope."
-    ) if charge_model_ok else (
-        f"charge_model={validated.get('charge_model')!r}, expected 'per_milestone_success'"
+    ) if passed8 else (
+        f"charge_model_ok={charge_model_ok}; routing_ok={routing_ok} ({route_detail})"
     )
-    invariants.append(CanaryInvariantResult("rollback_charged", "rollback 已 charged 处理方案", charge_model_ok, detail8))
+    invariants.append(CanaryInvariantResult("rollback_charged", "rollback 已 charged 处理方案", passed8, detail8))
 
     inv_tuple = tuple(invariants)
     return CanaryReport(
@@ -494,5 +592,9 @@ def run_canary(
         total_credits_projected=total_projected,
         credit_cap=credit_cap,
         deletion_summary=deletion_summary,
+        deletion_calls={
+            "video": tuple(deleter_obj.calls),
+            "asset": tuple(adapter_obj.calls),
+        },
         passed=all(inv.passed for inv in inv_tuple),
     )
