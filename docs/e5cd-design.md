@@ -328,7 +328,7 @@ Codex round-7 复审裁定 **NOT LOCKABLE**，**唯一**剩余 blocker 是 round
 | # | round-7 doc 不准确 | round-8 修正 |
 |---|-------------------|--------------|
 | 1 | c2 docstring 说 `withdraw` "UPDATE only the receipt"（consent.py:591）| **不准确**：`_withdraw_in_tx`（consent.py:657-673）UPDATE receipt **AND** `heygen_operations` —— pristine op 改 `status='cancelled'` + 清 `consent_receipt_digest` + `updated_at`；非 pristine 清 `consent_receipt_digest` + `updated_at`。**窄claim 才真**：**不动 lease**（`lease_owner`/`lease_expires_at`/`lease_fence`/`attempt_started_at` 全不变）。修：c2 文案改 "UPDATEs the receipt AND the op's consent-lifecycle fields (status for pristine, consent_receipt_digest, updated_at) but does NOT clear/modify the op lease"，引 consent.py:591-673 |
-| 2 | c2 说 op 非 selectable 是因 "active lease **和/或无 video**" | **夸大**：branch B2 witness **显式允许 zero-video op**（`COUNT(video) <= 1` 非 `== 1`；常量 @4091-4134 注释明言 "zero is allowed"，"B2's witness is a non-video ASSET, so the op may legitimately have 0 video rows"）。所以**无 video 单独不构成 non-selectability**——一个 properly-bound asset 在 lease 清后即使 0 video 也经 B2 witness。**唯一** c2 non-selectability 因由是 active lease（branch B 的 `o.lease_owner IS NULL` gate @4031）。修：删 "and/or that has no video yet" / "no video yet on a pre-video op"，改为 "the active lease makes branch B's `o.lease_owner IS NULL` gate reject"；"NOT counted" 段同改（"no witness — leased or pre-video" → "no witness — typically an ACTIVE LEASE; `no video` alone does NOT make an op non-selectable, since branch B2 admits zero-video ops"）|
+| 2 | c2 说 op 非 selectable 是因 "active lease **和/或无 video**" | **夸大**：branch B2 witness **显式允许 zero-video op**（`COUNT(video) <= 1` 非 `== 1`；常量 @4091-4134 注释明言 "zero is allowed"，"B2's witness is a non-video ASSET, so the op may legitimately have 0 video rows"）。所以**无 video 单独不构成 non-selectability**——一个 properly-bound asset 在 lease 清后即使 0 video 也经 B2 witness。**唯一** c2 non-selectability 因由是 active lease（branch B 的 `o.lease_owner IS NULL AND o.lease_expires_at IS NULL` gate @4031）。修：删 "and/or that has no video yet" / "no video yet on a pre-video op"，改为 "the active lease makes branch B's `o.lease_owner IS NULL AND o.lease_expires_at IS NULL` gate reject"；"NOT counted" 段同改（"no witness — leased or pre-video" → "no witness — typically an ACTIVE LEASE; `no video` alone does NOT make an op non-selectable, since branch B2 admits zero-video ops"）|
 | 3 | c2 说 auto-resolve 需 "lease 清 **且 video 出现**（for post_download）" | **过强**：download-verified op 上一个 properly-bound B2 `post_download` asset 可在 0 video 行下 witness（video 可能已被 hard-purged）。新 video 非必需。修：auto-resolve 改 "branch B 的 gate 要 `lease_owner IS NULL AND lease_expires_at IS NULL` —— 单纯时间过期（expiry）**不**通过（列必须被清成 NULL）；fenced recovery/apply/finalize/release 路径才 NULL 它们（download finalize/fail ~1652/1702/1718，`_clear_operation_lease` ~1959/1972）。一旦某路径清了两列，gate 通过；properly-bound asset 经 B2 witness（`consent_withdrawal` delivery-independent；`post_download` 需 `download_status='verified'` + `COUNT(video) <= 1`，均可 0 video 满足）"。⚠️ round-8 初稿误写 "(expired / fenced / released)"，Codex round-8 抓出 "expired" 误导（implies 时间过期 alone 通过 gate），round-9 已纠正 |
 
 > **round-8 元教训（doc 也要 against source 核实，不能想当然）**：round-7 我写 c2 docstring 时，凭"withdraw 不清 lease"的正确直觉，顺手写了"只 UPDATE receipt"和"无 video 也阻塞"—— 两处都没 against `_withdraw_in_tx` 实际 SQL + B2 witness 常量核实。Codex 读了源码（consent.py:657-673 + 常量 @4091-4134）当场抓到。这和 c3 的 "原则陈述正确 ≠ 实现穷举" 同构：**doc 也不能只凭原则直觉写，每个事实claim 要 against ground-truth source 核实**（"先查已有参考别试错" 纪律对 doc 同样适用）。幸而纯 doc，无 runtime/SQL 改动，executable invariant 不受影响。
@@ -356,6 +356,24 @@ Codex round-8 裁定 **NOT LOCKABLE**，2 个纯 doc-only blocker（executable i
 **元教训（#round-9，强化 round-8 #2）**："先查已有参考别试错"对 doc 同样适用，且每次 doc 修正后必须**grep 全仓的同义表述**（不只 Codex 点名的那个 site）——round-8 只修了 docstring/SQL COMMENT/"NOT counted"段，漏了 §1.13b 那段历史记录里仍嵌着 round-7 的过时描述；round-8 prompt 自己也写了 "expired" 这个不准确的词。同 c3 round-12/13 的"原则陈述正确 ≠ 实现穷举"模式：doc 逐 site 验，不凭原则直觉假设"那一段是历史记录所以不影响"。
 
 **待 Codex round-9 锁定复审**（effort=low，invariant-completeness/doc-accuracy framing：两 blocker 是否真闭合 —— (1) "fenced recovery/apply/finalize/release path NULLs lease columns" 是否 against grep 命中的清 lease 原语（~1652/1702/1718/1959/1972）准确，单纯时间 expiry 是否真不通过 branch B gate；(2) §1.13b superseded 标记 + §1.13c 第 3 行是否消除了所有过时表述；残留猎：grep 全仓是否还有 "expired 单独通过 gate" / "只 UPDATE receipt" / "无 video 即无 witness" 同义残留；纯 doc，零 runtime/SQL/test 变化，1169 全绿不变）。
+
+### §1.13e round-10（Codex round-9 NOT LOCKABLE → 全闭合，待 Codex round-10 锁定复审）
+
+Codex round-9 裁定 **NOT LOCKABLE**，1 个纯 doc-only blocker（items 1–5 全部 CONFIRMED accurate —— auto-resolve、SQL COMMENT、§1.13b superseded、§1.13c row 3、三 claim 全仓猎无残留；item 7 CONFIRMED doc-only，1169 测试计数不变，sandbox 里 10 个 fail 纯属 loopback `HTTPServer.bind()` 网络禁，非代码漂移）。唯一 blocker 是 **item 6 内部一致性**：5 处把 branch B 简写成 **owner-only gate** `o.lease_owner IS NULL`（漏 `AND o.lease_expires_at IS NULL` 合取项）。
+
+| # | site | round-10 修正 |
+|---|------|---------------|
+| 1 | `operation_repository.py:3147`（docstring c intro）| `branch B's ``o.lease_owner IS NULL`` gate` → `branch B's ``o.lease_owner IS NULL AND o.lease_expires_at IS NULL`` gate` |
+| 2 | `operation_repository.py:3172`（docstring c2 sub-bullet）| 同上合取化 |
+| 3 | `operation_repository.py:3271`（SQL COMMENT c2）| 同上合取化 |
+| 4 | `e5cd-design.md:331`（§1.13c row 2，2 处）| 两处 `o.lease_owner IS NULL` gate 均合取化 |
+| 5 | `DIGITAL-HUMAN-PROGRESS.md:83`（handoff round-8 closure (b)）| 合取化 |
+
+against source 核实：branch B 真实谓词 @`operation_repository.py:4065` = `(o.lease_owner IS NULL AND o.lease_expires_at IS NULL`（合取，双列；非时间比较）。grep 全仓 `lease_owner IS NULL` 不跟 `AND` 的残余 —— 修正后 src/ + docs/ **零命中**（exit 1）。auto-resolve 段（docstring @~3180、SQL COMMENT @~3277）round-9 已是合取；`e5b0c3c-c3-design.md:295`（SQL 常量原文）+ `e5cd-design.md:313`（§1.13b accurate 版本）本就合取。round-10 改完后全仓描述 branch B gate 的 site **全部** 合取一致。
+
+**元教训（#round-10，#3 次同一模式）**：这是 round-8→9 模式的**第 3 次重复** —— round-7 凭直觉写 c2 三处不准（round-8 修）；round-8 修了 auto-resolve 但 prompt 自己写 "expired" + 漏 §1.13b 历史段（round-9 修）；round-9 修了 auto-resolve 合取但漏了 c2 intro/sub-bullet/SQL-COMMENT 的 owner-only 简写（round-10 修）。**根因**：每次修 doc 时只盯 Codex 点名的那个 claim 的"主表述段"，没意识到**同一个谓词会在 docstring 的 intro、sub-bullet、auto-resolve 三个位置分别表述一次**，每处都需独立合取化。同 c3 "原则陈述正确 ≠ 实现穷举" 的 doc 版：**一个谓词在 N 处表述，修 1 处 ≠ 修 N 处**。修正动作：grep 全仓该谓词的每一种简写/全写形态，逐处核对。
+
+**待 Codex round-10 锁定复审**（effort=low，invariant-completeness/doc-accuracy framing：(1) 5 site 是否全合取化、against @4065 真实谓词准确；(2) grep 全仓是否还有 owner-only 简写残留（含 maintenance.py / consent.py / 其他 design doc）；(3) 合取化是否引入新内部不一致（如某处合取项笔误）；(4) 纯 doc，零 runtime/SQL/test 变化，1169 全绿不变）。
 
 ---
 
