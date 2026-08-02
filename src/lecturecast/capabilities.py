@@ -28,6 +28,31 @@ COMPONENT_CATALOG_LOCK_PATH = Path(__file__).with_name("component-catalog.lock")
 F5_MODEL_PATH_ENV = "LECTURECAST_F5_MODEL_PATH"
 HEYGEN_API_KEY_ENV = "HEYGEN_API_KEY"
 
+# §5.5e5c locked capability surface — the SINGLE source of truth for both the
+# reported third_party_processors payload (heygen_processor) and the doctor
+# decomposition (build_heygen_doctor_section, §5.5e5d). Drift between the
+# reported payload and the doctor section would be a contradiction the server
+# could bill against.
+# Operations reflect §5.5e5b0c3c locked primitives (asset/video delete adapters
+# + DeletionCoordinator now shipped). avatar_delete OMITTED — no dedicated
+# primitive (ephemeral portrait_photo reuses the asset_delete path;
+# reusable_avatar is a future dashboard-revoked lifecycle, structurally inert
+# today — _asset_retention_mode always 'ephemeral'). Declaring it would be a
+# false capability claim.
+_HEYGEN_OPERATIONS = (
+    "direct_asset_upload",
+    "photo_avatar",
+    "prerecorded_audio_lipsync",
+    "asset_delete",
+    "video_delete",
+)
+# idempotency_24h: 24h reconcile + asset-upload windows (op_repo:70,3120).
+# title_query: HeyGenVideosAdapter.query_videos_by_title (videos_adapter:204).
+# read_only_auth_check: HeyGenAssetAdapter.get_asset docstring designates it
+# "Used for doctor / manual reconciliation only" — a GET on a known id
+# distinguishes 401/403 (auth_failed) from 200/404 (key valid).
+_HEYGEN_FEATURES = ("idempotency_24h", "title_query", "read_only_auth_check")
+
 
 def _not_available() -> bool:
     """Default fail-closed probe: no F5 runtime / HeyGen adapter+journal is
@@ -232,119 +257,168 @@ def _prior_heygen_use_detected(lecturecast_dir: Path) -> bool:
         return True  # backstop: cannot rule out prior-use -> fail-closed
 
 
-def default_heygen_journal_probe(project_root: Path | str) -> bool:
-    """Real HeyGen journal probe (§5.5e5c, round-4 hardened), READ-ONLY: is the
-    journal DB in a state the current client can actually serve? Mirrors the
-    readiness path of init_database WITHOUT ever creating, writing, or
-    migrating. Fail-closed guards:
+# Classifications that mean "the journal can serve every reported operation" —
+# the locked gate probe returns True iff _journal_state yields one of these.
+# 'fresh' = no DB yet but the parent is writable AND there is no prior-use
+# signal (first init will succeed); 'current' = DB at _SCHEMA_VERSION with the
+# full canonical column shape AND writable. Every other classification is a
+# fail-closed state (see _journal_state).
+_JOURNAL_READY = frozenset({"fresh", "current"})
+
+
+def _journal_state(project_root: Path | str) -> dict[str, Any]:
+    """Shared read-only journal guard logic (§5.5e5d refactor): the SINGLE
+    source of truth consumed by both the locked gate probe (bool, §5.5e5c) and
+    the doctor diagnostic (structured, §5.5e5d). Mirrors the readiness path of
+    init_database WITHOUT ever creating, writing, or migrating. Returns a
+    classification dict so callers can collapse to a bool (probe) OR decompose
+    WHY (doctor). Fail-closed guards (any violation -> a non-ready class):
 
     1. Symlink mirror: if .lecturecast / runtime / db is itself a symlink ->
-       False (init_database rejects symlinks at heygen_journal:406).
+       'symlink' (init_database rejects symlinks at heygen_journal:406).
     2a. Writability (missing-db branch): init creates runtime/ under
-        .lecturecast/, so the parent must be W_OK|X_OK.
+        .lecturecast/, so the parent must be W_OK|X_OK -> else 'parent_unwritable'.
     2b. Writability (db-exists branch): every processor writes (WAL + BEGIN
         IMMEDIATE + journal rows) under runtime/, AND the DB file itself must
-        be writable — chmod 0400 on the file passes a directory-only check but
-        fails every write (round-4 R3-7).
+        be writable — chmod 0400 passes a directory-only check but fails every
+        write (round-4 R3-7) -> else 'runtime_unwritable' / 'db_readonly'.
     3. Prior-use vs fresh (missing db): ready only if NEVER used. runtime/
        exists (db gone) OR the durable sentinel OR stored caps once reported
-       configured HeyGen -> prior-use data loss -> False.
-    4. Refuse-downgrade: PRAGMA user_version > _SCHEMA_VERSION -> False.
-    5. Refuse-mixed-version: user_version < _SCHEMA_VERSION -> False. A legit
-       prior-version DB CAN be migrated, but the probe cannot cheaply verify
-       the prior-version schema is complete enough to migrate without failing.
-       Fail-closed; the doctor / canary path (§5.5e5d) provides explicit
-       migration so the billing path never depends on an upgrade succeeding.
+       configured HeyGen -> 'missing_prior_use' (prior-use data loss).
+       Otherwise 'fresh' (first init will succeed).
+    4. Refuse-downgrade: PRAGMA user_version > _SCHEMA_VERSION -> 'ahead'
+       (client older than the on-disk journal; BLOCKER for doctor).
+    5. Refuse-mixed-version: user_version < _SCHEMA_VERSION -> 'behind' (a
+       legit prior-version DB CAN be migrated, but the probe cannot cheaply
+       verify the prior-version schema is complete enough to migrate without
+       failing; WARN for doctor — explicit migration via §5.5e5d).
     6. Schema shape: head == _SCHEMA_VERSION requires ALL v6 tables in
        sqlite_master AND each table's full COLUMN set must equal the canonical
-       v6 schema (round-4 R3-1/R3-2: name-only is not enough).
+       v6 schema (round-4 R3-1/R3-2: name-only is not enough) -> else
+       'shape_mismatch' / 'canonical_unavailable'.
 
-    A top-level backstop (round-4 R3-4) guarantees the predicate never raises
-    — any uncaught filesystem / resolve / sqlite error fails closed instead of
-    escaping the shared v1.1 capture path and blocking M1. Opens
+    Returns {'classification', 'head', 'writable'}. 'head' is the PRAGMA
+    user_version when the DB is readable, else None. Opens
     `file:<escaped>?mode=ro` (URI) so project paths containing '?', '#', or
-    spaces are not mis-parsed. Safe for doctor/canary (read-only constraint)."""
+    spaces are not mis-parsed. May raise on truly unexpected errors; callers
+    (probe / diagnostic) wrap in their own top-level backstop."""
     import os
     import urllib.parse
 
+    from .heygen_journal import (
+        _DB_NAME, _RUNTIME_DIR_NAME, _SCHEMA_VERSION, _is_symlink,
+    )
+
+    lecturecast_dir = Path(project_root) / ".lecturecast"
+    runtime_dir = lecturecast_dir / _RUNTIME_DIR_NAME
+    db_path = runtime_dir / _DB_NAME
+
+    # Guard 1: mirror init_database's symlink rejection.
+    for component in (lecturecast_dir, runtime_dir, db_path):
+        if _is_symlink(component):
+            return {"classification": "symlink", "head": None, "writable": False}
+
+    if not db_path.exists():
+        # Guard 2a: first-op init must create runtime/ under .lecturecast/.
+        if not os.access(lecturecast_dir, os.W_OK | os.X_OK):
+            return {"classification": "parent_unwritable", "head": None, "writable": False}
+        # Guard 3: fresh vs prior-use. runtime/ exists (db gone) OR a durable
+        # prior-use signal -> data loss.
+        if runtime_dir.exists() or _prior_heygen_use_detected(lecturecast_dir):
+            return {"classification": "missing_prior_use", "head": None, "writable": True}
+        return {"classification": "fresh", "head": None, "writable": True}
+
+    # Guard 2b (writability): runtime/ writable AND the DB file writable.
+    if not os.access(runtime_dir, os.W_OK | os.X_OK):
+        return {"classification": "runtime_unwritable", "head": None, "writable": False}
+    if not os.access(db_path, os.W_OK):
+        return {"classification": "db_readonly", "head": None, "writable": False}
+
+    # Guards 4+5+6: open read-only and validate version + full column shape.
     try:
-        from .heygen_journal import (
-            _DB_NAME, _RUNTIME_DIR_NAME, _SCHEMA_VERSION, _is_symlink,
-        )
-
-        lecturecast_dir = Path(project_root) / ".lecturecast"
-        runtime_dir = lecturecast_dir / _RUNTIME_DIR_NAME
-        db_path = runtime_dir / _DB_NAME
-
-        # Guard 1: mirror init_database's symlink rejection.
-        for component in (lecturecast_dir, runtime_dir, db_path):
-            if _is_symlink(component):
-                return False
-
-        if not db_path.exists():
-            # Guard 2a: first-op init must create runtime/ under .lecturecast/.
-            if not os.access(lecturecast_dir, os.W_OK | os.X_OK):
-                return False
-            # Guard 3: fresh vs prior-use. runtime/ exists (db gone) OR a
-            # durable prior-use signal -> data loss -> False.
-            if runtime_dir.exists() or _prior_heygen_use_detected(lecturecast_dir):
-                return False
-            return True
-
-        # Guard 2b (writability): runtime/ writable AND the DB file writable.
-        if not os.access(runtime_dir, os.W_OK | os.X_OK):
-            return False
-        if not os.access(db_path, os.W_OK):
-            return False
-
-        # Guards 4+5+6: open read-only and validate version + full column shape.
+        resolved = db_path.resolve().as_posix()
+        uri = "file:" + urllib.parse.quote(resolved) + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=2.0)
+    except (sqlite3.Error, OSError):
+        return {"classification": "unreadable", "head": None, "writable": True}
+    try:
+        head = conn.execute("PRAGMA user_version").fetchone()[0]
+        # Guard 4 (head too new) + Guard 5 (head too old) — distinguished so
+        # doctor can route ahead=BLOCKER vs behind=WARN.
+        if head > _SCHEMA_VERSION:
+            return {"classification": "ahead", "head": head, "writable": True}
+        if head < _SCHEMA_VERSION:
+            return {"classification": "behind", "head": head, "writable": True}
+        # Guard 6: full column-shape match. Table NAMES alone are not enough
+        # (R3-1/R3-2 stub-table repro); compare each table's column set against
+        # the canonical schema from the SAME DDL init_database runs. Cannot
+        # establish canonical -> fail-closed.
+        canonical = _canonical_v6_columns()
+        if canonical is None:
+            return {"classification": "canonical_unavailable", "head": head, "writable": True}
+        live_tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        if not (_V6_JOURNAL_TABLES <= live_tables):
+            return {"classification": "shape_mismatch", "head": head, "writable": True}
+        for table_name, expected_cols in canonical.items():
+            live_cols = frozenset(
+                row[1]
+                for row in conn.execute(f"PRAGMA table_info({table_name})")
+            )
+            if live_cols != expected_cols:
+                return {"classification": "shape_mismatch", "head": head, "writable": True}
+        return {"classification": "current", "head": head, "writable": True}
+    except sqlite3.Error:
+        return {"classification": "unreadable", "head": None, "writable": True}
+    finally:
         try:
-            resolved = db_path.resolve().as_posix()
-            uri = "file:" + urllib.parse.quote(resolved) + "?mode=ro"
-            conn = sqlite3.connect(uri, uri=True, timeout=2.0)
-        except (sqlite3.Error, OSError):
-            return False
-        try:
-            head = conn.execute("PRAGMA user_version").fetchone()[0]
-            if head != _SCHEMA_VERSION:
-                # Guard 4 (head too new) + Guard 5 (head too old).
-                return False
-            # Guard 6: full column-shape match. Table NAMES alone are not
-            # enough (R3-1/R3-2 stub-table repro); compare each table's column
-            # set against the canonical schema from the SAME DDL init_database
-            # runs. Cannot establish canonical -> fail-closed.
-            canonical = _canonical_v6_columns()
-            if canonical is None:
-                return False
-            live_tables = {
-                row[0]
-                for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                )
-            }
-            if not (_V6_JOURNAL_TABLES <= live_tables):
-                return False  # missing one or more required tables
-            for table_name, expected_cols in canonical.items():
-                live_cols = frozenset(
-                    row[1]
-                    for row in conn.execute(f"PRAGMA table_info({table_name})")
-                )
-                if live_cols != expected_cols:
-                    return False  # column drift (missing / extra / renamed)
-            return True
+            conn.close()
         except sqlite3.Error:
-            return False
-        finally:
-            try:
-                conn.close()
-            except sqlite3.Error:
-                pass
+            pass
+
+
+def default_heygen_journal_probe(project_root: Path | str) -> bool:
+    """Locked §5.5e5c gate probe (bool): True iff the journal is in a servable
+    state — classification 'fresh' (first init will succeed) or 'current' (DB
+    at _SCHEMA_VERSION with the full canonical column shape AND writable).
+    Delegates to `_journal_state` (the single source of truth for the guard
+    set, rounds 1-6 hardened — see there for the full rationale). NEVER raises:
+    a top-level fail-closed backstop (round-4 R3-4) guarantees the predicate
+    cannot escape the shared v1.1 capture path and block M1. Read-only
+    (mode=ro URI); creates / migrates / writes nothing. Safe for doctor/canary."""
+    try:
+        return _journal_state(project_root)["classification"] in _JOURNAL_READY
     except Exception:
-        # Top-level fail-closed backstop (round-4 R3-4): the probe is a boolean
-        # predicate whose contract is "never raise" — any uncaught error means
-        # the journal state cannot be established, so configured must not be
-        # reported.
+        # Top-level fail-closed backstop: any uncaught error means the journal
+        # state cannot be established, so configured must not be reported.
         return False
+
+
+def default_heygen_journal_diagnostic(
+    project_root: Path | str,
+) -> dict[str, Any]:
+    """§5.5e5d read-only diagnostic (sibling to the locked gate probe): returns
+    the STRUCTURED journal state so doctor can decompose WHY configured is
+    false. The gate probe collapses to a bool; doctor must instead distinguish
+    'ahead' (BLOCKER — client older than the on-disk journal) from 'behind'
+    (WARN — needs explicit migration) from 'shape_mismatch' /
+    'missing_prior_use' / etc. (BLOCKER). Delegates to the SAME `_journal_state`
+    as the gate probe, so the diagnostic and the gate can never disagree on the
+    classification. NEVER raises — a top-level backstop returns 'unreadable'.
+    Read-only (mode=ro URI); creates / migrates / writes nothing.
+
+    Returns {'classification', 'head', 'writable'} (see _journal_state)."""
+    try:
+        return _journal_state(project_root)
+    except Exception:
+        # Top-level fail-closed backstop (mirrors the gate probe): an
+        # unclassifiable journal state is reported as 'unreadable' so doctor
+        # surfaces a BLOCKER rather than crashing the health path.
+        return {"classification": "unreadable", "head": None, "writable": False}
 
 
 def _default_readable(path: str) -> bool:
@@ -403,25 +477,11 @@ def heygen_processor(
         "api_version": "v3",
         "configured": True,
         "credential_mode": "byo_local",
-        # Operations reflect §5.5e5b0c3c locked primitives (asset/video delete
-        # adapters + DeletionCoordinator now shipped). avatar_delete OMITTED —
-        # no dedicated primitive (ephemeral portrait_photo reuses the
-        # asset_delete path; reusable_avatar is a future dashboard-revoked
-        # lifecycle, structurally inert today — _asset_retention_mode always
-        # 'ephemeral'). Declaring it would be a false capability claim.
-        "operations": [
-            "direct_asset_upload",
-            "photo_avatar",
-            "prerecorded_audio_lipsync",
-            "asset_delete",
-            "video_delete",
-        ],
-        # idempotency_24h: 24h reconcile + asset-upload windows (op_repo:70,3120).
-        # title_query: HeyGenVideosAdapter.query_videos_by_title (videos_adapter:204).
-        # read_only_auth_check: HeyGenAssetAdapter.get_asset docstring designates
-        # it "Used for doctor / manual reconciliation only" — a GET on a known
-        # id distinguishes 401/403 (auth_failed) from 200/404 (key valid).
-        "features": ["idempotency_24h", "title_query", "read_only_auth_check"],
+        # Operations/features sourced from the module-level locked surface
+        # (_HEYGEN_OPERATIONS / _HEYGEN_FEATURES) — see there for the per-op
+        # rationale + the avatar_delete omission.
+        "operations": list(_HEYGEN_OPERATIONS),
+        "features": list(_HEYGEN_FEATURES),
     }
 
 
@@ -599,7 +659,86 @@ def capture_capabilities_v1_1(
     return ClientCapabilitiesV1_1.model_validate(payload)
 
 
-def doctor_report(capabilities: ClientCapabilities) -> dict[str, Any]:
+def build_heygen_doctor_section(
+    *,
+    env: dict[str, str] | None = None,
+    project_root: Path | str | None = None,
+    adapter_probe: Callable[[], bool] = default_heygen_adapter_probe,
+    journal_diagnostic: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """§5.5e5d: decompose the HeyGen capability into a doctor-facing section with
+    BLOCKER/WARN decision logic (mirrors f5-capability-check.md). Read-only; no
+    key value is leaked (only `key_present` bool). The gate probe
+    (default_heygen_journal_probe) collapses the journal state to a bool, but
+    doctor must distinguish WHY configured is false: key_missing /
+    adapter_unimportable / journal_ahead (BLOCKER) vs journal_behind_head
+    (WARN). Returns the SAME operations/features surface heygen_processor
+    reports (sourced from _HEYGEN_OPERATIONS / _HEYGEN_FEATURES) when
+    configured, else empty lists — so doctor and the reported payload cannot
+    disagree on the surface.
+
+    `adapter_probe` and `journal_diagnostic` are injectable for tests; the
+    diagnostic is computed fresh from `project_root` if not supplied."""
+    import os
+
+    sources = env if env is not None else os.environ
+    key_present = bool((sources.get(HEYGEN_API_KEY_ENV) or "").strip())
+    try:
+        adapter_ok = bool(adapter_probe())
+    except Exception:
+        adapter_ok = False
+    if journal_diagnostic is None:
+        journal_diagnostic = (
+            default_heygen_journal_diagnostic(project_root)
+            if project_root is not None
+            else {"classification": "unreadable", "head": None, "writable": False}
+        )
+    classification = journal_diagnostic.get("classification", "unreadable")
+    journal_ready = classification in _JOURNAL_READY
+    configured = key_present and adapter_ok and journal_ready
+
+    blockers: list[str] = []
+    warnings: list[str] = []
+    if not key_present:
+        blockers.append("key_missing")
+    # Adapter + journal failure modes are only meaningful once a key exists;
+    # without one they are redundant (key_missing already blocks).
+    if key_present and not adapter_ok:
+        blockers.append("adapter_unimportable")
+    if key_present and adapter_ok:
+        if classification == "ahead":
+            blockers.append("journal_ahead")
+        elif classification == "behind":
+            warnings.append("journal_behind_head")
+        elif classification not in _JOURNAL_READY:
+            # Every other non-ready classification (missing_prior_use /
+            # shape_mismatch / canonical_unavailable / db_readonly /
+            # runtime_unwritable / unreadable / symlink / parent_unwritable)
+            # is a hard BLOCKER — the journal cannot serve reported operations.
+            blockers.append(f"journal_{classification}")
+
+    return {
+        "provider": "heygen",
+        "configured": configured,
+        "key_present": key_present,
+        "adapter_importable": adapter_ok,
+        "journal": {
+            "classification": classification,
+            "head": journal_diagnostic.get("head"),
+            "writable": bool(journal_diagnostic.get("writable", False)),
+        },
+        "operations": list(_HEYGEN_OPERATIONS) if configured else [],
+        "features": list(_HEYGEN_FEATURES) if configured else [],
+        "blockers": blockers,
+        "warnings": warnings,
+    }
+
+
+def doctor_report(
+    capabilities: ClientCapabilities,
+    *,
+    heygen_section: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     payload = capabilities.model_dump()
     runtime = payload["runtime"]
     missing = [
@@ -630,9 +769,16 @@ def doctor_report(capabilities: ClientCapabilities) -> dict[str, Any]:
             "当前 ffmpeg 缺少 libass；macOS 可运行：brew install ffmpeg-full，"
             "再将 $(brew --prefix ffmpeg-full)/bin 放到本次 PATH 最前面"
         )
-    return {
+    report: dict[str, Any] = {
         "ready": runtime["can_render_locally"] and runtime["has_libass"],
         "missing": missing,
         "next_actions": next_actions,
         "capabilities": payload,
     }
+    # §5.5e5d: v1.1 additive HeyGen doctor section (BLOCKER/WARN decomposition).
+    # top-level `ready` stays M1-runtime-only — a user without a HeyGen key is
+    # still `ready` for the M1 base-video path (M1-independence, spec line 489);
+    # HeyGen readiness is reported separately under `third_party`.
+    if payload.get("schema_version") == "1.1" and heygen_section is not None:
+        report["third_party"] = heygen_section
+    return report
