@@ -437,6 +437,35 @@ def test_default_adapter_probe_fail_closed_on_missing_orchestrator_class(
     assert default_heygen_adapter_probe() is False
 
 
+def test_default_adapter_probe_fail_closed_on_method_stripped_class(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§5.5e5c round-5 (R4-6): a required class resolves as a real type but its
+    entry method is stripped (e.g. a mixed-version install that renamed
+    delete_once). isinstance(type) alone would pass it; the probe must verify
+    each entry method is callable (parallel to the adapter method check)."""
+    import lecturecast.operation_repository as mod
+
+    monkeypatch.delattr(mod.DeleteProcessor, "delete_once", raising=False)
+    assert default_heygen_adapter_probe() is False
+
+
+def test_default_journal_probe_sentinel_directory_marks_prior_use(
+    tmp_path: Path,
+) -> None:
+    """§5.5e5c round-5 (R4-3): the sentinel path exists as a DIRECTORY (so
+    init's best-effort touch raised IsADirectoryError and was swallowed — no
+    sentinel file written). The probe must treat ANY path entry as prior-use
+    (lexists, not isfile), else a later runtime/ deletion over-reports on lost
+    idempotency history."""
+    from lecturecast.heygen_journal import _PRIOR_USE_SENTINEL
+
+    lecturecast_dir = tmp_path / ".lecturecast"
+    lecturecast_dir.mkdir(parents=True)
+    (lecturecast_dir / _PRIOR_USE_SENTINEL).mkdir()  # a directory, not a file
+    assert default_heygen_journal_probe(tmp_path) is False
+
+
 def test_default_journal_probe_malformed_non_object_caps_is_not_ready(
     tmp_path: Path,
 ) -> None:
