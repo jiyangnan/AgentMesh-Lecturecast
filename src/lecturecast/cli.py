@@ -12,6 +12,7 @@ from rich.panel import Panel
 
 from .commands.auth import app as auth_app
 from .commands.agent import app as agent_app
+from .commands.canary import canary
 from .commands.director import app as director_app
 from .commands.doctor import doctor
 from .commands.manifest import app as manifest_app
@@ -33,6 +34,7 @@ app.add_typer(
 )
 app.command()(doctor)
 app.command()(onboard)
+app.command()(canary)
 
 
 def _repo_root() -> Path:
