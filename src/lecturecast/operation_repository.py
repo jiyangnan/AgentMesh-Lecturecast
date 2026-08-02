@@ -3118,45 +3118,66 @@ class OperationRepository:
           - ``manual_force_resources``: every NON-deleted ``heygen_remote_
             resources`` row with ``deletion_reason='manual_force'``. Each needs
             explicit operator action (never auto-recovered).
-          - ``unrecoverable_resources`` (Codex round-5 + round-6): every NON-
-            deleted, NON-manual_force, NON-reusable ``heygen_remote_resources``
-            row in a state NO locked primitive can produce AND the deletion
-            candidate SELECT refuses to drive. Three domains (ALL schema-legal
-            static-corruption states — zero on any producer-valid journal, so the
-            count cannot break a normal exit 0):
+          - ``unrecoverable_resources`` (Codex round-5 + round-6 + round-7): every
+            NON-deleted, NON-manual_force, NON-reusable ``heygen_remote_resources``
+            row the deletion candidate SELECT refuses to drive this sweep. Three
+            domains — ALL legitimately attention-needed (exit 2 is honest; the
+            deletion genuinely cannot proceed this sweep):
               (a) ORPHAN — ``created_by_operation_id IS NULL``. The outer
                   candidate filter requires IS NOT NULL (op_repo:4177/4399), so
                   the row is never swept; and ``heygen_operations`` is never
                   DELETEd (no code path does it), so the FK ``ON DELETE SET
-                  NULL`` never fires in normal flow → primitive-unreachable.
+                  NULL`` never fires in normal flow → primitive-unreachable
+                  (static-corruption class; zero on any producer-valid journal).
               (b) ANOMALOUS STATE-MATRIX — ``(not_started)+(non-NULL reason)``
                   OR ``(deletion_pending|deletion_failed)+(NULL reason)``. The
                   claim is the ONLY primitive that sets a reason + it sets
                   ``deletion_pending`` in the SAME UPDATE, so these states are
-                  primitive-unreachable. Mirrors the candidate SELECT's witness
+                  primitive-unreachable (static-corruption class; zero on any
+                  producer-valid journal). Mirrors the candidate SELECT's witness
                   STATE-MATRIX gate (branch A admits only ``not_started+NULL``
                   and ``(pending|failed)+(post_download|consent_withdrawal)``).
-              (c) Codex round-6 (BROKEN-TOPOLOGY GAP) — a CLAIM-ELIGIBLE
+              (c) Codex round-6 (NO-WITNESS / NON-SELECTABLE) — a CLAIM-ELIGIBLE
                   resource (``pending|failed + post_download|consent_withdrawal``)
-                  with a NORMAL state-matrix but on an op the candidate SELECT
-                  REJECTS: no r2 on the op satisfies the FULL witness predicate
-                  (missing/foreign ref, credential mismatch, active op-lease,
-                  wrong kind, broken upload-binding, etc.). Round-5 counted only
-                  domains (a)+(b); such a resource escapes BOTH (normal state-
-                  matrix) AND the per-op pass (never selected → ``ops_alerted``
-                  stays 0) → round-5 虚报'd exit 0 over it. This is the SAME
-                  static-corruption threat model as (b) (direct INSERT evades
-                  validate-then-INSERT) — NOT the documented journal-replacement
-                  TOCTOU class (the row EXISTS at audit time; no concurrent
-                  mutation). Domain (c) mirrors the FULL witness predicate via
-                  the SHARED ``_DELETION_WITNESS_SUBQUERY_SQL`` constant (the
-                  SAME constant ``recover_deletions``'s candidate SELECT uses) —
-                  eliminating the hand-mirroring drift risk Codex round-4/5
-                  flagged across the 6+ topology classes. (c) is RESTRICTED to
-                  claim-eligible states so a normal in-flight ``not_started+NULL``
-                  pre-video portrait (default sweep deliberately excludes
-                  pre-video assets — the resolver has not released the tail) is
-                  NOT counted.
+                  on an op whose witness predicate is currently UNSATISFIED: no r2
+                  on the op satisfies the FULL witness predicate (broken topology
+                  — missing/foreign ref, credential mismatch, wrong kind, broken
+                  upload-binding; OR an ACTIVE op-lease, which branch B's
+                  ``o.lease_owner IS NULL`` gate rejects; OR no video yet on a
+                  pre-video op). Round-5 counted only domains (a)+(b); such a
+                  resource escapes BOTH (normal state-matrix) AND the per-op pass
+                  (never selected → ``ops_alerted`` stays 0) → round-5 虚报'd
+                  exit 0 over it. Domain (c) covers TWO cases Codex round-7
+                  distinguished:
+                    (c1) STATIC CORRUPTION — broken topology via direct INSERT
+                        evading validate-then-INSERT (the SAME threat model as
+                        (b); primitive-unreachable, zero on producer-valid
+                        journals). NOT the documented journal-replacement TOCTOU
+                        class (the row EXISTS at audit time; no concurrent
+                        mutation).
+                    (c2) TRANSIENT BLOCKED-PENDING (producer-valid) —
+                        ``consent_withdrawal`` cleanup claimed an asset on an op
+                        whose lease is still active (``withdraw`` does NOT clear
+                        the op lease — consent.py:591 UPDATEs only the receipt)
+                        and/or that has no video yet. Branch B's lease gate +
+                        branch A's video requirement make the op non-selectable
+                        THIS sweep; the asset is genuinely pending deletion but
+                        blocked. This is NOT corruption and the count is NOT
+                        guaranteed zero on every producer-valid journal — it is
+                        zero on SETTLED journals and non-zero during the brief
+                        withdrawn-but-leased window, which is CORRECT (the
+                        deletion cannot proceed this sweep; exit 2 is honest).
+                        It auto-resolves: once the lease clears (and a video
+                        appears for post_download), the op becomes selectable,
+                        the coordinator drives it, and the count returns to 0.
+                Domain (c) mirrors the FULL witness predicate via the SHARED
+                ``_DELETION_WITNESS_SUBQUERY_SQL`` constant (the SAME constant
+                ``recover_deletions``'s candidate SELECT uses) — eliminating the
+                hand-mirroring drift risk Codex round-4/5 flagged across the 6+
+                topology classes. (c) is RESTRICTED to claim-eligible states so a
+                normal in-flight ``not_started+NULL`` pre-video portrait (default
+                sweep deliberately excludes pre-video assets — the resolver has
+                not released the tail) is NOT counted.
             Each such row is operator-attention-needed AND invisible to both
             recovery primitives. Without this count, exit 0 would 谎报 "clean"
             over a row the deletion subsystem itself refuses to drive — a direct
@@ -3165,14 +3186,18 @@ class OperationRepository:
 
         NOT counted (in-flight pipeline states that WILL resolve on a future
         sweep — NOT stuck attention): ``deletion_pending`` resources with an
-        auto-recoverable reason (``post_download`` / ``consent_withdrawal``)
-        correctly waiting behind §3.5 video-first ordering; ``not_started+NULL``
-        (fresh resource, never claimed); active ``uploading`` leases (the DB
-        pass's ``left_uploading`` tally already flags these per-sweep). Counting
-        these would make exit 0 unreachable during normal multi-resource
-        consent-withdrawal cleanup (video must delete before assets),
-        conflating "progressing" with "stuck" (Codex round-3 #3 — pushed back:
-        this is §3.5 ordering, not a strand).
+        auto-recoverable reason (``post_download`` / ``consent_withdrawal``) on a
+        SELECTABLE op (witness satisfied) correctly waiting behind §3.5 video-
+        first ordering — the per-op pass will claim them this sweep; ``not_started
+        +NULL`` (fresh resource, never claimed); active ``uploading`` leases (the
+        DB pass's ``left_uploading`` tally already flags these per-sweep). The
+        SAME ``post_download``/``consent_withdrawal`` reason on a NON-selectable
+        op (no witness — leased or pre-video) IS counted — that is domain (c2)
+        above, a genuinely blocked deletion. Counting the selectable-op case
+        would make exit 0 unreachable during normal multi-resource consent-
+        withdrawal cleanup (video must delete before assets), conflating
+        "progressing" with "stuck" (Codex round-3 #3 — pushed back: this is §3.5
+        ordering, not a strand).
 
         Opens ``file:<escaped>?mode=ro`` (mirrors ``capabilities._journal_state``
         at line 340) — creates / migrates / writes NOTHING. Read-only by
@@ -3193,27 +3218,36 @@ class OperationRepository:
                 "SELECT COUNT(*) FROM heygen_remote_resources "
                 "WHERE deletion_reason='manual_force' "
                 "AND deletion_status != 'deleted'").fetchone()[0]
-            # Codex round-5 + round-6 — unrecoverable resources. Three domains,
-            # ALL schema-legal ANOMALOUS / static-corruption states (a producer-
-            # valid journal has ZERO such rows), so counting them CANNOT break a
-            # normal exit 0:
-            #   (a) ORPHAN: ``created_by_operation_id IS NULL``.
+            # Codex round-5 + round-6 + round-7 — unrecoverable resources. Three
+            # domains; (a)/(b) are ZERO on any producer-valid journal, (c) splits:
+            #   (a) ORPHAN: ``created_by_operation_id IS NULL`` (primitive-unreach-
+            #       able; zero on producer-valid).
             #   (b) ANOMALOUS STATE-MATRIX: ``not_started+reason`` OR ``pending/
             #       failed+NULL`` (the claim always sets status+reason in the SAME
-            #       UPDATE — primitive-unreachable). Mirrors the candidate SELECT's
-            #       witness STATE-MATRIX gate.
-            #   (c) Codex round-6 (broken-topology gap): a CLAIM-ELIGIBLE
-            #       resource (``pending/failed + post_download/consent_withdrawal``)
-            #       on an op the candidate SELECT REJECTS — NO r2 on the op
-            #       satisfies the FULL witness predicate (missing/foreign ref,
-            #       credential mismatch, active op-lease, wrong kind, broken
-            #       upload-binding, etc.). Such a resource has a NORMAL state-
-            #       matrix, so it escapes domain (b); it is never selected (so
-            #       ``ops_alerted`` stays 0); round-5 虚报'd exit 0 over it. This
-            #       is the SAME static-corruption threat model as (b) — a direct
-            #       INSERT evades the primitives' validate-then-INSERT — NOT the
-            #       documented journal-replacement TOCTOU class (the row EXISTS at
-            #       audit time; no concurrent mutation is needed).
+            #       UPDATE — primitive-unreachable; zero on producer-valid). Mirrors
+            #       the candidate SELECT's witness STATE-MATRIX gate.
+            #   (c) Codex round-6 (broken-topology gap) + round-7 (c1/c2 split): a
+            #       CLAIM-ELIGIBLE resource (``pending/failed + post_download/
+            #       consent_withdrawal``) on an op the candidate SELECT REJECTS —
+            #       NO r2 on the op satisfies the FULL witness predicate. Such a
+            #       resource has a NORMAL state-matrix (escapes (b)); it is never
+            #       selected (``ops_alerted`` stays 0); round-5 虚报'd exit 0 over
+            #       it. TWO sub-cases, SAME shared-predicate gate:
+            #       (c1) STATIC CORRUPTION: missing/foreign ref, credential mis-
+            #           match, wrong kind, broken upload-binding — a direct INSERT
+            #           evades the primitives' validate-then-INSERT. Primitive-un-
+            #           reachable; zero on producer-valid. SAME threat model as (b).
+            #       (c2) TRANSIENT BLOCKED-PENDING (PRODUCER-VALID, round-7):
+            #           ``withdraw`` enqueues a ``consent_withdrawal`` cleanup on
+            #           the asset BUT does NOT clear the op lease (consent.py:591).
+            #           If the op is leased and has no video witness yet, the asset
+            #           sits ``deletion_pending+consent_withdrawal`` with no witness
+            #           until the lease clears and a future sweep's resolver releases
+            #           the tail. This is NOT corruption — it is an honest transient
+            #           "blocked-pending" the operator may legitimately see mid-
+            #           flight. NOT guaranteed zero on every producer-valid journal;
+            #           only zero on SETTLED journals. Counting it (exit 2) is the
+            #           fail-closed / 宁可少报绝不虚报 choice — never under-report.
             # Mirroring the FULL witness predicate (not just state-matrix) via the
             # SHARED _DELETION_WITNESS_SUBQUERY_SQL constant eliminates the drift
             # risk Codex round-4/5 flagged (hand-mirroring 6+ topology classes by

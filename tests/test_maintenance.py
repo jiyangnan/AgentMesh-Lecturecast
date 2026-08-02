@@ -1364,6 +1364,45 @@ class _HostileBaseExceptionReprKey:
         raise KeyboardInterrupt("repr boom")
 
 
+class _StatefulHashKey:
+    """A key whose ``__hash__`` succeeds ONCE (at dict-insertion) then raises
+    ``KeyboardInterrupt`` on every subsequent call. Codex round-6 blocker:
+    ``_valid_tally``'s ``set(tally.keys())`` RE-HASHES every key; a hostile
+    ``__hash__`` raising ``BaseException`` escapes ``_valid_tally`` (called
+    OUTSIDE the recovery try-block at the DB/deletion boundaries) → exit 1.
+    ``except Exception`` (and even ``except BaseException`` — forbidden, swallows
+    Ctrl+C) cannot soundly close this; round-7 adds a ``type(k) is not str``
+    guard BEFORE any hashing, so the second ``__hash__`` is never invoked."""
+
+    def __init__(self):
+        self._calls = 0
+
+    def __hash__(self):
+        self._calls += 1
+        if self._calls > 1:
+            raise KeyboardInterrupt("hash boom on re-hash")
+        return 42
+
+    def __eq__(self, other):
+        return self is other
+
+
+class _HostileNameMeta(type):
+    """Metaclass whose ``__name__`` access raises ``KeyboardInterrupt``. Codex
+    round-6 blocker: the non-dict diagnostic rendered ``type(x).__name__``; a
+    custom metaclass can make that attribute access raise ``BaseException`` →
+    exit 1. Round-7 drops ``.__name__`` for a fixed ``"non-dict"`` string."""
+
+    def __getattribute__(cls, name):
+        if name == "__name__":
+            raise KeyboardInterrupt("name boom")
+        return super().__getattribute__(name)
+
+
+class _HostileNameValue(metaclass=_HostileNameMeta):
+    pass
+
+
 def test_db_tally_malformed_hostile_repr_key_wrapped_to_skip(
     tmp_path: Path, monkeypatch,
 ) -> None:
@@ -1454,6 +1493,72 @@ def test_db_tally_malformed_baseexception_repr_key_wrapped_to_skip(
     assert report.clean is False
 
     # CLI → exit 2 (NOT exit 1 — len() never invokes the hostile __repr__).
+    result = _run_cli(project)
+    assert result.exit_code == 2
+
+
+def test_db_tally_malformed_stateful_hash_key_wrapped_to_skip(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Codex round-6 blocker / round-7 fix (strict totality): a malformed DB
+    tally carrying a key whose ``__hash__`` succeeds at insertion but raises
+    ``KeyboardInterrupt`` on re-hash. Round-6's ``_valid_tally`` did
+    ``set(tally.keys())`` (re-hashes every key) → ``KeyboardInterrupt`` escapes
+    ``_valid_tally`` (outside the recovery try-block) → exit 1. Round-7 adds a
+    ``type(k) is not str`` guard BEFORE any hashing: iterating a plain dict
+    (``for k in tally``) does NOT hash (builtin ``__iter__``), and ``type(k) is
+    str`` is identity (no ``__eq__``), so the guard cannot raise; the second
+    ``__hash__`` is never invoked → structured exit 2. This test would FAIL
+    under round-6 (KeyboardInterrupt escapes)."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+    bad_db = {_StatefulHashKey(): 0}  # plain dict, non-str key, hostile hash
+
+    def spy(self, *, now_iso):
+        return bad_db
+    monkeypatch.setattr(OperationRepository, "recover_withdrawn_asset_cleanups", spy)
+
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.db_recovery_failed is True
+    assert report.network_skipped is True
+    assert report.db_recovery == {}
+    assert report.skip_reason is not None
+    assert "畸形 tally" in report.skip_reason
+    assert report.clean is False
+
+    # CLI → exit 2 (NOT exit 1 — the type(k)-is-str guard runs before hashing).
+    result = _run_cli(project)
+    assert result.exit_code == 2
+
+
+def test_db_tally_malformed_hostile_name_value_wrapped_to_skip(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Codex round-6 blocker / round-7 fix: a non-dict DB tally whose type's
+    ``__name__`` access raises ``KeyboardInterrupt`` (via a custom metaclass).
+    Round-6's diagnostic rendered ``f"non-dict {type(x).__name__}"`` → the
+    metaclass ``__name__`` descriptor raises → escapes → exit 1. Round-7 drops
+    ``.__name__`` for a fixed ``"non-dict"`` string (``type(x)`` itself reads
+    ob_type at the C level and cannot raise; only the ``.__name__`` attribute
+    lookup is hostile). ``type(x) is not dict`` correctly classifies it as
+    non-dict and the fixed diagnostic never accesses ``.__name__`` → exit 2."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+    bad_db = _HostileNameValue()  # non-dict; type(v).__name__ raises
+
+    def spy(self, *, now_iso):
+        return bad_db
+    monkeypatch.setattr(OperationRepository, "recover_withdrawn_asset_cleanups", spy)
+
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.db_recovery_failed is True
+    assert report.network_skipped is True
+    assert report.db_recovery == {}
+    assert report.skip_reason is not None
+    assert "畸形 tally" in report.skip_reason
+    assert report.clean is False
+
+    # CLI → exit 2 (NOT exit 1 — diagnostic uses fixed "non-dict", no __name__).
     result = _run_cli(project)
     assert result.exit_code == 2
 

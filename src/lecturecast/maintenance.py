@@ -135,8 +135,27 @@ def _valid_tally(tally: object, keys: frozenset[str]) -> bool:
     dict (op_repo inits ``{}`` literals + ``dict`` returns); a strict plain-dict
     check matches that contract and is type-stable against hostile subclasses.
     Mirrors the ``type() is bool/int/str`` discipline used at every other guard.
+
+    Codex round-7 (strict totality, residual of round-4/5/6): ``set(tally.keys())``
+    RE-HASHES every key, and ``__hash__`` is NOT total — a key can implement a
+    ``__hash__`` that raises ``BaseException`` (``KeyboardInterrupt`` /
+    ``SystemExit``) on the SECOND call (the first succeeded at dict-insertion
+    time). That exception would escape ``_valid_tally`` (called OUTSIDE the
+    recovery try-block at the DB/deletion boundaries) as exit 1 — the SAME
+    ``except Exception`` gap round-5's ``_safe_key_repr`` had. Catching
+    ``BaseException`` is forbidden (swallows Ctrl+C). The strictly-total fix: a
+    ``type(k) is not str`` guard BEFORE any hashing. Iterating a plain dict
+    (``for k in tally``) does NOT hash (builtin ``__iter__`` yields keys by their
+    stored slot, not by re-hashing) and ``type(k) is str`` is an identity check
+    (no ``__eq__``), so the guard itself cannot raise. Once every key is a
+    builtin ``str``, ``set(tally.keys())`` hashes only builtin ``str.__hash__``
+    (the C builtin — cannot raise). A non-str key is malformed (the coordinator
+    contract is str keys) → rejected. Mirrors the round-6 diagnostic fix (which
+    dropped ``repr()`` entirely for the same reason).
     """
     if type(tally) is not dict:
+        return False
+    if any(type(k) is not str for k in tally):
         return False
     if set(tally.keys()) != keys:
         return False
@@ -446,7 +465,7 @@ def run_maintenance(
     # half-recovered journal whose DB outcome is unknowable).
     if not _valid_tally(db_tally, _DB_TALLY_KEYS):
         if type(db_tally) is not dict:
-            got = f"non-dict {type(db_tally).__name__}"
+            got = "non-dict"
         else:
             # Codex round-6 (G1 residual, strictly-total fix): do NOT introspect
             # malformed keys via ``repr()``. ``repr()`` is NOT total — a key can
@@ -462,8 +481,16 @@ def run_maintenance(
             # count); the skip_reason already states the expected key set, and a
             # malformed tally is a programming error caught in tests (its exact
             # keys carry no operational value for the operator action: run
-            # doctor). ``type(x).__name__`` for the non-dict branch is the same
-            # builtin-safe pattern used at lines 379/384/389.
+            # doctor).
+            #
+            # Codex round-7: the non-dict branch uses a FIXED ``"non-dict"``
+            # string, NOT ``type(x).__name__``. ``__name__`` is NOT total either
+            # — a metaclass can implement ``__name__`` as a descriptor that
+            # raises ``BaseException`` on read (``type(x).__name__`` invokes the
+            # metaclass ``__getattribute__``). A fixed string cannot raise;
+            # "non-dict" is enough for the operator action (run doctor). This
+            # mirrors the ``_valid_tally`` str-guard (only C-builtin ops that
+            # provably cannot raise).
             got = f"dict 含 {len(db_tally)} 键"
         return MaintenanceReport(
             db_recovery={},
@@ -545,7 +572,7 @@ def run_maintenance(
     # this as a backstop.
     if not _valid_tally(del_tally, _DEL_TALLY_KEYS):
         if type(del_tally) is not dict:
-            got = f"non-dict {type(del_tally).__name__}"
+            got = "non-dict"
         else:
             # Codex round-6 (G1 residual, strictly-total): symmetric with the
             # DB-tally diagnostic above — do NOT ``repr()`` malformed keys
