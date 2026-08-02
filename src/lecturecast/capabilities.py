@@ -38,8 +38,9 @@ def _not_available() -> bool:
 
 def default_heygen_adapter_probe() -> bool:
     """Real HeyGen adapter probe (§5.5e5c): the three shipped adapter modules
-    import cleanly, expose their key classes, AND each class exposes the
-    methods backing the reported operations. Presence-only — proves the adapter
+    import cleanly, expose their key classes, each class exposes the CALLABLE
+    methods backing the reported operations, AND the journal-backed processor
+    / orchestrator module imports. Presence-only — proves the adapter + executor
     code is importable + structurally intact on this host, not that the network
     authenticates or that a key is configured (the key is gated separately in
     heygen_processor). Used by production capture call sites (director generate
@@ -53,11 +54,12 @@ def default_heygen_adapter_probe() -> bool:
     depend on HeyGen (Codex round-1 qualification on M1 independence)."""
     import importlib
 
-    # class -> required public methods (§5.5e5b0c3c locked primitives). Class
-    # resolution alone is NOT enough: a partial / mixed-version install could
-    # expose the class without the backing method, and the server would bill
-    # an operation the client cannot serve (e.g. HeyGenVideosAdapter present
-    # but delete_video / query_videos_by_title stripped).
+    # class -> required CALLABLE public methods (§5.5e5b0c3c locked primitives).
+    # Class resolution alone is NOT enough, and neither is `is not None`: a
+    # partial / mixed-version install could expose the class without the backing
+    # method, OR set the attribute to a non-callable. Either way the server
+    # would bill an operation the client cannot serve (e.g. HeyGenVideosAdapter
+    # present but delete_video stripped, or set to a non-callable value).
     required = (
         ("lecturecast.heygen_http", "HeyGenHttpTransport",
          ("request_json", "request_multipart_file")),
@@ -75,34 +77,83 @@ def default_heygen_adapter_probe() -> bool:
         if cls is None:
             return False
         for method in methods:
-            if getattr(cls, method, None) is None:
+            if not callable(getattr(cls, method, None)):
                 return False
+    # The journal-backed processors + orchestrator that actually EXECUTE the
+    # reported operations (AssetUploadProcessor, DeleteProcessor,
+    # AssetDeletionProcessor, ReconcileProcessor, OperationRepository) live in
+    # operation_repository. A mixed install could ship the adapters without it;
+    # verify the module imports.
+    try:
+        importlib.import_module("lecturecast.operation_repository")
+    except Exception:
+        return False
     return True
 
 
+# The full v6 journal schema (heygen_journal CREATE TABLE set). The probe
+# requires ALL of these for a head==_SCHEMA_VERSION DB — version alone does
+# not prove the tables exist (manual PRAGMA / partial copy / corruption).
+_V6_JOURNAL_TABLES = frozenset({
+    "heygen_operations",
+    "heygen_consent_receipts",
+    "heygen_remote_resources",
+    "heygen_resource_operation_refs",
+    "heygen_asset_uploads",
+})
+
+
+def _prior_heygen_use_detected(lecturecast_dir: Path) -> bool:
+    """Stable prior-use signal for the missing-journal case (round-2 gap B3):
+    read client-capabilities.json (stored by ProjectStore at .lecturecast/,
+    OUTSIDE runtime/, so it survives deletion of the whole runtime dir). If
+    the project ever reported configured HeyGen, a now-missing journal is data
+    loss, not a fresh project. Read-only; any read failure is treated as
+    prior-use (fail-closed)."""
+    import json
+
+    caps_path = lecturecast_dir / "client-capabilities.json"
+    if not caps_path.exists():
+        return False
+    try:
+        data = json.loads(caps_path.read_text(encoding="utf-8"))
+    except Exception:
+        return True  # unreadable prior caps + missing journal -> conservative
+    return any(
+        processor.get("provider") == "heygen" and processor.get("configured")
+        for processor in (data.get("third_party_processors") or [])
+    )
+
+
 def default_heygen_journal_probe(project_root: Path | str) -> bool:
-    """Real HeyGen journal probe (§5.5e5c, round-2 hardened), READ-ONLY: is the
+    """Real HeyGen journal probe (§5.5e5c, round-3 hardened), READ-ONLY: is the
     journal DB in a state the current client can actually serve? Mirrors the
-    readiness path of init_database (heygen_journal.init_database) WITHOUT ever
-    creating, writing, or migrating. Four fail-closed guards:
+    readiness path of init_database WITHOUT ever creating, writing, or
+    migrating. Six fail-closed guards:
 
     1. Symlink mirror: if .lecturecast / runtime / db is itself a symlink ->
-       False (init_database rejects symlinks at heygen_journal:406; reporting
-       ready would over-claim against an init that will raise).
-    2. Prior-use vs fresh: a MISSING db is ready only if the runtime dir was
-       never created. runtime/ exists but the db is gone means the journal was
-       initialized before and has since been deleted -> prior remote resources
-       are unrecoverable -> False (do not over-report idempotency_24h / delete
-       capability on a state whose history is lost).
-    3. Refuse-downgrade: PRAGMA user_version > _SCHEMA_VERSION -> False
-       (init_database raises; genuinely incompatible).
-    4. Schema shape, not just version: a db whose user_version was set without
-       the tables (manual PRAGMA, partial copy, corruption) would pass a
-       version-only probe but the first op would fail "no such table". Verify
-       the core resource table exists in sqlite_master.
+       False (init_database rejects symlinks at heygen_journal:406).
+    2. Writability: init creates runtime/ + WAL + BEGIN IMMEDIATE, so a path
+       that is readable but NOT writable would pass a read-only probe yet fail
+       every operation. Require W_OK|X_OK on the relevant parent.
+    3. Prior-use vs fresh (missing db): ready only if NEVER used. runtime/
+       exists (db gone) OR the stored client-capabilities.json once reported
+       configured HeyGen (the caps file lives outside runtime/ and survives its
+       deletion) -> prior-use data loss -> False.
+    4. Refuse-downgrade: PRAGMA user_version > _SCHEMA_VERSION -> False.
+    5. Refuse-mixed-version: user_version < _SCHEMA_VERSION -> False. A legit
+       prior-version DB CAN be migrated, but the probe cannot cheaply verify
+       the prior-version schema is complete enough to migrate without failing
+       (a partial old schema can advance user_version yet leave an unusable
+       DB). Fail-closed; the doctor / canary path (§5.5e5d) provides explicit
+       migration so the billing path never depends on an upgrade succeeding.
+    6. Schema shape: head == _SCHEMA_VERSION requires ALL v6 tables in
+       sqlite_master (not just user_version / one core table).
 
     Opens `file:<escaped>?mode=ro` (URI) so project paths containing '?', '#',
-    or spaces are not mis-parsed. Safe for doctor/canary (read-only constraint)."""
+    or spaces are not mis-parsed. resolve() is wrapped (OSError / symlink-loop
+    guarded). Safe for doctor/canary (read-only constraint)."""
+    import os
     import urllib.parse
 
     from .heygen_journal import (
@@ -119,20 +170,32 @@ def default_heygen_journal_probe(project_root: Path | str) -> bool:
             return False
 
     if not db_path.exists():
-        # Guard 2: fresh-missing (ready) vs deleted-after-prior-use (fail-closed).
-        # runtime_dir is created only by init_database; its presence means a prior
-        # init ran, so a missing db is data loss, not a fresh project.
-        return not runtime_dir.exists()
+        # Guard 2 (writability, missing-db branch): first-op init must create
+        # runtime/ under .lecturecast/.
+        if not os.access(lecturecast_dir, os.W_OK | os.X_OK):
+            return False
+        # Guard 3: fresh vs prior-use. runtime/ exists (db gone) OR stored caps
+        # once claimed configured HeyGen -> prior-use data loss.
+        if runtime_dir.exists() or _prior_heygen_use_detected(lecturecast_dir):
+            return False
+        return True
 
-    # Guards 3+4: open read-only and validate version + schema shape.
-    uri = "file:" + urllib.parse.quote(db_path.resolve().as_posix()) + "?mode=ro"
+    # Guard 2 (writability, db-exists branch): every processor writes (WAL +
+    # BEGIN IMMEDIATE + journal rows) under runtime/.
+    if not os.access(runtime_dir, os.W_OK | os.X_OK):
+        return False
+
+    # Guards 4+5+6: open read-only and validate version + full schema shape.
     try:
+        resolved = db_path.resolve().as_posix()
+        uri = "file:" + urllib.parse.quote(resolved) + "?mode=ro"
         conn = sqlite3.connect(uri, uri=True, timeout=2.0)
-    except sqlite3.Error:
+    except (sqlite3.Error, OSError):
         return False
     try:
         head = conn.execute("PRAGMA user_version").fetchone()[0]
-        if head > _SCHEMA_VERSION:
+        if head != _SCHEMA_VERSION:
+            # Guard 4 (head too new) + Guard 5 (head too old).
             return False
         tables = {
             row[0]
@@ -140,7 +203,7 @@ def default_heygen_journal_probe(project_root: Path | str) -> bool:
                 "SELECT name FROM sqlite_master WHERE type='table'"
             )
         }
-        return "heygen_remote_resources" in tables
+        return _V6_JOURNAL_TABLES <= tables
     except sqlite3.Error:
         return False
     finally:
