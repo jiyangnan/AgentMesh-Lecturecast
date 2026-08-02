@@ -300,6 +300,27 @@ Codex round-5 复审裁定 **NOT LOCKABLE**，2 blocker（G2 attention 边界 + 
 
 **待 Codex round-6 锁定复审**（effort=low，invariant-completeness framing：2 blocker 闭合是否穷举 —— (1) diagnostic 是否真的无 `repr()` 残留（grep 确认）、`len()` on plain dict 是否 builtin-safe；(2) domain (c) 的 `NOT EXISTS(<共享谓词>)` 是否与候选 SELECT 的 `EXISTS(<共享谓词>)` 严格对偶、外层别名 `r` 是否一致、范围限定（只 claim-eligible）是否避免假阳性；残留猎：共享常量抽取是否引入新 drift、是否有 claim-eligible 态仍被 domain c 漏计、是否有正常态被 domain c 误计）。
 
+### 1.13b round-7 闭合（Codex round-6 NOT LOCKABLE，1 blocker + 1 doc nuance）
+
+Codex round-6 复审裁定 **NOT LOCKABLE**，1 code blocker（B2 共享谓词 + domain c 确认 sound；scope-reversal 确认 consistent；control test 确认 correct）+ 1 doc-only nuance。blocker 成立：
+
+| # | Codex round-6 blocker | round-7 闭合 |
+|---|----------------------|--------------|
+| B1 | round-6 删了 diagnostic 的 `repr()`，但 `_valid_tally`（在 diagnostic **之前**跑、且在 `_valid_tally → True` 后 diagnostic 才跑）仍调 `set(tally.keys())` —— 这会**重新 hash 每个键**。一个 `__hash__` 抛 `KeyboardInterrupt`（BaseException）的键会在 `set()` 构造期逃逸为 exit 1（`except Exception` 兜不住；catch `BaseException` 被禁）。同理 diagnostic 的 non-dict 分支 `type(x).__name__` —— 一个 metaclass 把 `__name__` 实现为抛 `KeyboardInterrupt` 的 descriptor 时，`.__name__` 读取也逃逸。即 round-6 的 "diagnostic 不调 repr" 只堵了 **repr** 这一个洞，`__hash__` / `__name__` 两个同族洞仍在 | **C-builtin-only 严格 total 修**（治本，非 whack-a-mole）：`_valid_tally` 在 hash 任一键**之前**加守卫 `if any(type(k) is not str for k in tally): return False`。论证链（全部 C-builtin，provably 不能抛）：(i) 迭代 plain dict 的 builtin `__iter__` 按 stored slot 产出，**不**调键的 `__hash__`/`__eq__`；(ii) `type(k) is not str` 是**身份比较**（`is`），不调 `__eq__`/`__hash__`；(iii) 一旦确认每个键都是 builtin `str`（`type(k) is str`），后续 `set(tally.keys())` 只 hash `str.__hash__`（C builtin，不能抛）。diagnostic non-dict 分支：`type(x).__name__` → 固定字符串 `"non-dict"`（不读 metaclass descriptor）。两 probe 先复现（`_StatefulHashKey`：`__hash__` 成功一次后抛 `KeyboardInterrupt`；`_HostileNameValue(metaclass=_HostileNameMeta)`：metaclass `__getattribute__("__name__")` 抛 `KeyboardInterrupt`）确认 round-6 下两洞都逃逸 exit 1，round-7 修后两 probe 都 exit 2 |
+
+> **round-7 元教训（totality whack-a-mole 的治本）**：round-4 `repr()` → round-5 `except Exception` → round-6 删 repr 改 `len()` → round-6 仍漏 `__hash__`/`__name__`。每次堵一个 dunder，下一个冒头。治本不是 "再堵一个"，而是**只调 provably 不能抛的 C-builtin 操作**（`type()` / `len()` / 身份 `is` / plain-dict builtin `__iter__`），并守卫在调任何可能触发用户 dunder 的操作**之前**。`_valid_tally` 的 str-guard 就是这个模式：先 `type(k) is str`（builtin 身份，不触发 dunder），确认全是 builtin str 后才允许后续 hash（此时只可能是 `str.__hash__`，C builtin）。这与 c3 的 "claim↔apply 跨 tx 逐字段镜像" 同构 —— 不能只堵被点名的那个字段/dunder，要穷举整族。
+
+> **doc-only nuance（domain c 文档过度声称）**：Codex round-6 item-4 指出 round-6 docstring/SQL COMMENT 把 domain (c) 描述为 "exclusively static corruption / primitive-unreachable, zero on any producer-valid journal" —— 这**不准确**。`withdraw`（consent.py:591）只 UPDATE receipt，**不清 op lease**；若 op 仍 leased 且无 video witness，被 enqueue 的 `consent_withdrawal` cleanup 资产会停在 `deletion_pending+consent_withdrawal` 且无 witness，直到 lease 清除 + resolver 释 tail。这是 **producer-valid 的瞬态 blocked-pending**（非 corruption），count **不保证**在每个 producer-valid journal 上为 0 —— 只在 SETTLED journal 上为 0。Codex 裁定 "no code fix required for the stated invariant; a documentation correction is warranted"。round-7 已修：把 domain (c) 拆成 (c1) static corruption（primitive-unreachable，producer-valid 上恒 0）+ (c2) transient blocked-pending（producer-valid，仅 SETTLED 上为 0；exit 2 是 fail-closed / 宁可少报绝不虚报 的诚实选择）。docstring + SQL COMMENT + "NOT counted" 段落均加 c1/c2 区分 + selectability 交叉引用。
+
+**round-7 改动** ——
+1. `src/lecturecast/maintenance.py`：`_valid_tally`（~line 122）加 `if any(type(k) is not str for k in tally): return False`（在 `set(tally.keys()) != keys` **之前**）；docstring 记 C-builtin 论证链（iter 不 hash / `is` 不调 dunder / builtin str 的 `str.__hash__` 不能抛）。DB-tally diagnostic non-dict 分支 `type(x).__name__` → `"non-dict"`（不读 metaclass）。
+2. `src/lecturecast/operation_repository.py`：`count_recovery_attention` docstring（~3121-3185）domain (c) 拆 c1/c2 + "NOT counted" 段加 selectability 交叉引用；SQL COMMENT（~3217）同步 c1/c2 + 删 "a producer-valid journal has ZERO such rows" 过度声称（改为 (a)/(b) zero on producer-valid, (c) splits）。
+3. 无 CLI 改动（round-6 已加 "断裂拓扑" 措辞，c1/c2 是 lib 内部区分，operator 仍只见 unrecoverable_resources 计数 + run-doctor skip_reason）。
+
+**round-7 测试加固（109 → 111 测，+2）** —— `test_db_tally_malformed_stateful_hash_key_wrapped_to_skip`（B1 hash 洞：`_StatefulHashKey` 的 `__hash__` 成功一次后抛 `KeyboardInterrupt` → round-6 `set(keys)` 在第二次 hash 逃逸 exit 1；round-7 str-guard 先拒（非 str 键）→ exit 2 非 1）；`test_db_tally_malformed_hostile_name_value_wrapped_to_skip`（B1 name 洞：`_HostileNameValue(metaclass=_HostileNameMeta)` 的 metaclass `__getattribute__("__name__")` 抛 `KeyboardInterrupt` → round-6 diagnostic `type(x).__name__` 逃逸 exit 1；round-7 改固定 `"non-dict"` → exit 2 非 1）。两 RED-then-GREEN probe 先复现 round-6 漏洞再验证 round-7 闭合。全量 **1169 测全绿**（1167 + 2 新，零回归）。
+
+**待 Codex round-7 锁定复审**（effort=low，invariant-completeness framing：B1 闭合是否穷举 —— (1) `_valid_tally` 的 str-guard 是否真的在 hash 任何键之前跑、`type(k) is str` 是否真的不调 dunder、builtin str 的 `str.__hash__` 是否真的不能抛；(2) diagnostic non-dict 分支改 `"non-dict"` 后是否还有任何残留 `.__name__` / `repr()` / 用户 dunder 调用；残留猎：`_valid_tally` 是否还有第 3 个 totality 洞（如 `tally.values()` 的 `type(v) is int` 是否 builtin-safe、`v >= 0` 是否调 `__ge__`）；doc c1/c2 区分是否与 consent.py:591 实际行为一致）。
+
 ---
 
 ## 2. 盲预测（实现前先写死的契约）
