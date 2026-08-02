@@ -744,19 +744,29 @@ def _stored_heygen_still_live(
 
     No HeyGen claim in the stored document -> nothing to invalidate -> True.
     Only the v1.1 path stores third_party_processors, so this is a no-op for
-    v1.0 snapshots."""
-    payload = document.model_dump()
-    heygen_configured = any(
-        processor.get("provider") == "heygen" and processor.get("configured")
-        for processor in (payload.get("third_party_processors") or [])
-    )
-    if not heygen_configured:
-        return True
-    live = heygen_processor(
-        adapter_probe=default_heygen_adapter_probe,
-        journal_probe=lambda: default_heygen_journal_probe(directory),
-    )
-    return live is not None
+    v1.0 snapshots.
+
+    Round-4 R3-4: top-level fail-closed backstop — the predicate never raises.
+    If liveness cannot be established (probe raises unexpectedly), treat the
+    snapshot as stale so the caller drops it and re-captures (omitting HeyGen)
+    rather than billing on a snapshot whose live state is unknown."""
+    try:
+        payload = document.model_dump()
+        heygen_configured = any(
+            isinstance(processor, dict)
+            and processor.get("provider") == "heygen"
+            and processor.get("configured")
+            for processor in (payload.get("third_party_processors") or [])
+        )
+        if not heygen_configured:
+            return True
+        live = heygen_processor(
+            adapter_probe=default_heygen_adapter_probe,
+            journal_probe=lambda: default_heygen_journal_probe(directory),
+        )
+        return live is not None
+    except Exception:
+        return False
 
 
 @app.command("generate")

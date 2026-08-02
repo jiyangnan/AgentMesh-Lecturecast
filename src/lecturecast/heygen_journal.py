@@ -28,10 +28,28 @@ from pathlib import Path
 _SCHEMA_VERSION = 6
 _RUNTIME_DIR_NAME = "runtime"
 _DB_NAME = "heygen-operations.db"
+# §5.5e5c round-4: durable prior-use marker. Lives at .lecturecast/heygen.used
+# — OUTSIDE runtime/ — so it survives wholesale deletion of runtime/ AND any
+# later overwrite of client-capabilities.json (the other prior-use signal,
+# which is a mutable snapshot and therefore non-monotonic). Once init_database
+# has run here, the capability probe treats a missing journal as data loss,
+# not a fresh project. Read-only on the probe side; the doctor (§5.5e5d) owns
+# reset.
+_PRIOR_USE_SENTINEL = "heygen.used"
 
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _mark_prior_use(lecturecast_dir: Path) -> None:
+    """Touch the durable prior-use sentinel (best-effort). A failure to write
+    it does not block init — the journal + runtime/ remain the operational
+    signal; the sentinel is the cross-deletion durability layer."""
+    try:
+        (lecturecast_dir / _PRIOR_USE_SENTINEL).touch()
+    except OSError:
+        pass
 
 
 def _is_symlink(p: Path) -> bool:
@@ -451,4 +469,8 @@ def init_database(project_dir: Path | str) -> sqlite3.Connection:
         raise
 
     _chmod_secure(db_path)
+    # §5.5e5c round-4: record durable prior-use so the capability probe can
+    # distinguish "fresh project, never used HeyGen" from "journal deleted
+    # after prior use (data loss)" even after runtime/ is removed wholesale.
+    _mark_prior_use(lecturecast_dir)
     return conn
