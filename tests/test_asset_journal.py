@@ -398,6 +398,28 @@ class TestConsentWithdrawalCleanup:
         finally:
             conn.close()
 
+    def test_preexisting_manual_counted_as_manual_not_kept(self):
+        """Codex e5d-c round-2 B2: a pre-existing manual_reconciliation_required
+        row (already docked manual by a prior crash/recovery) is counted under
+        ``manual`` (NOT ``kept``). ``manual`` = 'rows needing human
+        reconciliation' (whether flipped this sweep OR pre-existing); ``kept``
+        is reserved for resolved/terminal idempotent rows. Previously this was
+        conflated into ``kept``, hiding pre-existing manual rows from
+        maintenance.clean's exit-0 gate (over-claim)."""
+        conn, td = _db()
+        try:
+            conn.execute("BEGIN"); _add_parent_op(conn)
+            repo = OperationRepository(Path(td))
+            self._insert_upload(
+                conn, upload_id="u_manual", status="manual_reconciliation_required")
+            _withdraw_op(conn)
+            tally = repo.enqueue_consent_withdrawal_cleanup_in_tx(
+                conn, parent_operation_id="op1", now_iso=NOW)
+            assert tally["manual"] == 1
+            assert tally["kept"] == 0
+        finally:
+            conn.close()
+
     def test_reconciliation_without_resource_is_manual(self):
         conn, td = _db()
         try:

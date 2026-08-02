@@ -10,12 +10,18 @@ report. ``--force`` forwards a literal bool to the coordinator
 Exit codes (audit M2 — maintenance mutates remote state, so its exit code
 carries a stronger contract than doctor's always-0 diagnostic):
 
-  0 — clean full sweep (network ran, zero failures / alerts)
-  2 — partial failure (some ops failed/alerted) OR the network pass was
-      skipped (non-current journal, missing/whitespace HEYGEN_API_KEY, or
-      ``recover_deletions`` raised). db_recovery may still be non-empty.
-  1 — reserved for harness exceptions (raised before ``emit``; never reached
-      post-m3 because the lib wraps ``recover_deletions`` into a skip report).
+  0 — clean full sweep (DB pass OK, network ran, zero failures / alerts /
+      zero pending manual / left_uploading).
+  2 — partial failure (some ops failed/alerted/skipped/not-advanced) OR
+      pending DB-side work (manual / left_uploading > 0) OR the network pass
+      was skipped (non-current journal, missing/whitespace HEYGEN_API_KEY, DB
+      pass raised → ``db_recovery_failed``, or ``recover_deletions`` raised /
+      returned a malformed/non-dict tally). db_recovery may still be non-empty.
+  1 — reserved for programming/harness errors raised BEFORE ``emit``: a bad
+      lib-boundary arg (non-bool force, non-int lease_seconds, non-str
+      now_iso/lease_owner) from a DIRECT lib call raises ValueError before a
+      report exists. The CLI itself constructs valid values, so exit 1 is never
+      reached via the CLI leaf — only via direct ``run_maintenance`` misuse.
 """
 from __future__ import annotations
 

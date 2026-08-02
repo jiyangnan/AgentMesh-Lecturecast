@@ -541,8 +541,10 @@ def test_report_clean_property_matrix() -> None:
       - DB-side manual/left_uploading both zero.
     Static matrix over the report shape so the CLI exit-code contract cannot
     drift from the property."""
-    # Base: clean full sweep.
+    # Base: clean full sweep. Both tallies must be well-formed (round-2: db
+    # shape enforced too — db_recovery={} no longer passes as clean).
     assert MaintenanceReport(
+        db_recovery=dict(_EMPTY_DB_TALLY),
         deletion_recovery=dict(_CLEAN_DEL_TALLY), force=False).clean is True
     # network_skipped → not clean.
     assert MaintenanceReport(
@@ -565,7 +567,15 @@ def test_report_clean_property_matrix() -> None:
     # blocker 1: the attempted==deleted predicate is what catches it).
     assert MaintenanceReport(
         deletion_recovery=dict(_BUSY_DEL_TALLY), force=False).clean is False
-    # DB-side pending work → not clean (Codex round-1 blocker 2).
+    # deleted > attempted (inverted/impossible tally) → not clean (round-2
+    # defense-in-depth; the coordinator can never produce it, but a malformed
+    # return must not pass).
+    inverted = dict(_CLEAN_DEL_TALLY)
+    inverted["deleted"] = 2  # attempted stays 1
+    assert MaintenanceReport(deletion_recovery=inverted, force=False).clean is False
+    # DB-side pending work → not clean (Codex round-1 blocker 2). Pre-existing
+    # manual now counts under `manual` (op_repo:2995 round-2 fix) so this gates
+    # BOTH newly-flipped + pre-existing manual rows.
     assert MaintenanceReport(
         db_recovery=dict(_MANUAL_DB_TALLY),
         deletion_recovery=dict(_CLEAN_DEL_TALLY), force=False).clean is False
@@ -576,15 +586,33 @@ def test_report_clean_property_matrix() -> None:
     # (a silent no-op that looks like success — Codex round-1 empty-tally gap).
     assert MaintenanceReport(
         deletion_recovery={}, network_skipped=False, force=False).clean is False
-    # shape: missing a key → not clean.
-    short = {k: v for k, v in _CLEAN_DEL_TALLY.items() if k != "skipped"}
+    # shape: db_recovery empty {} → not clean (round-2: 5-key DB shape enforced;
+    # missing manual/left_uploading can no longer default-to-zero as clean).
     assert MaintenanceReport(
-        deletion_recovery=short, force=False).clean is False
-    # shape: extra key → not clean.
+        db_recovery={}, deletion_recovery=dict(_CLEAN_DEL_TALLY),
+        force=False).clean is False
+    # shape: deletion_recovery missing a key → not clean.
+    short = {k: v for k, v in _CLEAN_DEL_TALLY.items() if k != "skipped"}
+    assert MaintenanceReport(deletion_recovery=short, force=False).clean is False
+    # shape: deletion_recovery extra key → not clean.
     extra = dict(_CLEAN_DEL_TALLY)
     extra["phantom"] = 0
-    assert MaintenanceReport(
-        deletion_recovery=extra, force=False).clean is False
+    assert MaintenanceReport(deletion_recovery=extra, force=False).clean is False
+    # shape: deletion_recovery non-dict (None/list/str) → not clean, TYPE-STABLE
+    # (no AttributeError) — Codex round-2 blocker 2.
+    for bad in (None, ["ops_driven"], "ops_driven", 42):
+        assert MaintenanceReport(
+            deletion_recovery=bad, force=False).clean is False, bad  # type: ignore[arg-type]
+    # shape: deletion_recovery negative / non-int values → not clean (round-2:
+    # value validation; a real coordinator can't produce negatives, but a
+    # malformed return must not pass). bool is rejected (int subclass).
+    neg = dict(_CLEAN_DEL_TALLY)
+    neg["attempted"] = -1
+    neg["deleted"] = -1
+    assert MaintenanceReport(deletion_recovery=neg, force=False).clean is False
+    boolval = dict(_CLEAN_DEL_TALLY)
+    boolval["deleted"] = True  # type: ignore[dict-item]
+    assert MaintenanceReport(deletion_recovery=boolval, force=False).clean is False
 
 
 # ===========================================================================
@@ -846,3 +874,170 @@ def test_m1_every_non_current_class_skips_without_sentinel(
     # M1 core: the sentinel + DB were NOT created (init never ran).
     assert not (tmp_path / SENTINEL_REL).exists(), cls
     assert not (tmp_path / DB_REL).exists(), cls
+
+
+# ===========================================================================
+# Codex round-3 — non-dict/malformed tally wrapped type-stably (blocker 2)
+# ===========================================================================
+
+@pytest.mark.parametrize("bad_return", [None, ["ops_driven"], "ops_driven", 42, object()])
+def test_recover_deletions_non_dict_wrapped_to_skip(
+    tmp_path: Path, monkeypatch, bad_return,
+) -> None:
+    """Codex round-2 blocker 2 (type-stability): recover_deletions returning a
+    NON-dict (None / list / str / int / arbitrary object) must NOT raise
+    AttributeError out of the recovery try-block as an exit-1 escape. The
+    _valid_tally shape check is type-stable — a non-dict becomes a structured
+    skip report (network_skipped=True, deletion_recovery={}, clean=False) →
+    exit 2. The db_tally is preserved (DB pass committed)."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+
+    def bad(self, **kw):
+        return bad_return
+    monkeypatch.setattr(DeletionCoordinator, "recover_deletions", bad)
+
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.network_skipped is True
+    assert report.deletion_recovery == {}  # rejected → not surfaced
+    assert report.db_recovery == dict(_EMPTY_DB_TALLY)  # DB pass still committed
+    assert report.skip_reason is not None
+    assert "畸形 tally" in report.skip_reason
+    assert report.clean is False
+
+    # CLI → exit 2 (NOT exit 1 — the escape Codex flagged).
+    result = _run_cli(project)
+    assert result.exit_code == 2
+
+
+@pytest.mark.parametrize("bad_values", [
+    {"attempted": -1, "deleted": -1},  # negative
+    {"attempted": "1", "deleted": "1"},  # non-int (str)
+    {"attempted": True, "deleted": True},  # bool (int subclass, must be rejected)
+])
+def test_recover_deletions_bad_value_types_wrapped_to_skip(
+    tmp_path: Path, monkeypatch, bad_values,
+) -> None:
+    """Codex round-2 blocker 2 (value validation): a dict with the right 8 keys
+    BUT negative / non-int / bool values is rejected (a real coordinator can't
+    produce these, but a malformed return must not pass as clean). Wrapped to a
+    structured skip report → exit 2."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+
+    # Build an 8-key tally then corrupt the value types.
+    tally = dict(_CLEAN_DEL_TALLY)
+    tally.update(bad_values)
+
+    def spy(self, **kw):
+        return dict(tally)
+    monkeypatch.setattr(DeletionCoordinator, "recover_deletions", spy)
+
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.network_skipped is True
+    assert report.skip_reason is not None
+    assert "畸形 tally" in report.skip_reason
+    assert report.clean is False
+
+
+# ===========================================================================
+# Codex round-3 — pre-existing manual row gates clean (B2 end-to-end)
+# ===========================================================================
+
+def test_m2_exit_2_on_preexisting_manual(tmp_path: Path, monkeypatch) -> None:
+    """Codex round-2 B2 (end-to-end): a PRE-EXISTING manual_reconciliation_required
+    asset row (docked manual by a PRIOR sweep, not this one) gates clean →
+    exit 2. The locked enqueue now counts pre-existing manual under ``manual``
+    (op_repo:2995 round-2 fix), so clean's existing ``db.get('manual',0)`` gate
+    catches it. Seeds a manual row directly, runs the REAL DB pass (no spy) +
+    stubs the network pass clean — the only not-clean dimension is the
+    pre-existing manual row."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+    op_id = _grant_parent(project, assets=(("portrait_photo", D_PORT),))
+    conn = _fresh_conn(project)
+    try:
+        conn.execute("BEGIN")
+        _add_uploaded_asset(conn, op_id=op_id, role="portrait_photo", remote_id="p1")
+        # Withdraw the receipt (so the op becomes a recovery candidate), THEN
+        # dock the asset manual — the shape left by a PRIOR partial recovery
+        # that already enqueued cleanup + flipped this asset to manual.
+        _withdraw_op(conn, op_id)
+        conn.execute(
+            "UPDATE heygen_asset_uploads SET status='manual_reconciliation_required' "
+            "WHERE parent_operation_id=?", (op_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Network pass clean (stub); DB pass real. The pre-existing manual row is
+    # the ONLY not-clean dimension.
+    _spy_recover_deletions(monkeypatch, {}, tally=_CLEAN_DEL_TALLY)
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.network_skipped is False
+    assert report.deletion_recovery == dict(_CLEAN_DEL_TALLY)
+    # The real DB pass counted the pre-existing manual row under `manual`.
+    assert report.db_recovery["manual"] == 1
+    assert report.db_recovery["kept"] == 0
+    assert report.clean is False
+
+    result = _run_cli(project)
+    assert result.exit_code == 2
+
+
+# ===========================================================================
+# Codex round-3 — DB-failure message surfaces BOTH warning + reason (M3)
+# ===========================================================================
+
+def test_db_failure_message_surfaces_warning_and_reason(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Codex round-2 (M3 + test gap): when the DB pass raises, the human message
+    surfaces BOTH the ⚠ DB-failure warning AND the skip_reason (with the
+    exception type). A non-JSON reader sees the failure is a DB-state recovery
+    problem, not a network deletion problem. Also asserts exit 2 (not 1)."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+
+    def boom(self, *, now_iso):
+        raise RuntimeError("integrity exploded")
+    monkeypatch.setattr(OperationRepository, "recover_withdrawn_asset_cleanups", boom)
+
+    from lecturecast.commands.maintenance import _format_message
+    report = run_maintenance(project, now_iso=NOW)
+    msg = "\n".join(_format_message(report))
+    assert "DB 状态恢复失败" in msg
+    assert "RuntimeError" in msg
+    assert "integrity exploded" in msg
+    # The network-deletion line is NOT present (network didn't run).
+    assert "网络删除恢复：" not in msg
+
+    result = _run_cli(project)
+    assert result.exit_code == 2
+
+
+# ===========================================================================
+# Codex round-3 — entry guards raise ValueError uniformly (type-stability)
+# ===========================================================================
+
+@pytest.mark.parametrize("bad_now", [123, 1.5, None, ["x"], object()])
+def test_entry_guard_now_iso_non_str_raises_value_error(tmp_path: Path, bad_now) -> None:
+    """Codex round-2 (entry-guard type-stability): a non-str now_iso raises
+    ValueError (NOT AttributeError at ``.replace()``). The lib's contract is
+    'raises ValueError on a bad arg'; ``type(now_iso) is str`` guards first.
+    Fires before any DB read (bare tmp_path)."""
+    with pytest.raises(ValueError, match="now_iso must be"):
+        run_maintenance(tmp_path, now_iso=bad_now)  # type: ignore[arg-type]
+    assert not (tmp_path / DB_REL).exists()
+
+
+@pytest.mark.parametrize("bad_owner", [123, 1.5, None, ["x"], object()])
+def test_entry_guard_lease_owner_non_str_raises_value_error(
+    tmp_path: Path, bad_owner,
+) -> None:
+    """Codex round-2 (entry-guard type-stability): a non-str lease_owner raises
+    ValueError (NOT TypeError in the regex). ``type(lease_owner) is str`` guards
+    first. Fires before any DB read."""
+    with pytest.raises(ValueError, match="lease_owner must be a str"):
+        run_maintenance(tmp_path, now_iso=NOW, lease_owner=bad_owner)  # type: ignore[arg-type]
+    assert not (tmp_path / DB_REL).exists()
