@@ -69,17 +69,18 @@
 
 ### 还没做
 
-- §5.5e5c/d capability wiring + doctor/canary
+- §5.5e5d-c maintenance wiring —— **实现完成（8-lens 审计 + 25 测全绿，1082 测零回归），待 Codex round-1 锁定复审**
+- §5.5e5d-d 交互式降级卡片（D13，director preflight 检测数字人配置缺失 → A 配置/B 降级 M1 交互 next_action）
 - §5.5e6 RecoveryDirectiveCatalog 验签 + failure mapping + 宿主 workflow（§6 #14 依赖它）
 - §6 收尾：补 #9 定价下发 / #10 M1 门禁跨仓契约 + #14（依赖 e6）+ 三仓 CI gate
 
-客户端 **989 测试全绿**。分支 `feat/digital-human-protocol-v1_1`。
+§5.5e5c（capability wiring）+ §5.5e5d-a（doctor v1.1）+ §5.5e5d-b（canary harness）**已锁定**（6 轮 + a/b 各自 Codex 审阅后锁定）。客户端 **1082 测试全绿**。分支 `feat/digital-human-protocol-v1_1`。
 
 ---
 
-## 下次会话接续点（交接）—— e5b0c3c-c3 已锁定，e5c/d 起步
+## 下次会话接续点（交接）—— e5d-c maintenance 待 Codex round-1
 
-**当前状态**：e5b0c3c 全部锁定（c1 4 轮 + c2 2 轮 + c3 13 轮 Codex 审阅后锁定）。c3 tail commits：`6572abc`（doc lock 裁定）+ `6767d1f`（round-13 F5 域修正）+ `eae5fbc`（round-13 asset op-level 复查）；989 测试全绿。c3 设计稿 `docs/e5b0c3c-c3-design.md`（26 bypass risks + 68 测试矩阵 + 13 轮 Codex Q&A 全轨迹）。
+**当前状态**：e5c/e5d-a/e5d-b 全部锁定；e5d-c maintenance wiring（`src/lecturecast/maintenance.py` + `commands/maintenance.py` + `tests/test_maintenance.py` 25 测）**实现完成 + 8-lens 对抗式设计审计（Workflow w9d56hv2u）全 findings 闭合**，待发 Codex round-1 锁定复审。8-lens 审计在写第一行代码前裁决「NOT lockable as-is」（1 blocker B1 whitespace-key fail-open + 3 major M1/M2/M3 + 6 minor m1-m7），全部并入 `maintenance.py` 设计（见 `docs/e5cd-design.md` §1.13 锁定记录矩阵）。关键闭合：B1 读 transport 自己的 `_api_key_provider()` + `.strip()`（与 heygen_http.py:107 逐字一致）；M1 只读 `_journal_state` gate 仅放行 `classification=="current"`（不碰 durable `heygen.used` sentinel）；M2 exit 契约 0/2/1；M3 `_format_message` 浮出全 tally + skip_reason。1082 测试全绿（基线 823 + 增长，零回归）。
 
 c3 审阅轨迹（13 轮）：round-1~5 候选/witness 门禁迭代 → round-6 DELETED witness 逃过所有 claim 复查（6 类 bypass）→ round-7 B1 终态证明 + B2 asset binding（2 类）→ round-8/9 B1↔B2 op-level 不对称（download_status + single-video）→ round-10/11 claim↔apply 对偶接缝（video not_started reason-blind + apply reason TOCTOU）→ round-12 video apply F1/F2（retention/download_status/remote_id）+ 点名 asset 侧 F3/F4/F5 → round-13 asset op-level F3/F4/F5 + F5 域修正（refs→created_by 镜像 resolver）。**元教训（诚实记录 #13）**：「原则陈述正确 ≠ 实现穷举」——claim↔apply 跨 tx 授权必须逐字段列 claim 在 tx1 读的每个授权字段，逐一确认 apply 在 tx2 也复查；不能只改被 Codex 点名的那个。
 

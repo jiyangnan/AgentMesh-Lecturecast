@@ -172,6 +172,32 @@ line 489 pass criteria：
 
 > **`agent` 命令**（commands/agent.py:24 `_command`、:35 `_project_action`、:167-181 `adapters`/`status` 子命令，「drive the current native host through one safe next action」模式）是现有宿主驱动入口——e5d 端到端 HeyGen driver（submit→poll→download→delete 序列）最自然的扩展目标。**但「接入宿主 workflow」全对接（submit/poll/download/delete driver）远超 doctor/canary 范围**——本稿裁定 e5d 只接 **maintenance 恢复 pass**（recover_withdrawn_asset_cleanups + recover_deletions）+ doctor + canary；完整生成 driver 留 §5.5e6（RecoveryDirectiveCatalog 宿主 workflow）。
 
+### 1.13 §5.5e5d-c maintenance wiring（D10-D12）锁定记录（2026-08-02）
+
+`src/lecturecast/maintenance.py`（lib：`run_maintenance` + `MaintenanceReport`）+ `src/lecturecast/commands/maintenance.py`（CLI 叶：`lecturecast maintenance --project-root --force --json`）+ `cli.py` 注册（:19 import / :39 `app.command()(maintenance)`）+ `tests/test_maintenance.py`（25 测）。
+
+**8-lens 对抗式设计审计（实现前，Workflow w9d56hv2u）** —— 在写任何实现代码之前先跑了一轮 8 视角 bypass-hunt（force-coercion / dual-adapter / ordering / locked-entry-bypass / key-fail-open / init-database / lease-now-iso / error-reporting）+ 综合。裁决「NOT lockable as-is」—— 1 blocker + 3 major + 6 minor，全部在 `maintenance.py` 写下第一行前并入设计：
+
+| 级别 | finding | 闭合方式（file:line） |
+|------|---------|----------------------|
+| **B1 blocker** | whitespace-key fail-open：`if not key:` 缺 `.strip()` → transport + capability probe 都 `.strip()` → 三谓词不一致，空白 key 在零候选场景下掩盖配置 bug | `maintenance.py:217-218` 读 transport 自己的 `_api_key_provider()` + `not isinstance(key, str) or not key.strip()`（与 heygen_http.py:107 逐字一致；读 transport provider 而非二次裸读 env = 单一真相，吞并 minor m7） |
+| **M1 major** | durable 先用 sentinel 踩在 fresh project：原设计 `init_database(project_dir)` 在 fresh journal 上 touch `.lecturecast/heygen.used`（heygen_journal.py:475）→ runtime/ 删除后 capability probe fail-close | `maintenance.py:179-198` 只读 `_journal_state` gate（mode=ro URI，不创建/迁移/写）—— 仅 `classification=="current"` 放行，其余全 skip 不触 init/recover；`_JOURNAL_SKIP_REASONS` 字典给每类 non-current 一个中文 reason。gate 放行时 recover 方法内部 init 是 schema no-op（head==6） |
+| **M2 major** | exit-0 掩盖 partial/skip：原设计「exit 0 even if network_skipped」让 piping script 误读「全删了」 | `maintenance.py:100-111` `MaintenanceReport.clean` 属性（network_skipped False AND failed/alerted/ops_alerted 全 0）+ `commands/maintenance.py:60-61` `if not report.clean: raise typer.Exit(code=2)`。exit 契约 0 clean / 2 partial-or-skip / 1 reserved for harness exception |
+| **M3 major** | message 文本未规约 / skip_reason 被淡化为只是一行 payload | `commands/maintenance.py:64-83` `_format_message` 在非 --json 的人类消息里也浮出 db_recovery（cleanup_required/cancelled/kept/manual/left_uploading）+ deletion_recovery（deleted/failed/alerted/ops_alerted）+ skip_reason 逐字（含 ⚠ 前缀 + 「资产未从 HeyGen 删除」+ 「配置 key 后重跑」） |
+| m1 minor | lib force 入口守卫（让 D-T11 结果 key/journal 无关） | `maintenance.py:169-170` `if type(force) is not bool: raise ValueError` 在任何 DB 读之前（`type() is bool` 非 isinstance —— int 1/0 会过 isinstance） |
+| m2 minor | committed-visibility 只在 call-order 不在 committed-order | 闭合为**结构保证 + 单元证据 + seeded 端到端测**：begin_immediate 在 context 退出时 commit（op_repo:429）；test_asset_journal.py:260-264 单元证；`test_maintenance.py::test_d_t10a_committed_visibility_fresh_conn_sees_cleanup_required` seeded 端到端证（withdrawn receipt + uploaded asset → recover_deletions spy 内开 FRESH conn 见 cleanup_required 已 committed） |
+| m3 minor | db_tally 在 post-DB 失败时丢失 | `maintenance.py:239-256` try/except 包 recover_deletions → 失败仍返回带 committed db_tally 的 partial MaintenanceReport（fail-closed intact —— 网络未在未知态跑；reporting 改进非 correctness gap） |
+| m4 minor | adapter 调换（videos→adapter=、asset→deleter=）未被测 | `test_maintenance.py::test_d_t10b_dual_adapter_one_transport_not_swapped` 断言 `isinstance(deleter, HeyGenVideosAdapter)` + `isinstance(adapter, HeyGenAssetAdapter)` + 共享 transport identity |
+| m5 minor | test_maintenance 是 locked probe 的回归守卫，勿改 probe | 文档化：test_maintenance 不改 `_JOURNAL_READY` / `_api_key_provider`；只测 wiring 层 |
+| m6 minor | init_database 必要性 | 吞并于 M1 —— 删掉显式 init_database 调用；recover 方法内部 begin_immediate 自带 init，gate 放行时 init 是 no-op |
+| m7 minor | 二次 env 读可能与 transport 实际用的值漂移 | 吞并于 B1 —— 读 transport 自己的 provider |
+
+**测试矩阵（25 测，全绿）** —— `tests/test_maintenance.py`：D-T11 force 非 bool → ValueError（8 例参数化，bare tmp_path 证 key/journal 无关）+ bool False/True 过守卫；D-T12 source-level 静态断言只调两 locked 入口（禁 `.delete_video(` / `.delete_asset(` / `delete_pass_for_operation`）；M1 fresh + parent_unwritable 两态各证 sentinel + DB 未触；D-T10c 空白/未设 key fail-closed（4 例参数化，证 DB pass 仍跑 + deletion_recovery={}）；D-T10a call-order（`["db","net"]`）+ committed-visibility（seeded，fresh conn 见 cleanup_required）；D-T10b+m4 dual adapter 共享 transport + 不调换 + force literal bool；M2 exit 0/2/2/2/2 矩阵（clean / missing-key / whitespace-key / partial-failed / recover_deletions-raises）+ report.clean 属性矩阵。全量 1082 测全绿（基线 823 + 本期增长，零回归）。
+
+**约束遵守** —— (a)/(c) force 是 typer bool，UNCHANGED 透传 recover_deletions（`type(force) is bool` 守卫在 lib 边界先于任何 DB 读；无 `--aggressive`/`--unsafe` 新 truthy 源）✓；(d) 只调两 locked 入口 `recover_withdrawn_asset_cleanups` + `recover_deletions`，源级静态测禁直接 adapter.delete_video/delete_asset/delete_pass_for_operation ✓；(b) N/A —— maintenance 本身就是恢复 driver，允许 network + 写用户项目（b 是 canary-only 的零网络约束）。fail-closed 主不变量（configured=true ⟺ 栈实际可服务）由 B1+M1 共同保证：whitespace key 不虚报删除、fresh journal 不碰 durable sentinel。
+
+**待 Codex round-1 复审**（effort=low，invariant-completeness framing）。
+
 ---
 
 ## 2. 盲预测（实现前先写死的契约）
