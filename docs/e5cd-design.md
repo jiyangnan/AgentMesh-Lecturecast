@@ -399,7 +399,7 @@ round-12 修正（in-place 改 §1.13f site-count + 本 §1.13g 记录段，纯 
 
 **待 Codex round-12 锁定复审**（effort=low，invariant-completeness/doc-accuracy framing：(1) §1.13f site-count 现是否准确（3 site + 3 bullet，against commit `4c1c4fd` diff）；(2) 第二 bullet "三处一起改"、第三 bullet PROGRESS:72 描述是否准确无新不准；(3) 全仓是否还有其他 "N site/N 处" 类记录段与对应 commit diff 对不上的不一致（含 §1.13d/§1.13e 的 site-count）；(4) 纯 doc，零 runtime/SQL/test 变化，1169 全绿不变）。
 
-### §1.13h round-13（Codex round-12 NOT LOCKABLE → 全闭合，待 Codex round-13 锁定复审）
+### §1.13h round-13（Codex round-12 NOT LOCKABLE → 全闭合 → ✅ Codex round-13 LOCKABLE）
 
 Codex round-12 裁定 **NOT LOCKABLE**，1 个纯 doc-only blocker（items 1/2/4/6 全 CONFIRMED accurate —— §1.13f site-count 3 准确匹配 `git show 4c1c4fd`、§1.13d/§1.13e/§1.13f 三 section 的 site 列表/计数与对应 commit（`5e1512e`/`a6cb0b6`/`4c1c4fd`）diff 全匹配且计数规则一致（语义 phrasing site 计数，排除 round-number bump + 新 appended record section）、§1.13g 其余四 meta-claim（round-11 verdict/3 site/PROGRESS "三处"/#5 次计数）全准、commit `52e5a77` doc-only/1169 不变）。唯一 blocker（item 3 + 5 同源）：§1.13g:393 把三处原文统一标 "零命中"，但 PROGRESS:72 原文是 "零 owner-only 残留"（"零残留"），§1.13g:396 自己已正确区分 —— 分组引号 characterization 对 1/3 成员字面不准。
 
@@ -408,6 +408,8 @@ round-13 修正（in-place，纯 doc）：§1.13g:393 `三处 "零命中" 已改
 **元教训（#round-13，#6 次同族 + 又一变体）**：round-11 = grep 结果元 claim 自指；round-12 = site-count vs commit diff；这次 = **分组引号 characterization 对部分成员不准** —— 把 N 个 site 归入同一个引号词时，必须逐成员核实每个 site 原文是否真是该词（不能因 N-1 个是就笼统标）。同族根因不变：关于文档自身历史的元 claim，against 逐 site 原文核实。
 
 **待 Codex round-13 锁定复审**（effort=low，invariant-completeness/doc-accuracy framing：(1) §1.13g:393 分组标号现是否准确（"零命中/零残留" 同族，against 三 site 原文）；(2) 本 §1.13h 自身有无新分组/计数/引号 claim 对某成员不准（逐 site 原文核实）；(3) 全仓是否还有其他 "N 处 'X'" 类分组引号 characterization 对部分成员不准；(4) 纯 doc，零 runtime/SQL/test 变化，1169 全绿不变）。
+
+**✅ Codex round-13 裁定 LOCKABLE（safe to ship）**：items 1–5 全 CONFIRMED accurate —— (1) §1.13g:393 分组标号 "零命中/零残留" 同族对三成员（§1.13e + PROGRESS:83 = 零命中，PROGRESS:72 = 零残留）全真；(2) §1.13h 自身所有分组标号（items 1/2/4/6、§1.13d/§1.13e/§1.13f 三 section、§1.13g 其余四 meta-claim、commit 映射 5e1512e/a6cb0b6/4c1c4fd、#6 次计数）逐成员核实全准；(3) 全仓 grouped-characterization 猎无其他 live false-for-member 命中（其余命中均为 historical/quoted-error/instruction 语境）；(4) PROGRESS handoff status chain + round-13 closure 无 drift；(5) commit `d5698eb` doc-only（仅两 markdown，src/tests tree OID 与 parent 同），1169 不变。**e5d-c maintenance wiring 至此 LOCKED** —— executable invariant round-7 锁、doc-accuracy round-13 锁；13 轮 Codex 审阅闭环。
 
 ---
 
