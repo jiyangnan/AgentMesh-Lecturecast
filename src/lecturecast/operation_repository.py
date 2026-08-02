@@ -3177,12 +3177,19 @@ class OperationRepository:
                         journals (lease cleared) and non-zero during the brief
                         active-lease window, which is CORRECT (the deletion cannot
                         proceed this sweep; exit 2 is honest). It auto-resolves:
-                        once the lease clears independently (expired / fenced /
-                        released), branch B's lease gate passes; a properly-bound
-                        asset then witnesses via B2 (``consent_withdrawal`` is
-                        delivery-independent; ``post_download`` requires
-                        ``download_status='verified'`` + ``COUNT(video) <= 1``,
-                        both satisfiable with zero video rows), the op becomes
+                        branch B's gate requires ``lease_owner IS NULL AND
+                        lease_expires_at IS NULL`` — mere time EXPIRY does NOT
+                        pass it (the columns must be cleared); a fenced
+                        recovery/apply/finalize/release path is what NULLs them
+                        (e.g. download finalize/fail @~line 1652/1702/1718;
+                        ``_clear_operation_lease`` (def @~2514) invoked by the
+                        video-deletion fenced-apply path @~1959/1972/1983). Once such a path
+                        clears both columns, branch B's lease gate passes; a
+                        properly-bound asset then witnesses via B2
+                        (``consent_withdrawal`` is delivery-independent;
+                        ``post_download`` requires ``download_status='verified'``
+                        + ``COUNT(video) <= 1``, both satisfiable with zero video
+                        rows), the op becomes
                         selectable, the coordinator drives it, and the count
                         returns to 0.
                 Domain (c) mirrors the FULL witness predicate via the SHARED
@@ -3265,8 +3272,11 @@ class OperationRepository:
             #           THIS sweep. NOTE: ``no video`` is NOT an independent cause
             #           — branch B2 admits a zero-video op (``COUNT(video) <= 1``;
             #           see the constant @4091-4134), so a properly-bound asset
-            #           witnesses via B2 with zero video rows once the lease
-            #           clears. This is NOT corruption — it is an honest transient
+            #           witnesses via B2 with zero video rows once a fenced
+            #           recovery/apply/release path NULLs both lease columns
+            #           (branch B requires ``lease_owner IS NULL AND
+            #           lease_expires_at IS NULL`` — mere time EXPIRY does NOT
+            #           pass it). This is NOT corruption — it is an honest transient
             #           "blocked-pending" the operator may legitimately see mid-
             #           flight. NOT guaranteed zero on every producer-valid journal;
             #           only zero on SETTLED journals (lease cleared). Counting it
