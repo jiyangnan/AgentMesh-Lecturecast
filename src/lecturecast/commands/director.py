@@ -1065,11 +1065,34 @@ def generate(
             )
             return
 
+        # §5.5e5d-d D13 payload-omission guard (fail-closed, defense-in-depth).
+        # create_generation's payload must not carry a third_party_processors
+        # entry that is not configured+live (§0.3 / §0 Principle 6: advisory is
+        # never uploaded as a configured capability). capture_capabilities_v1_1
+        # already omits the key when unconfigured (heygen_processor returns None
+        # or configured=True — never configured=False), and the stored snapshot
+        # is digest-bound (hand-tampering breaks _verify_documents). This guard
+        # enforces the contract AT THE UPLOAD BOUNDARY too, so it holds
+        # regardless of the stored doc's shape. It NEVER adds the key (no
+        # force-include, no new truthy source — §2.4); it refuses to forward an
+        # inconsistent doc that capture cannot produce (a present-but-not-
+        # configured entry = local corruption; recapture to fix).
+        capabilities_payload = capabilities.model_dump()
+        if (
+            state.protocol_version == "1.1"
+            and "third_party_processors" in capabilities_payload
+            and not _d13_heygen_configured(capabilities)
+        ):
+            raise LectureCastError(
+                code="manifest_incompatible",
+                message="本地能力快照声明了一个未配置的 third_party_processor（capture 不会产生此状态）。",
+                next_action="重新运行 lecturecast project capabilities 采集能力，再 director generate。",
+            )
         generation = _make_client(state.payload["server_url"]).create_generation(
             state.session_id,
             generation_id=selected_id,
             expected_brief_version=int(state.payload["brief_version"]),
-            capabilities=capabilities.model_dump(),
+            capabilities=capabilities_payload,
             protocol_version=state.protocol_version,
         )
         state = state_store.update(state, generation=generation)

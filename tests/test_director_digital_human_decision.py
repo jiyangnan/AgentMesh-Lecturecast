@@ -330,6 +330,35 @@ def test_generate_flag_skips_card_and_payload_omits_heygen(
     assert "third_party_processors" not in caps_sent
 
 
+def test_generate_guard_refuses_present_but_not_configured_processor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D13 payload-omission guard (§0.3, defense-in-depth): a v1.1 capabilities
+    doc with a present-but-not-configured third_party_processors entry — a state
+    capture never produces (heygen_processor returns None or configured=True)
+    but the schema permits (configured: type boolean) and _stored_heygen_still_live
+    reuses unchanged ("nothing to invalidate") — is refused at the upload
+    boundary. create_generation is NOT called; fail-closed manifest_incompatible.
+    This makes the payload-omission invariant locally enforceable rather than
+    relying on capture-is-clean alone."""
+    capture, _ = _setup_d13_project(tmp_path, monkeypatch, avatar="photo", configured=False)
+    # Overwrite with a schema-valid but inconsistent doc (configured=False entry).
+    # save_capabilities re-binds the digest so the doc loads cleanly.
+    project_store = ProjectStore(tmp_path)
+    project = project_store.load()
+    bad_caps = _fixture("client-capabilities-v1_1.json")
+    bad_caps["third_party_processors"][0]["configured"] = False
+    project_store.save_capabilities(
+        parse_client_capabilities(bad_caps), expected_revision=project.revision,
+    )
+    # Option B (consented) → D13 card skipped → guard reached → refuse.
+    result = _invoke_generate(tmp_path, "--accept-digital-human-downgrade")
+    assert result.exit_code != 0
+    body = json.loads(result.output)
+    assert body["code"] == "manifest_incompatible"
+    assert capture.calls == []  # create_generation NOT called — fail-closed
+
+
 def test_generate_skips_card_for_v1_0(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
