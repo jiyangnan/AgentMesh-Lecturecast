@@ -379,13 +379,25 @@ against source 核实：branch B 真实谓词 @`operation_repository.py:4065` = 
 
 Codex round-10 裁定 **NOT LOCKABLE**，1 个纯 doc-only blocker（items 1–6 + 8 全 CONFIRMED accurate —— 5 site 全合取化、全仓猎无规范性 owner-only 残留、doc-only/1169 不变）。唯一 blocker（item 7）：§1.13e 写 "grep 全仓 `lease_owner IS NULL` 不跟 `AND` 的残余 —— 修正后 src/ + docs/ **零命中**（exit 1）" —— 这句话**自指不准**：本节自身的 before→after 表 "前" 文本、round-9 blocker 历史记录、进度文档历史段都含 owner-only 串，会产生 grep 命中。**实质结论（零规范性残留）正确，但 "零命中（exit 1）" 字面 claim 错。**
 
-round-11 修正（2 site，纯 doc）：
+round-11 修正（3 site，纯 doc）：
 - `docs/e5cd-design.md` §1.13e（@~372）："零命中（exit 1）" → "规范性 branch-B 描述零 owner-only 残余；其余命中均为明确标记的历史/错误语境"。
-- `docs/DIGITAL-HUMAN-PROGRESS.md:83`（handoff round-10 闭合段）：同改（Codex 只点了 §1.13e，但同一 false claim 也在 PROGRESS:83 —— 按元教训 grep 全仓同义表述，两处一起改）。
+- `docs/DIGITAL-HUMAN-PROGRESS.md:83`（handoff round-10 闭合段）：同改（Codex 只点了 §1.13e，但同一 false claim 也在 PROGRESS:83 —— 按元教训 grep 全仓同义表述，三处一起改）。
+- `docs/DIGITAL-HUMAN-PROGRESS.md:72`（"还没做" round-10 闭合括号）：原 "grep 全仓零 owner-only 残留"（Codex round-10 把 :72 归为历史 round-9 blocker 记录、未当 blocker 点名；"残留" 非 "命中" 但同族 phrasing）→ 加 "规范性描述" 限定 + "历史/before-text 命中除外"。（round-12 修：本节原误记 "2 site" 漏列 PROGRESS:72，Codex round-11 item 5 抓；见 §1.13g。）
 
 **元教训（#round-11，#4 次同一模式 + 新变体）**：前三次是"修谓词漏同义 site"；这次是**自指陷阱** —— 一条描述 grep 结果的陈述，其本身的成立条件会被同节内的历史/before 文本破坏。写 "grep 零命中" 这类**关于自身文档的元陈述**时，必须把本节将引入的 before/历史文本计入命中集，否则自相矛盾。同 c3 "原则陈述正确 ≠ 实现穷举"：**关于文档的元 claim 也要 against 文档实际内容核实**。
 
 **待 Codex round-11 锁定复审**（effort=low，invariant-completeness/doc-accuracy framing：(1) §1.13e + PROGRESS:83 的 "零命中" 是否改为准确的 "零规范性残留 + 历史命中标注"；(2) 改后是否引入新不准（如把 "规范性" 误写成全量）；(3) 全仓是否还有其他 "零命中/zero hits/exit 1" 类自指元 claim（含 round-9 §1.13d 的 prompt、round-8 历史段）；(4) 纯 doc，零 runtime/SQL/test 变化，1169 全绿不变）。
+
+### §1.13g round-12（Codex round-11 NOT LOCKABLE → 全闭合，待 Codex round-12 锁定复审）
+
+Codex round-11 裁定 **NOT LOCKABLE**，1 个纯 doc-only blocker（items 1–4 + 6 全 CONFIRMED accurate —— §1.13e/PROGRESS:83/PROGRESS:72 三处 "零命中" 已改为准确的 "零规范性残留 + 历史命中标注"、全仓猎无其他同类自指元 claim、doc-only/1169 不变）。唯一 blocker（item 5）：§1.13f 记录段写 "round-11 修正（2 site，纯 doc）" 但 commit `4c1c4fd` 实际改了 **3 site**（§1.13e + PROGRESS:83 + PROGRESS:72）—— PROGRESS handoff（@83）正确写 "三处"，§1.13f 却写 "2 site"，内部不一致。
+
+round-12 修正（in-place 改 §1.13f site-count + 本 §1.13g 记录段，纯 doc）：
+- §1.13f 本节（@~382）："round-11 修正（2 site，纯 doc）" → "round-11 修正（3 site，纯 doc）"；补第三 bullet 记 `PROGRESS:72`（原 "零残留"→加 "规范性描述" 限定 + "历史/before-text 命中除外"，"残留" 非 "命中"，Codex round-10 归为历史记录未当 blocker 但属同族）；第二 bullet 末 "两处一起改" → "三处一起改"。
+
+**元教训（#round-12，#5 次同一模式 + 又一变体）**：round-11 的自指陷阱是 "grep 结果元 claim"；这次的变体是**记录段自身的 site-count vs commit diff 对不上** —— 写 "N site" 这类关于上轮改动的元 claim 时，必须 against `git show <commit> --stat` 实际 diff 核实，不能凭上轮记忆里"Codex 点名了几个"来记（PROGRESS handoff 写 "三处" 正确，恰恰因为它是逐文件列的；§1.13f 写 "2 site" 错，因为它是凭 Codex round-10 只点了 §1.13e 的印象）。同 c3 "原则陈述正确 ≠ 实现穷举" 的 doc 元层版：**关于文档自身改动历史的元 claim，也要 against commit diff 实际核实**。
+
+**待 Codex round-12 锁定复审**（effort=low，invariant-completeness/doc-accuracy framing：(1) §1.13f site-count 现是否准确（3 site + 3 bullet，against commit `4c1c4fd` diff）；(2) 第二 bullet "三处一起改"、第三 bullet PROGRESS:72 描述是否准确无新不准；(3) 全仓是否还有其他 "N site/N 处" 类记录段与对应 commit diff 对不上的不一致（含 §1.13d/§1.13e 的 site-count）；(4) 纯 doc，零 runtime/SQL/test 变化，1169 全绿不变）。
 
 ---
 
