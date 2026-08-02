@@ -3088,7 +3088,7 @@ class OperationRepository:
         return aggregate
 
     def count_recovery_attention(self) -> dict[str, int]:
-        """Read-only post-recovery ATTENTION AUDIT (Codex e5d-c round-3).
+        """Read-only post-recovery ATTENTION AUDIT (Codex e5d-c round-3 + round-5).
 
         The two recovery primitives have DELIBERATELY SCOPED mandates (locked
         across many review rounds — their scopes must NOT be broadened silently):
@@ -3118,16 +3118,47 @@ class OperationRepository:
           - ``manual_force_resources``: every NON-deleted ``heygen_remote_
             resources`` row with ``deletion_reason='manual_force'``. Each needs
             explicit operator action (never auto-recovered).
+          - ``unrecoverable_resources`` (Codex round-5): every NON-deleted,
+            NON-manual_force, NON-reusable ``heygen_remote_resources`` row in a
+            SCHEMA-LEGAL ANOMALOUS state that (i) NO locked primitive can
+            produce AND (ii) the deletion candidate SELECT explicitly treats as
+            anomalous (it fail-closes against the same states — see the witness
+            STATE-MATRIX gate at op_repo:4190-4322). Three sub-classes:
+              (a) ``(not_started) + (non-NULL reason)`` — a reason was set
+                  WITHOUT the status flipping to deletion_pending. The claim is
+                  the ONLY primitive that sets a reason + it sets
+                  ``deletion_pending`` in the SAME UPDATE, so this state is
+                  primitive-unreachable.
+              (b) ``(deletion_pending | deletion_failed) + (NULL reason)`` — the
+                  status advanced WITHOUT a reason. Same claim invariant: the
+                  claim always sets both, so primitive-unreachable.
+              (c) ``created_by_operation_id IS NULL`` — an ORPHANED resource
+                  whose owning op is gone. The outer candidate filter requires
+                  ``created_by_operation_id IS NOT NULL`` (op_repo:4084/4177),
+                  so the row is never swept; and ``heygen_operations`` is never
+                  DELETEd (no code path does it), so the FK ``ON DELETE SET
+                  NULL`` never fires in normal flow → primitive-unreachable.
+            Each such row is operator-attention-needed AND invisible to both
+            recovery primitives (the candidate SELECT excludes it; the DB pass
+            touches only withdrawn receipts). Without this count, exit 0 would
+            谎报 "clean" over a row the deletion subsystem itself refuses to
+            drive — a direct inconsistency between the exit-0 contract and the
+            candidate SELECT's own fail-closed posture. Counting these CANNOT
+            break a normal exit 0: the states are primitive-unreachable, so the
+            count is zero on every producer-valid journal; it fires ONLY on
+            corruption/schema-legal 直插 rows (the same threat model the
+            candidate SELECT's state-matrix gate already defends against).
 
         NOT counted (in-flight pipeline states that WILL resolve on a future
         sweep — NOT stuck attention): ``deletion_pending`` resources with an
         auto-recoverable reason (``post_download`` / ``consent_withdrawal``)
-        correctly waiting behind §3.5 video-first ordering; active ``uploading``
-        leases (the DB pass's ``left_uploading`` tally already flags these
-        per-sweep). Counting these would make exit 0 unreachable during normal
-        multi-resource consent-withdrawal cleanup (video must delete before
-        assets), conflating "progressing" with "stuck" (Codex round-3 #3 —
-        pushed back: this is §3.5 ordering, not a strand).
+        correctly waiting behind §3.5 video-first ordering; ``not_started+NULL``
+        (fresh resource, never claimed); active ``uploading`` leases (the DB
+        pass's ``left_uploading`` tally already flags these per-sweep). Counting
+        these would make exit 0 unreachable during normal multi-resource
+        consent-withdrawal cleanup (video must delete before assets),
+        conflating "progressing" with "stuck" (Codex round-3 #3 — pushed back:
+        this is §3.5 ordering, not a strand).
 
         Opens ``file:<escaped>?mode=ro`` (mirrors ``capabilities._journal_state``
         at line 340) — creates / migrates / writes NOTHING. Read-only by
@@ -3148,10 +3179,37 @@ class OperationRepository:
                 "SELECT COUNT(*) FROM heygen_remote_resources "
                 "WHERE deletion_reason='manual_force' "
                 "AND deletion_status != 'deleted'").fetchone()[0]
+            # Codex round-5 — unrecoverable anomalous/orphaned resources. The
+            # predicate mirrors the candidate SELECT's OWN fail-closed posture
+            # (op_repo:4190-4322 witness STATE-MATRIX gate): the admitted auto-
+            # recoverable (status, reason) pairs are exactly {not_started+NULL,
+            # (pending|failed)+(post_download|consent_withdrawal)}, plus
+            # manual_force (counted above) + deleted (excluded by !='deleted').
+            # Every OTHER non-deleted, non-manual_force, non-reusable pair is
+            # anomalous (the candidate SELECT refuses to drive it). The
+            # ``created_by_operation_id IS NULL`` clause is the orphan class
+            # (the outer candidate filter's IS-NOT-NULL gate excludes it).
+            # ``deletion_reason IS NULL OR deletion_reason != 'manual_force'``
+            # is the SQL idiom for "not manual_force" that ALSO admits NULL
+            # (``NULL != 'manual_force'`` is NULL/falsy in SQL, which would
+            # wrongly exclude the pending+NULL anomaly we want to count).
+            unrecoverable = conn.execute(
+                "SELECT COUNT(*) FROM heygen_remote_resources "
+                "WHERE deletion_status != 'deleted' "
+                "AND (deletion_reason IS NULL OR deletion_reason != 'manual_force') "
+                "AND retention_mode != 'reusable_avatar' "
+                "AND ("
+                " created_by_operation_id IS NULL"
+                " OR (deletion_status = 'not_started'"
+                "     AND deletion_reason IS NOT NULL)"
+                " OR (deletion_status IN ('deletion_pending', 'deletion_failed')"
+                "     AND deletion_reason IS NULL)"
+                ")").fetchone()[0]
         finally:
             conn.close()
         return {"manual_uploads": int(manual_uploads),
-                "manual_force_resources": int(manual_force)}
+                "manual_force_resources": int(manual_force),
+                "unrecoverable_resources": int(unrecoverable)}
 
 
 def _output_ref(operation_id: str) -> str:

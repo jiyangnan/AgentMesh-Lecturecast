@@ -17,12 +17,12 @@ carries a stronger contract than doctor's always-0 diagnostic):
   2 — partial failure (some ops failed/alerted/skipped/not-advanced) OR
       pending DB-side work (manual / left_uploading > 0) OR the network pass
       was skipped (non-current journal, missing/whitespace HEYGEN_API_KEY, DB
-      pass raised → ``db_recovery_failed``, DB/network primitive returned a
-      malformed/non-dict tally, or the post-pass attention audit raised →
-      ``attention_audit_failed``) OR the attention audit found operator-
+      pass raised → ``db_recovery_failed``, DB/network/attention primitive
+      returned a malformed/non-dict tally, or the post-pass attention audit
+      raised → ``attention_audit_failed``) OR the attention audit found operator-
       attention states outside the recovery primitives' scopes (non-withdrawn
-      manual uploads, manual_force resources). db_recovery / deletion_recovery
-      may still be non-empty.
+      manual uploads, manual_force resources, unrecoverable anomalous/orphaned
+      resources). db_recovery / deletion_recovery may still be non-empty.
   1 — reserved for programming/harness errors raised BEFORE ``emit``: a bad
       lib-boundary arg (non-bool force, non-int lease_seconds, non-str
       now_iso/lease_owner) from a DIRECT lib call raises ValueError before a
@@ -91,7 +91,7 @@ def _format_message(report: MaintenanceReport) -> list[str]:
     # type-stable (exit 2 via clean, never an exit-1 AttributeError).
     if report.db_recovery_failed:
         lines.append("⚠ DB 状态恢复失败（见 skip_reason）；网络删除恢复未执行。")
-    elif isinstance(db, dict) and db:
+    elif type(db) is dict and db:
         lines.append(
             "DB 状态恢复（撤回资产清理）："
             f"cleanup_required={db.get('cleanup_required', 0)}、"
@@ -100,8 +100,12 @@ def _format_message(report: MaintenanceReport) -> list[str]:
         )
     if not report.network_skipped:
         d = report.deletion_recovery
-        # Same type-stable guard as ``db`` for defense-in-depth.
-        if isinstance(d, dict):
+        # Same type-stable guard as ``db`` for defense-in-depth
+        # (Codex round-4: type() is dict, NOT isinstance — a dict subclass
+        # overriding get() to raise cannot crash the formatter; the lib
+        # boundary rejects subclasses, but a direct _format_message caller
+        # could pass one).
+        if type(d) is dict:
             lines.append(
                 "网络删除恢复："
                 f"ops_driven={d.get('ops_driven', 0)}、ops_empty={d.get('ops_empty', 0)}、"
@@ -111,20 +115,29 @@ def _format_message(report: MaintenanceReport) -> list[str]:
             )
     # Codex round-3 (attention audit): surface the post-pass attention counts so
     # an operator sees WHY exit 2 fired when the recovery tallies are themselves
-    # clean (a non-withdrawn manual upload / manual_force resource sits in the
-    # journal outside the recovery primitives' scopes).
+    # clean (a non-withdrawn manual upload / manual_force resource / round-5
+    # unrecoverable anomalous-orphan resource sits in the journal outside the
+    # recovery primitives' scopes).
     if report.attention_audit_failed:
         lines.append("⚠ 恢复后 attention 审计失败（见 skip_reason）；最终态无法核实。")
     elif not report.network_skipped and not report.db_recovery_failed:
         at = report.attention
-        if isinstance(at, dict) and (at.get("manual_uploads", 0)
-                                     or at.get("manual_force_resources", 0)):
+        # type() is dict (Codex round-4 residual 1): the lib boundary now
+        # validates the attention tally too, so a subclass cannot reach here via
+        # run_maintenance — but a direct caller could pass one, and isinstance
+        # would admit a subclass whose get() raises.
+        if type(at) is dict and (at.get("manual_uploads", 0)
+                                 or at.get("manual_force_resources", 0)
+                                 or at.get("unrecoverable_resources", 0)):
             lines.append(
                 "⚠ journal 仍有需人介入的态（恢复原语作用域之外）："
-                f"manual_uploads={at.get('manual_uploads', 0)}（非撤回 op 的"
-                f" manual_reconciliation_required 上传）、"
+                f"manual_uploads={at.get('manual_uploads', 0)}（未解决的上传，"
+                f"含撤回 op 的 manual 行）、"
                 f"manual_force_resources={at.get('manual_force_resources', 0)}"
-                f"（operator-only 删除资源）。请人工核查后处理。"
+                f"（operator-only 删除资源）、"
+                f"unrecoverable_resources={at.get('unrecoverable_resources', 0)}"
+                f"（schema-legal 异常态/孤儿资源，删除子系统拒绝驱动）。"
+                f"请人工核查后处理。"
             )
     if report.network_skipped and report.skip_reason:
         lines.append(f"⚠ 网络删除恢复未执行：{report.skip_reason}")
