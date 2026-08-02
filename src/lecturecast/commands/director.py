@@ -41,6 +41,13 @@ app = typer.Typer(no_args_is_help=True, add_completion=False)
 brief_app = typer.Typer(no_args_is_help=True, add_completion=False)
 app.add_typer(brief_app, name="brief", help="Show or confirm the server-backed Creative Brief.")
 
+digital_human_app = typer.Typer(no_args_is_help=True, add_completion=False)
+app.add_typer(
+    digital_human_app,
+    name="digital-human",
+    help="Client-local digital-human capability decisions (D13).",
+)
+
 
 def _make_client(server_url: str) -> DirectorClient:
     require_commercial_access()
@@ -585,6 +592,81 @@ def answer(
         _unexpected(exc, json_output=json_output)
 
 
+@digital_human_app.command("decide")
+def digital_human_decide(
+    directory: Path = typer.Argument(Path(".")),
+    choice: str = typer.Option(..., "--choice"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """§5.5e5d-d D13: route the user's digital-human downgrade decision.
+
+    Client-local — does NOT hit the server. Option A (configure) routes to the
+    read-only ``lecturecast doctor`` (HeyGen setup diagnosis); option B
+    (downgrade) routes back to ``director generate --accept-digital-human-downgrade``
+    (paid; the create_generation payload still omits third_party_processors).
+    """
+    try:
+        # type-stability discipline: choice must be a str AND whitelisted.
+        # A non-str or out-of-set value → LectureCastError (exit 2), never a
+        # bare crash (exit 1) and never a silent fallthrough.
+        if type(choice) is not str or choice not in {"configure", "downgrade"}:
+            raise LectureCastError(
+                code="invalid_choice",
+                message="choice 必须是 configure 或 downgrade。",
+                next_action="重新提交 D13 卡片选择（configure / downgrade）。",
+            )
+        store = DirectorStateStore(directory)
+        state = store.load()
+        root = str(directory.expanduser().resolve())
+        if choice == "configure":
+            # doctor is read-only (no project/server mutation) → mutates=False,
+            # no approval. Built as a raw dict because _command_action's
+            # mutate-heuristic would wrongly mark doctor mutates=True.
+            action: dict[str, Any] = {
+                "id": "lecturecast.doctor",
+                "kind": "command",
+                "argv": ["lecturecast", "doctor", "--project-root", root, "--json"],
+                "mutates": False,
+                "requires_user_approval": False,
+            }
+            phase = "digital_human_configure_required"
+            message = (
+                "请按 doctor 报告配置 HeyGen（设置 HEYGEN_API_KEY、确保 adapter 可导入、"
+                "journal 就绪），再重新采集能力并运行 director generate。"
+            )
+        else:  # downgrade
+            action = _command_action(
+                "director.generate",
+                [
+                    "lecturecast",
+                    "director",
+                    "generate",
+                    root,
+                    "--accept-digital-human-downgrade",
+                    "--json",
+                ],
+                approval=True,
+            )
+            phase = "credit_approval_required"
+            message = "已记录降级裁定：将以下发 M1 基础视频（不含数字人）。"
+        emit(
+            _result(
+                state=state,
+                workflow={
+                    "phase": phase,
+                    "policy": "execute_only_returned_next_action",
+                    "next_action": action,
+                },
+            ),
+            json_output=json_output,
+            message=message,
+        )
+    except LectureCastError as error:
+        fail(error, json_output=json_output)
+    except Exception as exc:
+        _unexpected(exc, json_output=json_output)
+
+
 @brief_app.command("show")
 def show_brief(
     directory: Path = typer.Argument(Path(".")),
@@ -769,10 +851,112 @@ def _stored_heygen_still_live(
         return False
 
 
+def _d13_brief_avatar(project_store: ProjectStore) -> str | None:
+    """§5.5e5d-d D13 intent signal: ``brief.presenter.avatar``.
+
+    The Brief is M0 (confirmed before generate) and persisted at
+    ``project_store.brief_path``. ``avatar == "photo"`` = user wants the HeyGen
+    digital human; ``avatar == "none"`` = M1-only (never triggers D13). The
+    intent lives in the Brief — NOT presenter_plan (which is M2/server-side).
+
+    Fail-closed: returns None on absent/malformed brief or non-str avatar —
+    None != "photo", so a missing/unreadable brief never triggers the card and
+    the M1 path proceeds normally. The broad ``except Exception`` is intentional:
+    D13 must NEVER abort the operator's billing flow because the brief file is
+    unexpectedly unreadable; it silently falls back to "no photo intent".
+    """
+    try:
+        brief = project_store.load_brief_dict()
+        if not isinstance(brief, dict):
+            return None
+        presenter = brief.get("presenter")
+        if not isinstance(presenter, dict):
+            return None
+        avatar = presenter.get("avatar")
+        if type(avatar) is not str:
+            return None
+        return avatar
+    except Exception:
+        return None
+
+
+def _d13_heygen_configured(capabilities: ClientCapabilities) -> bool:
+    """§5.5e5d-d D13 capability signal: is HeyGen configured+live right now?
+
+    Mirrors the canonical predicate in ``_stored_heygen_still_live`` (@755-760,
+    locked e5c round-4) — same expression, same source: ``third_party_processors``
+    presence + ``provider == "heygen"`` + ``configured`` truthy. Keep the two in
+    sync if the HeyGen capability shape ever changes. ``capture_capabilities_v1_1``
+    sets ``third_party_processors = [processor]`` ONLY when processor is not None
+    (env HEYGEN_API_KEY + adapter probe + journal probe all pass), so key
+    presence is the configured+live truth — the B1 stale-snapshot guard (@820)
+    has already dropped + recaptured if live state diverged from the snapshot.
+    """
+    payload = capabilities.model_dump()
+    return any(
+        isinstance(processor, dict)
+        and processor.get("provider") == "heygen"
+        and processor.get("configured")
+        for processor in (payload.get("third_party_processors") or [])
+    )
+
+
+def _d13_decision_action(root: str) -> dict[str, Any]:
+    """§5.5e5d-d D13 interactive downgrade card (next_action).
+
+    Client-local ``host_choice``: the server never learns about the local
+    capability gap (§0 Principle 6: advisory never uploaded), so this card is
+    NOT driven by ``session.decision_card_set`` — question/options are inline.
+    The host fills ``<option_id>`` (configure|downgrade) into ``argv_template``
+    and runs ``director digital-human decide``, which routes option A to the
+    read-only doctor (HeyGen setup diagnosis) and option B back to
+    ``director generate --accept-digital-human-downgrade`` (paid; payload still
+    omits ``third_party_processors`` — configured source-of-truth is untouched).
+    """
+    return {
+        "id": "director.digital_human.decide",
+        "kind": "host_choice",
+        "question_id": "digital_human_downgrade",
+        "question_label": (
+            "检测到 Creative Brief 指定 presenter.avatar=photo（要数字人），"
+            "但本机尚未配置 HeyGen（缺 HEYGEN_API_KEY / adapter / journal）。请裁定："
+        ),
+        "options": [
+            {
+                "id": "configure",
+                "label": "配置 HEYGEN_API_KEY 并重新采集（配置成功后可出数字人）",
+            },
+            {
+                "id": "downgrade",
+                "label": "降级为 M1 基础视频（本次不出数字人，仅口播；M2/M3 不触发）",
+            },
+        ],
+        "argv_template": [
+            "lecturecast",
+            "director",
+            "digital-human",
+            "decide",
+            root,
+            "--choice",
+            "<option_id>",
+            "--json",
+        ],
+        "mutates": True,
+        "requires_user_approval": True,
+    }
+
+
 @app.command("generate")
 def generate(
     directory: Path = typer.Argument(Path(".")),
     generation_id: str | None = typer.Option(None, "--generation-id"),
+    accept_digital_human_downgrade: bool = typer.Option(
+        False,
+        "--accept-digital-human-downgrade",
+        help="§5.5e5d-d D13: user consented to the M1 downgrade (option B). "
+        "Skips the interactive card; create_generation proceeds and the payload "
+        "still omits third_party_processors (no false configured=true).",
+    ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Reserve one stable generation ID, then request the paid Manifest once."""
@@ -844,6 +1028,42 @@ def generate(
             project_store.save_capabilities(
                 capabilities, expected_revision=project.revision
             )
+
+        # §5.5e5d-d D13: lazy interactive downgrade card. Fire ONLY when all four
+        # hold: (1) v1.1 session (v1.0 has no HeyGen concept); (2) user wants the
+        # digital human (brief.presenter.avatar == "photo"); (3) HeyGen is not
+        # configured+live right now (after the B1 stale-snapshot guard above);
+        # (4) user has NOT already consented to the M1 downgrade. Any path that
+        # fails one of these (M1 avatar=none, already-configured, v1.0, or
+        # post-consent option B) proceeds to create_generation unchanged. The
+        # card is client-local — the server is NOT informed of the capability
+        # gap (§0 Principle 6); create_generation's payload still omits
+        # third_party_processors either way (configured source-of-truth =
+        # capture_capabilities_v1_1, untouched by D13).
+        if (
+            state.protocol_version == "1.1"
+            and not accept_digital_human_downgrade
+            and _d13_brief_avatar(project_store) == "photo"
+            and not _d13_heygen_configured(capabilities)
+        ):
+            emit(
+                _result(
+                    state=state,
+                    workflow={
+                        "phase": "digital_human_decision_required",
+                        "policy": "execute_only_returned_next_action",
+                        "next_action": _d13_decision_action(
+                            str(directory.expanduser().resolve())
+                        ),
+                    },
+                ),
+                json_output=json_output,
+                message=(
+                    "检测到 avatar=photo 但本机未配置 HeyGen —— 已拦截 "
+                    "create_generation，需用户裁定（配置 / 降级 M1）。"
+                ),
+            )
+            return
 
         generation = _make_client(state.payload["server_url"]).create_generation(
             state.session_id,

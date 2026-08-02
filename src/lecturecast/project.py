@@ -275,6 +275,16 @@ class ProjectStore:
                 creative_brief_digest=canonical_digest(document),
             )
 
+    def load_brief_dict(self) -> dict[str, Any] | None:
+        """§5.5e5d-d D13: return the persisted Creative Brief as a raw dict, or
+        None if no brief has been saved yet. Read-only; does NOT re-validate the
+        digest (callers that need integrity use `_verify_documents`). Raises
+        `manifest_incompatible` via `_read_object` on corrupt/invalid JSON so the
+        caller can wrap it for fail-closed behavior. Symmetric with `save_brief`."""
+        if not self.brief_path.exists():
+            return None
+        return _read_object(self.brief_path)
+
     def save_capabilities(
         self,
         capabilities: ClientCapabilities | dict[str, Any],
