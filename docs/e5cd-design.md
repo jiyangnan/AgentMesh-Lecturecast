@@ -152,6 +152,20 @@ line 489 pass criteria：
 
 > 现状：client 无数字人 canary harness（grep 'canary' 命中全是无关命名巧合：test_timing.py:41/test_commercial.py:203/test_platform_contract.py:128/test_site_contract.py:205/config.py:21/SIGNING-KEYRING.md:46）。server 侧有 10-credit 非数字人 canary（`deploy/canary.md`、`deploy/rollout.md:29-37`）—— **30-credit 数字人 canary 是全新**，无 harness。删除恢复原语（DeletionCoordinator.recover_deletions + recover_withdrawn_asset_cleanups）**已锁**，canary harness 本身未写。
 
+#### 锁定记录（2026-08-02，3 轮 Codex，LOCKED）
+
+`src/lecturecast/canary.py` + `commands/canary.py`（CLI 叶）+ `tests/test_canary.py`（26 测）。commits 545f387→5aae32e→c417cc5。3 轮 Codex（effort=low，invariant-completeness framing）：
+
+- **round-1 (545f387)**: NOT LOCKABLE，4 blockers。
+- **round-2 (5aae32e)**: 关 3/4 ——
+  1. **fail-closed cap**（#4）：原 round-1 fail-open = 验签失败时 fallback 读未授信 `minimum_total`（3×100 但 minimum_total=0 漏过 cap 还驱动了 3 删除）。修：`cap_held = estimate_ok and (sum(validated per_milestone) ≤ cap)`，验签失败即 cap FAILS CLOSED + 删除 drive 在 gate 处拒绝（区分「estimate invalid」vs「cap exceeded」两种 refusal）。
+  2. **zero-network by construction**（constraint b）：删掉 `deleter`/`adapter` 注入参数 —— canary 始终用模块内 `_StubDeleter`/`_StubAdapter`，无注入 seam 即无真 transport 路径。§3.5 routing 改由 `report.deletion_calls {video:(...), asset:(...)}` 暴露（不再靠注入 spy）。
+  3. **#8 rollback routing**：不再只查 `charge_model` 字段（validate 已查），改为真驱动 `director._status_workflow` 断言 `credit_returned→estimate_refresh_required` + `awaiting_credits→credit_resume_required`（client-depth 处理方案）。
+- **round-3 (c417cc5)**: 关最后 1/4 ——
+  4. **#6 display projection**：round-2 的 `next_milestone_cost_or_fail` 是 credit-cost reader 非显示路径。真显示投影是 `director._session_workflow`（director.py:244-268）：经 `_validated_estimate`（含 card↔session estimate 相等校验）+ 8 字段子集投影到 `workflow["pricing_estimate"]`。canary 驱动 v1.1 confirmed session（card 带 same estimate）穿 `_session_workflow`，断言投影 == 校验 estimate 的 8 字段逐项相等；`validated == estimate` 收紧为 `validated is estimate`（identity，锁 validator 不 mutate/copy，pricing.py:121）。teeth test 证伪篡改投影（minimum_total 翻倍 / 漏字段）必败。
+
+**约束遵守**：(b) 只读沙箱（init_database 仅写 canary 自己的隔离 DB；删除 drive 全 stub）✓；(d) 不放松已锁不变量（gate probe / journal classification / coordinator force=False literal / claim↔apply 拓扑全未触）✓。server 侧 #2 ledger / #5 awaiting / #8 refund execution = SERVER canary + §6 跨仓契约范围，client canary 各 detail 诚实标注边界（lesson #13）。canary 对 `_session_workflow`/`_status_workflow`/`DirectorState` 的依赖是刻意耦合 —— director 回滚/显示路由回归时 canary 应红（回归检测）。
+
 ### 1.12 宿主 workflow 接线现状（critic §11）
 
 已锁原语（DeletionCoordinator / recover_deletions / recover_withdrawn_asset_cleanups / SubmitCoordinator / capture_capabilities_v1_1 / heygen_processor）**全部存在于 src/**，但**无一**接入任何 CLI 命令或 maintenance scheduler。`commands/`（agent.py/manifest.py）不 import OperationRepository 或任何 HeyGen processor。唯一 OperationRepository 的 repo 外使用是 consent.py:602（`enqueue_consent_withdrawal_cleanup_in_tx`）。cli.py 注册 auth/agent/director/project/manifest/outcome + doctor/onboard/version/workflow——**无 heygen 子命令**。
