@@ -450,6 +450,22 @@ def test_default_adapter_probe_fail_closed_on_method_stripped_class(
     assert default_heygen_adapter_probe() is False
 
 
+def test_default_adapter_probe_fail_closed_on_stripped_poll_video(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§5.5e5c round-6 (R5-6): HeyGenVideosAdapter.poll_video is a PUBLIC adapter
+    entry method called by PollProcessor.poll_once (op_repo:3534) AND
+    DownloadProcessor.download_once (op_repo:3644). The round-5 probe checked
+    submit_video / query_videos_by_title / delete_video but omitted poll_video,
+    so a mixed-version install that strips it passed the probe while making
+    polling + download unservable. The probe must now check the FULL public
+    surface of every adapter class."""
+    import lecturecast.heygen_videos_adapter as mod
+
+    monkeypatch.delattr(mod.HeyGenVideosAdapter, "poll_video", raising=False)
+    assert default_heygen_adapter_probe() is False
+
+
 def test_default_journal_probe_sentinel_directory_marks_prior_use(
     tmp_path: Path,
 ) -> None:

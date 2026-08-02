@@ -64,8 +64,15 @@ def default_heygen_adapter_probe() -> bool:
         required = (
             ("lecturecast.heygen_http", "HeyGenHttpTransport",
              ("request_json", "request_multipart_file")),
+            # round-6: poll_video added — it is a PUBLIC adapter entry method
+            # called by PollProcessor.poll_once (op_repo:3534) AND
+            # DownloadProcessor.download_once (op_repo:3644). A mixed install
+            # stripping it passed round-5's check but made polling + download
+            # unservable. The tuple is now the FULL public surface of each
+            # adapter class (verified by ast + cross-referenced against every
+            # adapter.* call site in operation_repository.py).
             ("lecturecast.heygen_videos_adapter", "HeyGenVideosAdapter",
-             ("submit_video", "query_videos_by_title", "delete_video")),
+             ("submit_video", "poll_video", "query_videos_by_title", "delete_video")),
             ("lecturecast.heygen_asset_adapter", "HeyGenAssetAdapter",
              ("upload_asset", "get_asset", "delete_asset")),
         )
