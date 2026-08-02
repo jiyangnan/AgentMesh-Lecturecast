@@ -82,28 +82,43 @@ def default_heygen_adapter_probe() -> bool:
         # reported operations live in operation_repository. A mixed install could
         # ship the adapters without it, OR ship a partial module that IMPORTS but
         # is missing processor / coordinator classes a reported operation needs
-        # (round-3 R3-6: module import alone is weaker than its stated guarantee).
-        # Verify the module imports AND every required class resolves as a real
-        # type (`isinstance(x, type)` mirrors the round-3 R3-5 callable lesson —
-        # presence of the attribute is not enough; it must be a constructible
-        # class). The set is the full executor surface backing the five reported
-        # operations + idempotency_24h; the single wheel ships all of them.
-        required_orchestrator_classes = (
-            "OperationRepository",
-            "AssetUploadProcessor",
-            "SubmitProcessor",
-            "SubmitCoordinator",
-            "PollProcessor",
-            "ReconcileProcessor",
-            "DownloadProcessor",
-            "DeleteProcessor",
-            "AssetDeletionProcessor",
-            "DeletionCoordinator",
+        # (round-3 R3-6), OR ship a real but METHOD-STRIPPED class — e.g. a
+        # version that renamed/removed an entry method (round-4 R4-6: a stub
+        # class passes isinstance(type) yet the operation fails at runtime).
+        # Verify the module imports, every required class resolves as a real
+        # type, AND each class's entry methods are CALLABLE (parallel to the
+        # adapter method check above; entry methods are the public execution
+        # surface backing the 5 reported operations + idempotency_24h, verified
+        # against operation_repository.py source). The single wheel ships all of
+        # them; a refactor that moves/renames them requires updating this set
+        # (the probe detects that execution surface by design).
+        required_orchestrator = (
+            ("OperationRepository", (
+                "claim_submit_in_tx",
+                "apply_submit_outcome_in_tx",
+                "claim_asset_upload_in_tx",
+                "resolve_deletion_plan_in_tx",
+                "apply_deletion_outcome_in_tx",
+                "find_reconciliation_candidates",
+            )),
+            ("AssetUploadProcessor", ("upload_once",)),
+            ("SubmitProcessor", ("record_submit_outcome",)),
+            ("SubmitCoordinator", ("claim_for_submit",)),
+            ("PollProcessor", ("poll_once",)),
+            ("ReconcileProcessor", ("reconcile_once",)),
+            ("DownloadProcessor", ("download_once",)),
+            ("DeleteProcessor", ("delete_once",)),
+            ("AssetDeletionProcessor", ("delete_once",)),
+            ("DeletionCoordinator", ("delete_pass_for_operation", "recover_deletions")),
         )
         op_repo = importlib.import_module("lecturecast.operation_repository")
-        for cls_name in required_orchestrator_classes:
-            if not isinstance(getattr(op_repo, cls_name, None), type):
+        for cls_name, entry_methods in required_orchestrator:
+            cls = getattr(op_repo, cls_name, None)
+            if not isinstance(cls, type):
                 return False
+            for method in entry_methods:
+                if not callable(getattr(cls, method, None)):
+                    return False
         return True
     except Exception:
         return False
@@ -181,8 +196,14 @@ def _prior_heygen_use_detected(lecturecast_dir: Path) -> bool:
         return True  # cannot establish the sentinel contract -> conservative
 
     try:
-        # Signal 1: durable init-time sentinel.
-        if os.path.isfile(lecturecast_dir / _PRIOR_USE_SENTINEL):
+        # Signal 1: durable init-time sentinel. ANY path entry (file, directory,
+        # broken symlink) counts as prior-use — round-4 R4-3: if the sentinel
+        # path exists as a non-file (e.g. heygen.used was made a directory, so
+        # init's best-effort touch raised IsADirectoryError and was swallowed),
+        # isfile would miss it and a later runtime/ deletion would over-report.
+        # lexists is the conservative read (can only cause safe under-report,
+        # never over-report).
+        if os.path.lexists(lecturecast_dir / _PRIOR_USE_SENTINEL):
             return True
         # Signal 2: stored capability snapshot once claimed configured HeyGen.
         caps_path = lecturecast_dir / "client-capabilities.json"
