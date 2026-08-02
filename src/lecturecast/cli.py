@@ -16,6 +16,7 @@ from .commands.canary import canary
 from .commands.director import app as director_app
 from .commands.doctor import doctor
 from .commands.manifest import app as manifest_app
+from .commands.maintenance import maintenance
 from .commands.onboard import onboard
 from .commands.outcome import app as outcome_app
 from .commands.project import app as project_app
@@ -35,6 +36,7 @@ app.add_typer(
 app.command()(doctor)
 app.command()(onboard)
 app.command()(canary)
+app.command()(maintenance)
 
 
 def _repo_root() -> Path:
