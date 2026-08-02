@@ -72,6 +72,35 @@ _EMPTY_DB_TALLY = {
     "kept": 0, "left_uploading": 0,
 }
 
+# Codex round-2 — realistic tallies that ISOLATE each non-clean dimension the
+# 8-key return can carry. ``attempted`` is always internally consistent with
+# the per-dimension counts (the locked coordinator's invariant:
+# attempted == deleted + failed + skipped + alerted + not_advanced), so these
+# mirror states the coordinator can ACTUALLY produce (not impossible shapes).
+_SKIPPED_DEL_TALLY = {
+    # one candidate skipped (skipped_no_upload_id / skipped_unknown_kind), none deleted.
+    "ops_driven": 1, "ops_empty": 0, "ops_alerted": 0,
+    "attempted": 1, "deleted": 0, "failed": 0, "skipped": 1, "alerted": 0,
+}
+_BUSY_DEL_TALLY = {
+    # one candidate stuck not_advanced (busy / retry_wait / not_ready / fence_conflict)
+    # — the class recover_deletions does NOT aggregate into the 8-key return; it
+    # is invisible except as attempted - (deleted+failed+skipped+alerted) > 0.
+    "ops_driven": 1, "ops_empty": 0, "ops_alerted": 0,
+    "attempted": 1, "deleted": 0, "failed": 0, "skipped": 0, "alerted": 0,
+}
+_MANUAL_DB_TALLY = {
+    # DB-side pending work: an asset needs human reconciliation.
+    "cancelled": 0, "cleanup_required": 0, "manual": 1,
+    "kept": 0, "left_uploading": 0,
+}
+_LEFT_UPLOADING_DB_TALLY = {
+    # DB-side pending work: an active upload lease was left intact (its fenced
+    # apply will catch the withdraw on the next upload attempt).
+    "cancelled": 0, "cleanup_required": 0, "manual": 0,
+    "kept": 0, "left_uploading": 1,
+}
+
 _ASSET_CATEGORIES = {
     "portrait_photo": ["facial_biometric_template", "portrait_image"],
     "synthetic_narration_audio": ["synthetic_narration_audio"],
@@ -501,17 +530,319 @@ def test_m2_exit_2_on_recover_deletions_exception(tmp_path: Path, monkeypatch) -
 # ===========================================================================
 
 def test_report_clean_property_matrix() -> None:
-    """The ``clean`` property is the exit-0 condition (M2): True iff the sweep
-    ran (network_skipped False) AND deleted every candidate with no failures
-    (failed/alerted/ops_alerted all zero). Static matrix over the report shape
-    so the CLI exit-code contract cannot drift from the property."""
+    """The ``clean`` property is the exit-0 condition (M2 + Codex round-2:
+    every dimension the fail-closed invariant requires). True iff ALL of:
+      - DB pass did not raise (``db_recovery_failed`` False);
+      - network pass ran (``network_skipped`` False);
+      - deletion_recovery has the EXACT 8-key shape (malformed → not clean);
+      - failed/alerted/ops_alerted all zero;
+      - ``attempted == deleted`` (catches skipped AND the not_advanced class
+        recover_deletions does not aggregate);
+      - DB-side manual/left_uploading both zero.
+    Static matrix over the report shape so the CLI exit-code contract cannot
+    drift from the property."""
+    # Base: clean full sweep.
     assert MaintenanceReport(
         deletion_recovery=dict(_CLEAN_DEL_TALLY), force=False).clean is True
-    # skipped → not clean (even with a pristine tally).
+    # network_skipped → not clean.
     assert MaintenanceReport(
         deletion_recovery={}, network_skipped=True, force=False).clean is False
-    # each failure dimension independently → not clean.
+    # db_recovery_failed → not clean (Codex round-1 blocker 4).
+    assert MaintenanceReport(
+        deletion_recovery={}, db_recovery_failed=True,
+        network_skipped=True, force=False).clean is False
+    # each explicit failure dimension independently → not clean.
     for dim in ("failed", "alerted", "ops_alerted"):
         tally = dict(_CLEAN_DEL_TALLY)
         tally[dim] = 1
         assert MaintenanceReport(deletion_recovery=tally, force=False).clean is False, dim
+    # skipped > 0 (realistic tally: attempted bumps with skipped) → not clean
+    # (Codex round-1 blocker 1: clean used to ignore skipped).
+    assert MaintenanceReport(
+        deletion_recovery=dict(_SKIPPED_DEL_TALLY), force=False).clean is False
+    # attempted > deleted with no explicit failure (the not_advanced / busy
+    # class — invisible in the 8-key return) → not clean (Codex round-1
+    # blocker 1: the attempted==deleted predicate is what catches it).
+    assert MaintenanceReport(
+        deletion_recovery=dict(_BUSY_DEL_TALLY), force=False).clean is False
+    # DB-side pending work → not clean (Codex round-1 blocker 2).
+    assert MaintenanceReport(
+        db_recovery=dict(_MANUAL_DB_TALLY),
+        deletion_recovery=dict(_CLEAN_DEL_TALLY), force=False).clean is False
+    assert MaintenanceReport(
+        db_recovery=dict(_LEFT_UPLOADING_DB_TALLY),
+        deletion_recovery=dict(_CLEAN_DEL_TALLY), force=False).clean is False
+    # shape: empty deletion_recovery with network_skipped=False → not clean
+    # (a silent no-op that looks like success — Codex round-1 empty-tally gap).
+    assert MaintenanceReport(
+        deletion_recovery={}, network_skipped=False, force=False).clean is False
+    # shape: missing a key → not clean.
+    short = {k: v for k, v in _CLEAN_DEL_TALLY.items() if k != "skipped"}
+    assert MaintenanceReport(
+        deletion_recovery=short, force=False).clean is False
+    # shape: extra key → not clean.
+    extra = dict(_CLEAN_DEL_TALLY)
+    extra["phantom"] = 0
+    assert MaintenanceReport(
+        deletion_recovery=extra, force=False).clean is False
+
+
+# ===========================================================================
+# Codex round-2 — exit code surfaces every non-clean dimension (blockers 1+2)
+# ===========================================================================
+
+def test_m2_exit_2_on_skipped(tmp_path: Path, monkeypatch) -> None:
+    """Codex round-1 blocker 1: recover_deletions returns skipped > 0 (a
+    candidate skipped_no_upload_id / skipped_unknown_kind) → exit 2. ``clean``
+    used to ignore ``skipped``; the round-2 ``attempted == deleted`` predicate
+    catches it (attempted=1, deleted=0). A cron consumer must NOT see exit 0."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+    _spy_recover_deletions(monkeypatch, {}, tally=_SKIPPED_DEL_TALLY)
+    result = _run_cli(project)
+    assert result.exit_code == 2
+
+
+def test_m2_exit_2_on_busy_not_advanced(tmp_path: Path, monkeypatch) -> None:
+    """Codex round-1 blocker 1: a candidate stuck not_advanced (busy /
+    retry_wait / not_ready / fence_conflict) — the class recover_deletions does
+    NOT aggregate into the 8-key return. It is invisible except as
+    ``attempted - (deleted+failed+skipped+alerted) > 0``; the round-2
+    ``attempted == deleted`` predicate catches it → exit 2."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+    _spy_recover_deletions(monkeypatch, {}, tally=_BUSY_DEL_TALLY)
+    result = _run_cli(project)
+    assert result.exit_code == 2
+
+
+def test_m2_exit_2_on_db_manual(tmp_path: Path, monkeypatch) -> None:
+    """Codex round-1 blocker 2: DB-side ``manual`` > 0 (an asset needs human
+    reconciliation) → exit 2. The network pass may have run clean, but there is
+    unresolved DB-side work this sweep — a cron consumer must NOT see exit 0."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+
+    orig_db = OperationRepository.recover_withdrawn_asset_cleanups
+
+    def db_spy(self, *, now_iso):
+        orig_db(self, now_iso=now_iso)  # run the real DB pass (empty)
+        return dict(_MANUAL_DB_TALLY)   # ...but report a manual tally
+    monkeypatch.setattr(OperationRepository, "recover_withdrawn_asset_cleanups", db_spy)
+    _spy_recover_deletions(monkeypatch, {}, tally=_CLEAN_DEL_TALLY)
+    result = _run_cli(project)
+    assert result.exit_code == 2
+
+
+def test_m2_exit_2_on_db_left_uploading(tmp_path: Path, monkeypatch) -> None:
+    """Codex round-1 blocker 2: DB-side ``left_uploading`` > 0 (an active upload
+    lease was left intact — maintenance correctly does not touch it, but it IS
+    unresolved this sweep) → exit 2."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+
+    orig_db = OperationRepository.recover_withdrawn_asset_cleanups
+
+    def db_spy(self, *, now_iso):
+        orig_db(self, now_iso=now_iso)
+        return dict(_LEFT_UPLOADING_DB_TALLY)
+    monkeypatch.setattr(OperationRepository, "recover_withdrawn_asset_cleanups", db_spy)
+    _spy_recover_deletions(monkeypatch, {}, tally=_CLEAN_DEL_TALLY)
+    result = _run_cli(project)
+    assert result.exit_code == 2
+
+
+# ===========================================================================
+# Codex round-2 — DB-pass exception wrapped (blocker 4) + shape wrap (empty gap)
+# ===========================================================================
+
+def test_db_pass_exception_wrapped_to_skip_report(tmp_path: Path, monkeypatch) -> None:
+    """Codex round-1 blocker 4: recover_withdrawn_asset_cleanups RAISING (e.g. a
+    withdrawn receipt with corrupt topology → OperationIntegrityError) is wrapped
+    into a structured skip report (db_recovery_failed=True, network_skipped=True,
+    db_recovery={}) → exit 2, NOT exit 1. The tx rolled back (begin_immediate),
+    so nothing was over-claimed; the network pass does NOT run on a half-recovered
+    journal. db_recovery_failed disambiguates "DB pass did not complete" from
+    "DB pass ran with zero work" (db_recovery={} would otherwise be ambiguous)."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+
+    def boom(self, *, now_iso):
+        raise RuntimeError("DB integrity exploded")
+    monkeypatch.setattr(OperationRepository, "recover_withdrawn_asset_cleanups", boom)
+
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.db_recovery_failed is True
+    assert report.network_skipped is True
+    assert report.db_recovery == {}  # DB pass did not complete → no tally
+    assert report.deletion_recovery == {}  # network did not run
+    assert report.skip_reason is not None
+    assert "DB 状态恢复失败" in report.skip_reason
+    assert "RuntimeError" in report.skip_reason
+    assert report.clean is False
+
+    # CLI surfaces exit 2 (NOT exit 1 — exit 1 is reserved for harness exceptions).
+    result = _run_cli(project)
+    assert result.exit_code == 2
+
+
+def test_malformed_tally_shape_wrapped_to_skip_report(tmp_path: Path, monkeypatch) -> None:
+    """Codex round-1 empty-tally gap: recover_deletions returning a malformed
+    tally (missing/extra keys, or empty {}) is surfaced as a skip report (NOT
+    clean) rather than masquerading as a no-op sweep. Parametrized over: empty,
+    missing-one-key, extra-key."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+
+    malformed = {
+        "empty": {},
+        "missing": {k: v for k, v in _CLEAN_DEL_TALLY.items() if k != "skipped"},
+        "extra": {**_CLEAN_DEL_TALLY, "phantom": 0},
+    }
+    for name, bad_tally in malformed.items():
+        _spy_recover_deletions(monkeypatch, {}, tally=bad_tally)
+        report = run_maintenance(project, now_iso=NOW)
+        assert report.network_skipped is True, name
+        assert report.deletion_recovery == {}, name  # rejected → not surfaced as a result
+        assert report.skip_reason is not None, name
+        assert "畸形 tally" in report.skip_reason, name
+        assert report.clean is False, name
+
+
+# ===========================================================================
+# Codex round-2 — lib-boundary entry validation (programming-error guards)
+# ===========================================================================
+
+@pytest.mark.parametrize("bad_seconds", ["300", 1.0, True, False, None, 29, 3601, [300]])
+def test_entry_guard_rejects_bad_lease_seconds(tmp_path: Path, bad_seconds) -> None:
+    """Codex round-1 (lease/now_iso entry validation): an invalid lease_seconds
+    is rejected at the lib boundary BEFORE any DB read — fires on a bare tmp_path
+    (no journal created). type() is int rejects str/float/bool/None/list; the
+    range check rejects 29 (< LEASE_MIN_SECONDS=30) + 3601 (> LEASE_MAX_SECONDS=3600).
+    bool is rejected by the type guard (``type(True) is int`` is False even though
+    bool is an int subclass). The CLI's default (300) is always valid, so this
+    never fires via the CLI — it guards direct lib callers."""
+    with pytest.raises(ValueError, match="lease_seconds"):
+        run_maintenance(tmp_path, now_iso=NOW, lease_seconds=bad_seconds)
+    assert not (tmp_path / DB_REL).exists()
+    assert not (tmp_path / SENTINEL_REL).exists()
+
+
+@pytest.mark.parametrize("bad_now", ["not-a-date", "2026-08-02T00:00:00", "", "2026-13-99"])
+def test_entry_guard_rejects_bad_now_iso(tmp_path: Path, bad_now) -> None:
+    """Codex round-1 (lease/now_iso entry validation): a non-ISO / naive
+    (no tzinfo) now_iso is rejected at the lib boundary BEFORE any DB read.
+    ``2026-08-02T00:00:00`` (no tz) is rejected — lease judgment needs a
+    timezone-aware timestamp."""
+    with pytest.raises(ValueError):
+        run_maintenance(tmp_path, now_iso=bad_now)
+    assert not (tmp_path / DB_REL).exists()
+
+
+@pytest.mark.parametrize("bad_owner", ["", "ab", "x" * 100, "has space", "中文owner"])
+def test_entry_guard_rejects_bad_lease_owner(tmp_path: Path, bad_owner) -> None:
+    """Codex round-1 (lease/now_iso entry validation): an invalid lease_owner
+    (empty / too short / too long / contains spaces / non-ASCII) is rejected at
+    the lib boundary BEFORE any DB read. Regex: ``^[A-Za-z0-9_:.-]{3,96}$``."""
+    with pytest.raises(ValueError, match="invalid lease_owner"):
+        run_maintenance(tmp_path, now_iso=NOW, lease_owner=bad_owner)
+    assert not (tmp_path / DB_REL).exists()
+
+
+def test_entry_guard_order_force_first(tmp_path: Path) -> None:
+    """The force guard fires BEFORE the lease/now guards (it is the first check
+    in run_maintenance). A non-bool force + a bad lease_seconds → force ValueError
+    wins (the lease guard is never reached). Proves the m1 force invariant is the
+    strongest gate (fires regardless of every other arg)."""
+    with pytest.raises(ValueError, match="force must be a bool"):
+        run_maintenance(tmp_path, now_iso="not-a-date", lease_seconds="bad",
+                        force="yes")  # type: ignore[arg-type]
+
+
+# ===========================================================================
+# Codex round-2 — dynamic constraint (d): adapter delete methods never called
+# ===========================================================================
+
+def test_constraint_d_dynamic_adapter_delete_never_called(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Codex round-1 claim 7 (constraint d, dynamic complement to the source-level
+    D-T12 test): at RUNTIME, the dual adapters' ``delete_video`` /
+    ``delete_asset`` / ``delete_pass_for_operation`` methods are NEVER called by
+    the maintenance wiring — the network path routes exclusively through the
+    locked ``recover_deletions`` (here stubbed). Proves no dynamic path bypasses
+    the source-level assertion (e.g. a helper that reaches adapter.delete_*).
+    Instruments both adapter classes' delete methods + asserts zero calls."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+
+    calls: dict[str, int] = {"videos_delete": 0, "asset_delete": 0}
+
+    # Instrument the REAL adapter classes' delete methods (not stubs) — if the
+    # wiring ever called them directly, the counter would bump.
+    from lecturecast.heygen_videos_adapter import HeyGenVideosAdapter
+    from lecturecast.heygen_asset_adapter import HeyGenAssetAdapter
+
+    def v_spy(self, *a, **kw):
+        calls["videos_delete"] += 1
+    def a_spy(self, *a, **kw):
+        calls["asset_delete"] += 1
+
+    # Patch every delete-named method on both adapter classes.
+    for name in ("delete_video", "delete_pass_for_operation"):
+        if hasattr(HeyGenVideosAdapter, name):
+            monkeypatch.setattr(HeyGenVideosAdapter, name, v_spy)
+    for name in ("delete_asset", "delete_pass_for_operation"):
+        if hasattr(HeyGenAssetAdapter, name):
+            monkeypatch.setattr(HeyGenAssetAdapter, name, a_spy)
+
+    _spy_recover_deletions(monkeypatch, {}, tally=_CLEAN_DEL_TALLY)
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.network_skipped is False
+    assert calls == {"videos_delete": 0, "asset_delete": 0}
+
+
+# ===========================================================================
+# Codex round-2 — M1 generic classification: EVERY non-current class skips
+# ===========================================================================
+
+_NON_CURRENT_CLASSES = [
+    "fresh", "missing_prior_use", "behind", "ahead", "symlink",
+    "parent_unwritable", "runtime_unwritable", "db_readonly",
+    "shape_mismatch", "canonical_unavailable", "unreadable",
+]
+
+
+@pytest.mark.parametrize("cls", _NON_CURRENT_CLASSES)
+def test_m1_every_non_current_class_skips_without_sentinel(
+    tmp_path: Path, monkeypatch, cls: str,
+) -> None:
+    """Codex round-1 claim 2 (M1 classification completeness): EVERY non-current
+    class _journal_state can return skips the network pass WITHOUT calling
+    init/recover, so the durable prior-use sentinel (.lecturecast/heygen.used)
+    is never touched. Mocks _journal_state to yield each class in turn (the two
+    real-state tests above cover 'fresh' + 'parent_unwritable' at the file-
+    system level; this parametrization covers the FULL set the gate must refuse,
+    including the classes hard to fabricate on disk — behind/ahead/symlink/
+    db_readonly/shape_mismatch/canonical_unavailable/unreadable). The journal
+    gate is the ONLY init-avoiding barrier, so proving it refuses all 11 classes
+    closes M1 exhaustively."""
+    # init_database is never reached → never touches the sentinel. Patch it to
+    # RAISE so the test fails loudly if any code path bypasses the gate.
+    def boom_init(*a, **kw):
+        raise AssertionError(f"init_database reached on classification={cls!r} (M1 bypass)")
+    monkeypatch.setattr("lecturecast.heygen_journal.init_database", boom_init)
+    monkeypatch.setattr(maintenance_mod, "init_database", boom_init, raising=False)
+
+    # _journal_state is read-only; stub it to yield the class under test.
+    monkeypatch.setattr(
+        maintenance_mod, "_journal_state",
+        lambda project_dir: {"classification": cls})
+
+    report = run_maintenance(tmp_path, now_iso=NOW)
+    assert report.network_skipped is True, cls
+    assert report.skip_reason is not None, cls
+    assert report.clean is False, cls
+    # M1 core: the sentinel + DB were NOT created (init never ran).
+    assert not (tmp_path / SENTINEL_REL).exists(), cls
+    assert not (tmp_path / DB_REL).exists(), cls

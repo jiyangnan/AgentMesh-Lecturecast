@@ -64,7 +64,14 @@ def maintenance(
 def _format_message(report: MaintenanceReport) -> list[str]:
     lines: list[str] = []
     db = report.db_recovery
-    if db:
+    # Codex round-1 (M3 completeness): surface EVERY authoritative tally field,
+    # not only the failure/alert dimensions — attempted/skipped/ops_driven/
+    # ops_empty + db manual/left_uploading. A skipped deletion or a busy claim
+    # (attempted > deleted) must be visible to a non-JSON reader, not hidden
+    # behind an exit code.
+    if report.db_recovery_failed:
+        lines.append("⚠ DB 状态恢复失败（见 skip_reason）；网络删除恢复未执行。")
+    elif db:
         lines.append(
             "DB 状态恢复（撤回资产清理）："
             f"cleanup_required={db.get('cleanup_required', 0)}、"
@@ -75,8 +82,10 @@ def _format_message(report: MaintenanceReport) -> list[str]:
         d = report.deletion_recovery
         lines.append(
             "网络删除恢复："
+            f"ops_driven={d.get('ops_driven', 0)}、ops_empty={d.get('ops_empty', 0)}、"
+            f"ops_alerted={d.get('ops_alerted', 0)}；attempted={d.get('attempted', 0)}、"
             f"deleted={d.get('deleted', 0)}、failed={d.get('failed', 0)}、"
-            f"alerted={d.get('alerted', 0)}、ops_alerted={d.get('ops_alerted', 0)}。"
+            f"skipped={d.get('skipped', 0)}、alerted={d.get('alerted', 0)}。"
         )
     if report.network_skipped and report.skip_reason:
         lines.append(f"⚠ 网络删除恢复未执行：{report.skip_reason}")

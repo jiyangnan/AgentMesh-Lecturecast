@@ -67,7 +67,15 @@ from .capabilities import _journal_state
 from .heygen_asset_adapter import HeyGenAssetAdapter
 from .heygen_http import HeyGenHttpTransport
 from .heygen_videos_adapter import HeyGenVideosAdapter
-from .operation_repository import DeletionCoordinator, OperationRepository
+from .operation_repository import (
+    LEASE_MAX_SECONDS,
+    LEASE_MIN_SECONDS,
+    DeletionCoordinator,
+    OperationRepository,
+    _check_lease_seconds,
+    _parse_utc,
+    _require_lease_owner,
+)
 
 #: Default lease owner (stable across runs so SKIP LOCKED lease reclaim works
 #: across overlapping maintenance invocations). Matches the shape of the
@@ -77,18 +85,30 @@ LEASE_OWNER_DEFAULT: str = "lecturecast-maintenance"
 #: Default lease TTL (seconds). Within [LEASE_MIN_SECONDS, LEASE_MAX_SECONDS].
 LEASE_SECONDS_DEFAULT: int = 300
 
+#: The exact 8 keys ``DeletionCoordinator.recover_deletions`` returns
+#: (op_repo:4246). Used to validate the tally shape so a malformed/empty
+#: coordinator return cannot masquerade as a clean sweep (Codex round-1:
+#: ``deletion_recovery={}, network_skipped=False`` must NOT be clean).
+_DEL_TALLY_KEYS: frozenset[str] = frozenset({
+    "ops_driven", "ops_empty", "ops_alerted",
+    "attempted", "deleted", "failed", "skipped", "alerted",
+})
+
 
 @dataclass(frozen=True)
 class MaintenanceReport:
     """Aggregate maintenance result.
 
     ``db_recovery`` is the ``recover_withdrawn_asset_cleanups`` tally (DB-only
-    pass; always populated when the journal is current). ``deletion_recovery``
-    is the ``recover_deletions`` tally (network pass; ``{}`` when skipped).
+    pass; ``{}`` when the DB pass did not complete — see ``db_recovery_failed``).
+    ``db_recovery_failed`` is True iff the DB pass RAISED (Codex round-1
+    blocker 4): the tx rolled back, the network pass did not run, and the
+    skip_reason carries the error. ``deletion_recovery`` is the
+    ``recover_deletions`` tally (network pass; ``{}`` when skipped).
     ``network_skipped`` is True iff the network pass did not run (non-current
-    journal, missing/whitespace key, or ``recover_deletions`` raised). The
-    ``force`` field is the literal validated bool forwarded — guaranteed bool
-    by the entry guard (never a coerced non-bool, audit minor m1).
+    journal, missing/whitespace key, DB-pass failure, or ``recover_deletions``
+    raised / returned a malformed tally). The ``force`` field is the literal
+    validated bool forwarded — guaranteed bool by the entry guard.
     """
 
     db_recovery: dict[str, int] = field(default_factory=dict)
@@ -96,19 +116,52 @@ class MaintenanceReport:
     network_skipped: bool = False
     skip_reason: str | None = None
     force: bool = False
+    db_recovery_failed: bool = False
 
     @property
     def clean(self) -> bool:
-        """True iff the sweep ran AND deleted every candidate with no failures
-        (network_skipped False AND failed/alerted/ops_alerted all zero). This
-        is the exit-0 condition (M2): a cron/``&&`` consumer can gate on the
-        exit code alone without parsing the payload."""
-        if self.network_skipped:
+        """True iff the sweep ran AND resolved every candidate with no pending
+        work (the exit-0 condition, Codex round-1 blockers 1+2). A cron/``&&``
+        consumer gates on the exit code alone without parsing the payload.
+
+        ``clean`` requires, ALL of:
+          (a) the DB pass did not raise (``db_recovery_failed`` False);
+          (b) the network pass ran (``network_skipped`` False) AND returned the
+              exact 8-key tally shape (a malformed/empty coordinator return
+              cannot masquerade as clean);
+          (c) every deletion candidate was deleted: ``attempted == deleted``.
+              This one predicate catches every non-deleted dimension the 8-key
+              return can carry — ``failed``, ``skipped`` (skipped_no_upload_id /
+              skipped_unknown_kind — surfaced anomalies needing attention),
+              ``alerted`` (processor raised, remote result unknowable), AND the
+              ``not_advanced`` class (busy / retry_wait / not_ready /
+              fence_conflict) which ``recover_deletions`` does NOT aggregate
+              into the 8-key return (op_repo:395) — it shows up only as
+              ``attempted - (deleted+failed+skipped+alerted) > 0``;
+          (d) no per-op exception (``ops_alerted`` 0);
+          (e) no DB-side pending work: ``manual`` (asset needs human
+              reconciliation) and ``left_uploading`` (active upload lease left
+              intact — its fenced apply will catch the withdraw on the next
+              upload attempt; maintenance correctly does not touch it, but it
+              IS unresolved this sweep).
+        """
+        if self.db_recovery_failed or self.network_skipped:
             return False
         d = self.deletion_recovery
-        return not (
-            d.get("failed", 0) or d.get("alerted", 0) or d.get("ops_alerted", 0)
-        )
+        # (b) shape: the coordinator always returns the 8 keys; a missing/extra
+        # key means the return is malformed — refuse clean (do not guess).
+        if set(d.keys()) != _DEL_TALLY_KEYS:
+            return False
+        # (c)+(d) deletion dimensions.
+        if d.get("failed", 0) or d.get("alerted", 0) or d.get("ops_alerted", 0):
+            return False
+        if d.get("attempted", 0) != d.get("deleted", 0):
+            return False
+        # (e) DB-side pending work.
+        db = self.db_recovery
+        if db.get("manual", 0) or db.get("left_uploading", 0):
+            return False
+        return True
 
 
 class MaintenanceError(RuntimeError):
@@ -169,6 +222,26 @@ def run_maintenance(
     if type(force) is not bool:
         raise ValueError("force must be a bool")
 
+    # Codex round-1 (lease/now_iso entry validation): recover_deletions
+    # validates lease_owner immediately + lease_seconds only inside processor
+    # claim (op_repo:111) — so with ZERO deletion candidates an invalid
+    # lease_seconds/now_iso would never be validated + the run could report a
+    # clean empty sweep against invalid config. Validate ALL three lib-boundary
+    # args at entry (programming-error guards, mirror the force guard: a bad
+    # lib arg raises ValueError before any work; the CLI's own defaults are
+    # always valid so this never fires via the CLI). type() is int for
+    # lease_seconds (NOT isinstance — bool is an int subclass; _check_lease_
+    # seconds's range check happens to reject True/False as 1/0, but the
+    # explicit type guard gives the precise error + matches the force discipline).
+    _require_lease_owner(lease_owner)
+    if type(lease_seconds) is not int:
+        raise ValueError(
+            f"lease_seconds must be an int in [{LEASE_MIN_SECONDS}, "
+            f"{LEASE_MAX_SECONDS}], got {type(lease_seconds).__name__}"
+        )
+    _check_lease_seconds(lease_seconds)
+    _parse_utc(now_iso)  # raises ValueError if not tz-aware ISO-8601
+
     # M1: read-only journal gate. _journal_state opens a mode=ro URI + creates
     # / migrates / writes NOTHING. Only 'current' proceeds; every other class
     # skips WITHOUT calling init/recover — so a fresh project never receives
@@ -176,6 +249,20 @@ def run_maintenance(
     # init_database would touch (which would later fail-close the capability
     # probe after a runtime/ delete, requiring doctor --reset). When the gate
     # yields 'current', the recover methods' internal init is a schema no-op.
+    #
+    # Scope (Codex round-1 blocker 3 — TOCTOU, documented limitation): the gate
+    # binds to the classification observed at THIS read; it does NOT bind the
+    # read to the journal subsequently opened by recover (those are two file
+    # opens with an unchecked window between). A CONCURRENT process that
+    # deletes/replaces the journal in that window could let begin_immediate's
+    # init_database recreate a fresh journal + touch the sentinel. This is a
+    # single-user local CLI tool — concurrent journal mutation mid-maintenance
+    # (e.g. `rm -rf .lecturecast` while maintenance runs) is not a supported
+    # scenario, and fully closing it requires a recovery-only-open primitive in
+    # operation_repository that opens WITHOUT init (a locked-primitive change,
+    # deferred). The M1 invariant as intended — "never touch the sentinel on a
+    # fresh/broken journal observed at gate time" — holds for every
+    # classification _journal_state returns (verified: all 12 classes skip).
     try:
         classification = _journal_state(project_dir)["classification"]
     except Exception as exc:  # pragma: no cover - _journal_state has its own backstop
@@ -201,18 +288,51 @@ def run_maintenance(
     # cleanup reconciliation). Commits before return (begin_immediate at
     # operation_repository.py:429), so the cleanup_required rows are durable
     # + visible to the network pass's candidate SELECT.
+    #
+    # Codex round-1 blocker 4: the DB pass is wrapped (mirroring the m3 network
+    # wrap) so a raised OperationStateError/OperationIntegrityError (e.g. a
+    # withdrawn receipt with corrupt topology) becomes a structured skip report
+    # instead of escaping as a harness exit-1 with no MaintenanceReport. The tx
+    # rolled back (begin_immediate), so nothing was over-claimed — this is a
+    # reporting-honesty fix, not a correctness gap. db_recovery_failed=True
+    # disambiguates "DB pass did not complete" from "DB pass ran with zero work"
+    # (db_recovery={} would otherwise be ambiguous). The network pass does NOT
+    # run on a half-recovered journal.
     op_repo = OperationRepository(project_dir)
-    db_tally = op_repo.recover_withdrawn_asset_cleanups(now_iso=now_iso)
+    try:
+        db_tally = op_repo.recover_withdrawn_asset_cleanups(now_iso=now_iso)
+    except Exception as exc:
+        return MaintenanceReport(
+            db_recovery={},
+            db_recovery_failed=True,
+            network_skipped=True,
+            skip_reason=(
+                f"DB 状态恢复失败（recover_withdrawn_asset_cleanups 抛出）— "
+                f"网络删除恢复未执行: {type(exc).__name__}: {exc}。"
+                f"请运行 `lecturecast doctor` 排查 journal 完整性。"
+            ),
+            force=force,
+        )
 
-    # B1: build the transport + read ITS provider as the single source of truth
-    # for "is the key configured?" — applies the SAME check the transport
-    # applies per-request (heygen_http.py:107: not isinstance OR not .strip).
-    # A whitespace-only key is treated identically to an absent key
+    # B1: build the transport + read ITS provider for an early-skip preflight
+    # when the key is absent/blank — applies the SAME predicate the transport
+    # applies per-request (heygen_http.py:107: not isinstance OR not .strip),
+    # so a whitespace-only key is treated identically to an absent key
     # (fail-closed), consistent with the transport AND the capability probe
     # (capabilities.py:471/685, both .strip()). Reading the transport's own
-    # provider (not a second bare env read) means this predicate CANNOT drift
-    # from the value the transport will actually use on the network pass —
-    # subsumes audit minor m7 (no duplicated env-var read).
+    # provider (not a second bare env read) means the PREDICATE cannot drift
+    # from the transport's per-request predicate (subsumes audit minor m7).
+    #
+    # Scope (Codex round-1 claim 1 — temporal drift, acknowledged): the provider
+    # reads the env var fresh on each call, so this preflight samples the key at
+    # gate time and the transport samples it again per HTTP request on the
+    # network pass — "same provider" ≠ "same value" if HEYGEN_API_KEY changes
+    # in the window between. This preflight is an EARLY-SKIP OPTIMIZATION, not
+    # the authoritative gate: the transport's per-request check is authoritative
+    # and will raise HttpTransportError(code="auth_failed") on a blank key at
+    # request time → recover_deletions surfaces it → the m3 wrap below turns it
+    # into a skip report → exit 2. So fail-closed holds either way; the preflight
+    # just skips the network round-trip when the key is observably absent now.
     transport = HeyGenHttpTransport()
     key = transport._api_key_provider()  # noqa: SLF001 — same provider used per-request
     if not isinstance(key, str) or not key.strip():
@@ -251,6 +371,21 @@ def run_maintenance(
             network_skipped=True,
             skip_reason=(
                 f"recover_deletions 抛出: {type(exc).__name__}: {exc}"
+            ),
+            force=force,
+        )
+    # Codex round-1 (empty-tally gap): the coordinator contract is the exact
+    # 8-key dict (op_repo:4246); validate the shape so a malformed/short/
+    # over-keyed return is surfaced as a skip (NOT clean) rather than
+    # masquerading as a no-op sweep. ``clean`` re-checks this as a backstop.
+    if set(del_tally.keys()) != _DEL_TALLY_KEYS:
+        return MaintenanceReport(
+            db_recovery=db_tally,
+            network_skipped=True,
+            skip_reason=(
+                f"recover_deletions 返回畸形 tally（期望 8 键 "
+                f"{sorted(_DEL_TALLY_KEYS)}，实际键 {sorted(del_tally.keys())}）— "
+                f"请运行 `lecturecast doctor`。"
             ),
             force=force,
         )
