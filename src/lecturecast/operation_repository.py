@@ -3118,36 +3118,50 @@ class OperationRepository:
           - ``manual_force_resources``: every NON-deleted ``heygen_remote_
             resources`` row with ``deletion_reason='manual_force'``. Each needs
             explicit operator action (never auto-recovered).
-          - ``unrecoverable_resources`` (Codex round-5): every NON-deleted,
-            NON-manual_force, NON-reusable ``heygen_remote_resources`` row in a
-            SCHEMA-LEGAL ANOMALOUS state that (i) NO locked primitive can
-            produce AND (ii) the deletion candidate SELECT explicitly treats as
-            anomalous (it fail-closes against the same states — see the witness
-            STATE-MATRIX gate at op_repo:4190-4322). Three sub-classes:
-              (a) ``(not_started) + (non-NULL reason)`` — a reason was set
-                  WITHOUT the status flipping to deletion_pending. The claim is
-                  the ONLY primitive that sets a reason + it sets
-                  ``deletion_pending`` in the SAME UPDATE, so this state is
-                  primitive-unreachable.
-              (b) ``(deletion_pending | deletion_failed) + (NULL reason)`` — the
-                  status advanced WITHOUT a reason. Same claim invariant: the
-                  claim always sets both, so primitive-unreachable.
-              (c) ``created_by_operation_id IS NULL`` — an ORPHANED resource
-                  whose owning op is gone. The outer candidate filter requires
-                  ``created_by_operation_id IS NOT NULL`` (op_repo:4084/4177),
-                  so the row is never swept; and ``heygen_operations`` is never
+          - ``unrecoverable_resources`` (Codex round-5 + round-6): every NON-
+            deleted, NON-manual_force, NON-reusable ``heygen_remote_resources``
+            row in a state NO locked primitive can produce AND the deletion
+            candidate SELECT refuses to drive. Three domains (ALL schema-legal
+            static-corruption states — zero on any producer-valid journal, so the
+            count cannot break a normal exit 0):
+              (a) ORPHAN — ``created_by_operation_id IS NULL``. The outer
+                  candidate filter requires IS NOT NULL (op_repo:4177/4399), so
+                  the row is never swept; and ``heygen_operations`` is never
                   DELETEd (no code path does it), so the FK ``ON DELETE SET
                   NULL`` never fires in normal flow → primitive-unreachable.
+              (b) ANOMALOUS STATE-MATRIX — ``(not_started)+(non-NULL reason)``
+                  OR ``(deletion_pending|deletion_failed)+(NULL reason)``. The
+                  claim is the ONLY primitive that sets a reason + it sets
+                  ``deletion_pending`` in the SAME UPDATE, so these states are
+                  primitive-unreachable. Mirrors the candidate SELECT's witness
+                  STATE-MATRIX gate (branch A admits only ``not_started+NULL``
+                  and ``(pending|failed)+(post_download|consent_withdrawal)``).
+              (c) Codex round-6 (BROKEN-TOPOLOGY GAP) — a CLAIM-ELIGIBLE
+                  resource (``pending|failed + post_download|consent_withdrawal``)
+                  with a NORMAL state-matrix but on an op the candidate SELECT
+                  REJECTS: no r2 on the op satisfies the FULL witness predicate
+                  (missing/foreign ref, credential mismatch, active op-lease,
+                  wrong kind, broken upload-binding, etc.). Round-5 counted only
+                  domains (a)+(b); such a resource escapes BOTH (normal state-
+                  matrix) AND the per-op pass (never selected → ``ops_alerted``
+                  stays 0) → round-5 虚报'd exit 0 over it. This is the SAME
+                  static-corruption threat model as (b) (direct INSERT evades
+                  validate-then-INSERT) — NOT the documented journal-replacement
+                  TOCTOU class (the row EXISTS at audit time; no concurrent
+                  mutation). Domain (c) mirrors the FULL witness predicate via
+                  the SHARED ``_DELETION_WITNESS_SUBQUERY_SQL`` constant (the
+                  SAME constant ``recover_deletions``'s candidate SELECT uses) —
+                  eliminating the hand-mirroring drift risk Codex round-4/5
+                  flagged across the 6+ topology classes. (c) is RESTRICTED to
+                  claim-eligible states so a normal in-flight ``not_started+NULL``
+                  pre-video portrait (default sweep deliberately excludes
+                  pre-video assets — the resolver has not released the tail) is
+                  NOT counted.
             Each such row is operator-attention-needed AND invisible to both
-            recovery primitives (the candidate SELECT excludes it; the DB pass
-            touches only withdrawn receipts). Without this count, exit 0 would
-            谎报 "clean" over a row the deletion subsystem itself refuses to
-            drive — a direct inconsistency between the exit-0 contract and the
-            candidate SELECT's own fail-closed posture. Counting these CANNOT
-            break a normal exit 0: the states are primitive-unreachable, so the
-            count is zero on every producer-valid journal; it fires ONLY on
-            corruption/schema-legal 直插 rows (the same threat model the
-            candidate SELECT's state-matrix gate already defends against).
+            recovery primitives. Without this count, exit 0 would 谎报 "clean"
+            over a row the deletion subsystem itself refuses to drive — a direct
+            inconsistency between the exit-0 contract and the candidate SELECT's
+            own fail-closed posture.
 
         NOT counted (in-flight pipeline states that WILL resolve on a future
         sweep — NOT stuck attention): ``deletion_pending`` resources with an
@@ -3179,31 +3193,55 @@ class OperationRepository:
                 "SELECT COUNT(*) FROM heygen_remote_resources "
                 "WHERE deletion_reason='manual_force' "
                 "AND deletion_status != 'deleted'").fetchone()[0]
-            # Codex round-5 — unrecoverable anomalous/orphaned resources. The
-            # predicate mirrors the candidate SELECT's OWN fail-closed posture
-            # (op_repo:4190-4322 witness STATE-MATRIX gate): the admitted auto-
-            # recoverable (status, reason) pairs are exactly {not_started+NULL,
-            # (pending|failed)+(post_download|consent_withdrawal)}, plus
-            # manual_force (counted above) + deleted (excluded by !='deleted').
-            # Every OTHER non-deleted, non-manual_force, non-reusable pair is
-            # anomalous (the candidate SELECT refuses to drive it). The
-            # ``created_by_operation_id IS NULL`` clause is the orphan class
-            # (the outer candidate filter's IS-NOT-NULL gate excludes it).
-            # ``deletion_reason IS NULL OR deletion_reason != 'manual_force'``
-            # is the SQL idiom for "not manual_force" that ALSO admits NULL
-            # (``NULL != 'manual_force'`` is NULL/falsy in SQL, which would
-            # wrongly exclude the pending+NULL anomaly we want to count).
+            # Codex round-5 + round-6 — unrecoverable resources. Three domains,
+            # ALL schema-legal ANOMALOUS / static-corruption states (a producer-
+            # valid journal has ZERO such rows), so counting them CANNOT break a
+            # normal exit 0:
+            #   (a) ORPHAN: ``created_by_operation_id IS NULL``.
+            #   (b) ANOMALOUS STATE-MATRIX: ``not_started+reason`` OR ``pending/
+            #       failed+NULL`` (the claim always sets status+reason in the SAME
+            #       UPDATE — primitive-unreachable). Mirrors the candidate SELECT's
+            #       witness STATE-MATRIX gate.
+            #   (c) Codex round-6 (broken-topology gap): a CLAIM-ELIGIBLE
+            #       resource (``pending/failed + post_download/consent_withdrawal``)
+            #       on an op the candidate SELECT REJECTS — NO r2 on the op
+            #       satisfies the FULL witness predicate (missing/foreign ref,
+            #       credential mismatch, active op-lease, wrong kind, broken
+            #       upload-binding, etc.). Such a resource has a NORMAL state-
+            #       matrix, so it escapes domain (b); it is never selected (so
+            #       ``ops_alerted`` stays 0); round-5 虚报'd exit 0 over it. This
+            #       is the SAME static-corruption threat model as (b) — a direct
+            #       INSERT evades the primitives' validate-then-INSERT — NOT the
+            #       documented journal-replacement TOCTOU class (the row EXISTS at
+            #       audit time; no concurrent mutation is needed).
+            # Mirroring the FULL witness predicate (not just state-matrix) via the
+            # SHARED _DELETION_WITNESS_SUBQUERY_SQL constant eliminates the drift
+            # risk Codex round-4/5 flagged (hand-mirroring 6+ topology classes by
+            # hand inevitably drifts). Domain (c) is RESTRICTED to claim-eligible
+            # states so a normal in-flight ``not_started+NULL`` pre-video portrait
+            # (the default sweep deliberately excludes pre-video assets — the
+            # resolver has not yet released the tail) is NOT counted.
+            # The outer row is aliased ``r`` because _DELETION_WITNESS_SUBQUERY_SQL
+            # correlates on ``r.created_by_operation_id`` (the SAME alias the
+            # candidate SELECT uses). ``deletion_reason IS NULL OR != 'manual_force'``
+            # is the SQL idiom admitting NULL (``NULL != 'manual_force'`` is
+            # NULL/falsy, which would wrongly exclude the pending+NULL anomaly in
+            # domain b).
             unrecoverable = conn.execute(
-                "SELECT COUNT(*) FROM heygen_remote_resources "
-                "WHERE deletion_status != 'deleted' "
-                "AND (deletion_reason IS NULL OR deletion_reason != 'manual_force') "
-                "AND retention_mode != 'reusable_avatar' "
+                "SELECT COUNT(*) FROM heygen_remote_resources r "
+                "WHERE r.deletion_status != 'deleted' "
+                "AND (r.deletion_reason IS NULL OR r.deletion_reason != 'manual_force') "
+                "AND r.retention_mode != 'reusable_avatar' "
                 "AND ("
-                " created_by_operation_id IS NULL"
-                " OR (deletion_status = 'not_started'"
-                "     AND deletion_reason IS NOT NULL)"
-                " OR (deletion_status IN ('deletion_pending', 'deletion_failed')"
-                "     AND deletion_reason IS NULL)"
+                " r.created_by_operation_id IS NULL"
+                " OR (r.deletion_status = 'not_started'"
+                "     AND r.deletion_reason IS NOT NULL)"
+                " OR (r.deletion_status IN ('deletion_pending', 'deletion_failed')"
+                "     AND r.deletion_reason IS NULL)"
+                " OR (r.deletion_status IN ('deletion_pending', 'deletion_failed')"
+                "     AND r.deletion_reason IN ('post_download', 'consent_withdrawal')"
+                "     AND r.created_by_operation_id IS NOT NULL"
+                "     AND NOT EXISTS (" + _DELETION_WITNESS_SUBQUERY_SQL + "))"
                 ")").fetchone()[0]
         finally:
             conn.close()
@@ -3909,6 +3947,170 @@ class AssetDeletionProcessor:
         return AssetDeletionOnceResult(claim=claim, outcome=outcome)
 
 
+#: The DEFAULT-mode deletion WITNESS subquery — the heart of the candidate
+#: SELECT (``DeletionCoordinator.recover_deletions``) AND the round-6 attention
+#: audit (``OperationRepository.count_recovery_attention``). Codex round-6 e5d-c:
+#: the attention audit must mirror the EXACT witness topology the candidate SELECT
+#: uses, NOT a hand-copied subset — factoring this ~140-line, 13-round-reviewed
+#: predicate into ONE constant prevents the six-plus topology classes (refs /
+#: credential / op-lease / single-video / download_status / upload-binding /
+#: terminal-proof / role-kind) from drifting between the two callers. An op is a
+#: valid DEFAULT-mode candidate IFF it has at least one non-reusable resource r2
+#: satisfying this predicate (branch A = non-deleted video in an admitted state-
+#: matrix; branch B = a tail-releasing witness mirroring the FULL claim topology).
+#: The attention audit negates it (``NOT EXISTS``) to count claim-eligible
+#: resources on ops the deletion subsystem refuses to select (broken topology).
+#:
+#: Correlates on the OUTER row's ``created_by_operation_id``; BOTH callers alias
+#: their outer resource ``r``. Internal aliases (r2/o/ref/ref2/rv/refv/u) are
+#: local to the subquery's SQLite scope — they do not collide with the outer query.
+_DELETION_WITNESS_SUBQUERY_SQL = (
+    " SELECT 1 FROM heygen_remote_resources r2 "
+    " JOIN heygen_operations o"
+    "   ON o.operation_id = r2.created_by_operation_id "
+    " WHERE r2.created_by_operation_id = r.created_by_operation_id "
+    " AND r2.retention_mode != 'reusable_avatar' "
+    " AND ("
+    # (A) SAFE video witness — a NON-DELETED video. The resolver
+    # gates the tail behind it (returns only the video this pass)
+    # and the video claim re-checks topology / download_status /
+    # single-video / op-lease, so only the (status, reason) state
+    # matrix + kind are needed here.
+    "  (r2.resource_kind = 'video'"
+    "   AND ((r2.deletion_status = 'not_started'"
+    "         AND r2.deletion_reason IS NULL)"
+    "        OR (r2.deletion_status IN ('deletion_pending',"
+    "                                  'deletion_failed')"
+    "            AND r2.deletion_reason IN ('post_download',"
+    "                                      'consent_withdrawal'))))"
+    "  OR"
+    # (B) TAIL-RELEASING witness — a DELETED video or a NON-VIDEO
+    # asset. The resolver skips a deleted video and, finding no
+    # non-deleted video, releases the tail to the asset claim,
+    # which does NOT re-check op.lease and runs after the witness
+    # video is already gone. A DELETED witness therefore escapes
+    # ALL downstream re-verification, so EVERY claim invariant the
+    # live-video path would have enforced is restated here as a
+    # full topology (round-6: topology / op-lease / single-video /
+    # download_status / kind / upload-binding — 6 bypass classes,
+    # one per un-mirrored invariant).
+    "  (o.lease_owner IS NULL AND o.lease_expires_at IS NULL"
+    "   AND r2.credential_profile_id = o.credential_profile_id"
+    "   AND EXISTS (SELECT 1 FROM heygen_resource_operation_refs ref"
+    "    WHERE ref.resource_id = r2.resource_id"
+    "    AND ref.operation_id = r2.created_by_operation_id)"
+    "   AND NOT EXISTS (SELECT 1 FROM heygen_resource_operation_refs"
+    "    ref2 WHERE ref2.resource_id = r2.resource_id"
+    "    AND ref2.operation_id <> r2.created_by_operation_id)"
+    "   AND ("
+    #  (B1) deleted video: count(video)==1 + op.download_status
+    #  verified — but ONLY for post_download (consent_withdrawal
+    #  cleanup is delivery-independent: legit on unverified ops).
+    #  Round-7 P1: also require the apply TERMINAL PROOF — a real
+    #  successful video delete (apply_deletion_outcome_in_tx) always
+    #  sets deleted_at NOT NULL + deletion_attempts>=1 (the claim
+    #  bumps it before apply) + deletion_next_retry_at IS NULL +
+    #  last_deletion_error IS NULL. A 直插 'deleted' row with
+    #  deleted_at=NULL/attempts=0 is schema-legal but unreachable
+    #  via apply; without this gate it falsely releases the tail.
+    #  Applies to BOTH reasons (apply sets deleted_at regardless).
+    "    (r2.resource_kind = 'video'"
+    "     AND r2.deletion_status = 'deleted'"
+    "     AND r2.deletion_reason IN ('post_download',"
+    "                               'consent_withdrawal')"
+    "     AND r2.deleted_at IS NOT NULL"
+    "     AND r2.deletion_attempts >= 1"
+    "     AND r2.deletion_next_retry_at IS NULL"
+    "     AND r2.last_deletion_error IS NULL"
+    "     AND (r2.deletion_reason != 'post_download'"
+    "          OR o.download_status = 'verified')"
+    "     AND (r2.deletion_reason != 'post_download'"
+    "          OR 1 = (SELECT COUNT(*) FROM heygen_remote_resources rv"
+    "            JOIN heygen_resource_operation_refs refv"
+    "              ON refv.resource_id = rv.resource_id"
+    "            WHERE refv.operation_id = r2.created_by_operation_id"
+    "            AND rv.resource_kind = 'video')))"
+    "    OR"
+    #  (B2) non-video pending/failed asset: kind restricted to
+    #  audio_asset/portrait_asset (the only kinds with real upload
+    #  bindings; avatar_look/group route to skipped_unknown_kind
+    #  with no claim). Round-6 required the binding to EXIST; round-
+    #  7 P1 requires the FULL binding the asset claim enforces —
+    #  the asset↔resource matrix (deletion_pending <-> upload
+    #  cleanup_required) AND the asset_role↔resource_kind pair the
+    #  claim's _validate_asset_binding checks. A deletion_pending
+    #  resource with an `uploaded` or role-mismatched upload is a
+    #  matrix inconsistency the claim would raise on; without these
+    #  gates it witnesses the op and the coordinator's dumb iterator
+    #  deletes the sibling while the witness's own claim alerts.
+    #  Round-8 P1 (B2 download_status mirror): B2 ALSO requires —
+    #  identical to B1's clause directly above — that a post_download
+    #  witness only authorize a download-verified op. The asset claim
+    #  (claim_asset_deletion_in_tx) does NOT gate on op.download_status
+    #  and the resolver only carries it as informational context, so
+    #  when B2 authorizes an op with NO live/verified video (a B2-only
+    #  op) no layer enforces "delivery was verified before asset
+    #  cleanup." A 直插 pending/post_download asset witness on an
+    #  unverified op would release the tail and the asset claim would
+    #  delete a pre-delivery sibling (empirically confirmed, then
+    #  closed). consent_withdrawal stays exempt (delivery-independent).
+    "    (r2.resource_kind IN ('audio_asset','portrait_asset')"
+    "     AND r2.deletion_status IN ('deletion_pending',"
+    "                               'deletion_failed')"
+    "     AND r2.deletion_reason IN ('post_download',"
+    "                               'consent_withdrawal')"
+    "     AND (r2.deletion_reason != 'post_download'"
+    "          OR o.download_status = 'verified')"
+    #  Round-9 P1 (B2 single-video mirror): B2 ALSO requires —
+    #  identical to B1's clause directly above — that a
+    #  post_download witness only authorize a SINGLE-VIDEO op.
+    #  The video claim's _single_video gate is an OP-LEVEL
+    #  invariant (resolver L2328 "at most one video per op"),
+    #  enforced ONLY on the live-video path; the asset claim
+    #  reads zero video count and the resolver only comments on
+    #  it (trusting "the video claim will fail-closed on
+    #  doubles" — a trust broken once the videos are already
+    #  deleted/skipped). A 直插 double-video op (COUNT>=2) with
+    #  both videos marked deleted routes around B1's count
+    #  defense through a B2 asset witness: B1 refuses (COUNT==1
+    #  fails its gate), B2 authorizes, the resolver skips both
+    #  deleted videos -> releases the tail -> the coordinator
+    #  sweeps individually-eligible assets on a structurally-
+    #  corrupt op that B1's gate exists to freeze for human
+    #  reconciliation. Same B1↔B2 asymmetry class as round-8's
+    #  download_status (empirically confirmed, then closed).
+    #  consent_withdrawal stays exempt (delivery/structure-
+    #  independent (matching B1 and the VIDEO claim's consent
+    #  exemption). NOTE: B2's mirror is COUNT(video) <= 1 (i.e.
+    #  `1 >= COUNT`), NOT B1's exact `1 == COUNT`. The invariant
+    #  is the resolver's "AT MOST one video per op" contract
+    #  (L2328) — zero is allowed. B1's witness IS a deleted
+    #  video, so COUNT>=1 is self-guaranteed and `==1` ⟺ `<=1`.
+    #  B2's witness is a non-video ASSET, so the op may
+    #  legitimately have 0 video rows (e.g. a post-delivery op
+    #  whose video row was already hard-purged, or a consent
+    #  cleanup); `==1` would wrongly freeze those legit 0-video
+    #  sweeps. `<=1` blocks the corrupt >=2 case while keeping
+    #  the legit 0- and 1-video cases (round-8 control).
+    "     AND (r2.deletion_reason != 'post_download'"
+    "          OR 1 >= (SELECT COUNT(*) FROM heygen_remote_resources rv"
+    "            JOIN heygen_resource_operation_refs refv"
+    "              ON refv.resource_id = rv.resource_id"
+    "            WHERE refv.operation_id = r2.created_by_operation_id"
+    "            AND rv.resource_kind = 'video'))"
+    "     AND EXISTS (SELECT 1 FROM heygen_asset_uploads u"
+    "      WHERE u.remote_resource_id = r2.resource_id"
+    "      AND u.parent_operation_id = r2.created_by_operation_id"
+    "      AND u.status = 'cleanup_required'"
+    "      AND ((r2.resource_kind = 'audio_asset'"
+    "            AND u.asset_role = 'synthetic_narration_audio')"
+    "           OR (r2.resource_kind = 'portrait_asset'"
+    "            AND u.asset_role = 'portrait_photo'))))"
+    "   ))"
+    " )"
+)
+
+
 class DeletionCoordinator:
     """§3.5 normal-order deletion coordinator (§5.5e5b0c3c-c3). Consumes the
     c2 DeletionPlan × the c1/video processors.
@@ -4233,151 +4435,14 @@ class DeletionCoordinator:
                     "WHERE r.deletion_status != 'deleted' "
                     "AND r.retention_mode != 'reusable_avatar' "
                     "AND r.created_by_operation_id IS NOT NULL "
-                    "AND EXISTS ("
-                    " SELECT 1 FROM heygen_remote_resources r2 "
-                    " JOIN heygen_operations o"
-                    "   ON o.operation_id = r2.created_by_operation_id "
-                    " WHERE r2.created_by_operation_id = r.created_by_operation_id "
-                    " AND r2.retention_mode != 'reusable_avatar' "
-                    " AND ("
-                    # (A) SAFE video witness — a NON-DELETED video. The resolver
-                    # gates the tail behind it (returns only the video this pass)
-                    # and the video claim re-checks topology / download_status /
-                    # single-video / op-lease, so only the (status, reason) state
-                    # matrix + kind are needed here.
-                    "  (r2.resource_kind = 'video'"
-                    "   AND ((r2.deletion_status = 'not_started'"
-                    "         AND r2.deletion_reason IS NULL)"
-                    "        OR (r2.deletion_status IN ('deletion_pending',"
-                    "                                  'deletion_failed')"
-                    "            AND r2.deletion_reason IN ('post_download',"
-                    "                                      'consent_withdrawal'))))"
-                    "  OR"
-                    # (B) TAIL-RELEASING witness — a DELETED video or a NON-VIDEO
-                    # asset. The resolver skips a deleted video and, finding no
-                    # non-deleted video, releases the tail to the asset claim,
-                    # which does NOT re-check op.lease and runs after the witness
-                    # video is already gone. A DELETED witness therefore escapes
-                    # ALL downstream re-verification, so EVERY claim invariant the
-                    # live-video path would have enforced is restated here as a
-                    # full topology (round-6: topology / op-lease / single-video /
-                    # download_status / kind / upload-binding — 6 bypass classes,
-                    # one per un-mirrored invariant).
-                    "  (o.lease_owner IS NULL AND o.lease_expires_at IS NULL"
-                    "   AND r2.credential_profile_id = o.credential_profile_id"
-                    "   AND EXISTS (SELECT 1 FROM heygen_resource_operation_refs ref"
-                    "    WHERE ref.resource_id = r2.resource_id"
-                    "    AND ref.operation_id = r2.created_by_operation_id)"
-                    "   AND NOT EXISTS (SELECT 1 FROM heygen_resource_operation_refs"
-                    "    ref2 WHERE ref2.resource_id = r2.resource_id"
-                    "    AND ref2.operation_id <> r2.created_by_operation_id)"
-                    "   AND ("
-                    #  (B1) deleted video: count(video)==1 + op.download_status
-                    #  verified — but ONLY for post_download (consent_withdrawal
-                    #  cleanup is delivery-independent: legit on unverified ops).
-                    #  Round-7 P1: also require the apply TERMINAL PROOF — a real
-                    #  successful video delete (apply_deletion_outcome_in_tx) always
-                    #  sets deleted_at NOT NULL + deletion_attempts>=1 (the claim
-                    #  bumps it before apply) + deletion_next_retry_at IS NULL +
-                    #  last_deletion_error IS NULL. A 直插 'deleted' row with
-                    #  deleted_at=NULL/attempts=0 is schema-legal but unreachable
-                    #  via apply; without this gate it falsely releases the tail.
-                    #  Applies to BOTH reasons (apply sets deleted_at regardless).
-                    "    (r2.resource_kind = 'video'"
-                    "     AND r2.deletion_status = 'deleted'"
-                    "     AND r2.deletion_reason IN ('post_download',"
-                    "                               'consent_withdrawal')"
-                    "     AND r2.deleted_at IS NOT NULL"
-                    "     AND r2.deletion_attempts >= 1"
-                    "     AND r2.deletion_next_retry_at IS NULL"
-                    "     AND r2.last_deletion_error IS NULL"
-                    "     AND (r2.deletion_reason != 'post_download'"
-                    "          OR o.download_status = 'verified')"
-                    "     AND (r2.deletion_reason != 'post_download'"
-                    "          OR 1 = (SELECT COUNT(*) FROM heygen_remote_resources rv"
-                    "            JOIN heygen_resource_operation_refs refv"
-                    "              ON refv.resource_id = rv.resource_id"
-                    "            WHERE refv.operation_id = r2.created_by_operation_id"
-                    "            AND rv.resource_kind = 'video')))"
-                    "    OR"
-                    #  (B2) non-video pending/failed asset: kind restricted to
-                    #  audio_asset/portrait_asset (the only kinds with real upload
-                    #  bindings; avatar_look/group route to skipped_unknown_kind
-                    #  with no claim). Round-6 required the binding to EXIST; round-
-                    #  7 P1 requires the FULL binding the asset claim enforces —
-                    #  the asset↔resource matrix (deletion_pending <-> upload
-                    #  cleanup_required) AND the asset_role↔resource_kind pair the
-                    #  claim's _validate_asset_binding checks. A deletion_pending
-                    #  resource with an `uploaded` or role-mismatched upload is a
-                    #  matrix inconsistency the claim would raise on; without these
-                    #  gates it witnesses the op and the coordinator's dumb iterator
-                    #  deletes the sibling while the witness's own claim alerts.
-                    #  Round-8 P1 (B2 download_status mirror): B2 ALSO requires —
-                    #  identical to B1's clause directly above — that a post_download
-                    #  witness only authorize a download-verified op. The asset claim
-                    #  (claim_asset_deletion_in_tx) does NOT gate on op.download_status
-                    #  and the resolver only carries it as informational context, so
-                    #  when B2 authorizes an op with NO live/verified video (a B2-only
-                    #  op) no layer enforces "delivery was verified before asset
-                    #  cleanup." A 直插 pending/post_download asset witness on an
-                    #  unverified op would release the tail and the asset claim would
-                    #  delete a pre-delivery sibling (empirically confirmed, then
-                    #  closed). consent_withdrawal stays exempt (delivery-independent).
-                    "    (r2.resource_kind IN ('audio_asset','portrait_asset')"
-                    "     AND r2.deletion_status IN ('deletion_pending',"
-                    "                               'deletion_failed')"
-                    "     AND r2.deletion_reason IN ('post_download',"
-                    "                               'consent_withdrawal')"
-                    "     AND (r2.deletion_reason != 'post_download'"
-                    "          OR o.download_status = 'verified')"
-                    #  Round-9 P1 (B2 single-video mirror): B2 ALSO requires —
-                    #  identical to B1's clause directly above — that a
-                    #  post_download witness only authorize a SINGLE-VIDEO op.
-                    #  The video claim's _single_video gate is an OP-LEVEL
-                    #  invariant (resolver L2328 "at most one video per op"),
-                    #  enforced ONLY on the live-video path; the asset claim
-                    #  reads zero video count and the resolver only comments on
-                    #  it (trusting "the video claim will fail-closed on
-                    #  doubles" — a trust broken once the videos are already
-                    #  deleted/skipped). A 直插 double-video op (COUNT>=2) with
-                    #  both videos marked deleted routes around B1's count
-                    #  defense through a B2 asset witness: B1 refuses (COUNT==1
-                    #  fails its gate), B2 authorizes, the resolver skips both
-                    #  deleted videos -> releases the tail -> the coordinator
-                    #  sweeps individually-eligible assets on a structurally-
-                    #  corrupt op that B1's gate exists to freeze for human
-                    #  reconciliation. Same B1↔B2 asymmetry class as round-8's
-                    #  download_status (empirically confirmed, then closed).
-                    #  consent_withdrawal stays exempt (delivery/structure-
-                    #  independent (matching B1 and the VIDEO claim's consent
-                    #  exemption). NOTE: B2's mirror is COUNT(video) <= 1 (i.e.
-                    #  `1 >= COUNT`), NOT B1's exact `1 == COUNT`. The invariant
-                    #  is the resolver's "AT MOST one video per op" contract
-                    #  (L2328) — zero is allowed. B1's witness IS a deleted
-                    #  video, so COUNT>=1 is self-guaranteed and `==1` ⟺ `<=1`.
-                    #  B2's witness is a non-video ASSET, so the op may
-                    #  legitimately have 0 video rows (e.g. a post-delivery op
-                    #  whose video row was already hard-purged, or a consent
-                    #  cleanup); `==1` would wrongly freeze those legit 0-video
-                    #  sweeps. `<=1` blocks the corrupt >=2 case while keeping
-                    #  the legit 0- and 1-video cases (round-8 control).
-                    "     AND (r2.deletion_reason != 'post_download'"
-                    "          OR 1 >= (SELECT COUNT(*) FROM heygen_remote_resources rv"
-                    "            JOIN heygen_resource_operation_refs refv"
-                    "              ON refv.resource_id = rv.resource_id"
-                    "            WHERE refv.operation_id = r2.created_by_operation_id"
-                    "            AND rv.resource_kind = 'video'))"
-                    "     AND EXISTS (SELECT 1 FROM heygen_asset_uploads u"
-                    "      WHERE u.remote_resource_id = r2.resource_id"
-                    "      AND u.parent_operation_id = r2.created_by_operation_id"
-                    "      AND u.status = 'cleanup_required'"
-                    "      AND ((r2.resource_kind = 'audio_asset'"
-                    "            AND u.asset_role = 'synthetic_narration_audio')"
-                    "           OR (r2.resource_kind = 'portrait_asset'"
-                    "            AND u.asset_role = 'portrait_photo'))))"
-                    "   ))"
-                    " )"
-                    ") ORDER BY r.created_by_operation_id").fetchall()
+                    # Codex round-6 e5d-c: the witness predicate is SHARED with
+                    # count_recovery_attention's unrecoverable audit via the
+                    # module-level _DELETION_WITNESS_SUBQUERY_SQL constant — the
+                    # attention audit mirrors the EXACT candidate topology (no
+                    # drift across the 6+ topology classes). See the constant's
+                    # docstring above for the full branch A/B + round-6..13 notes.
+                    "AND EXISTS (" + _DELETION_WITNESS_SUBQUERY_SQL + ") "
+                    "ORDER BY r.created_by_operation_id").fetchall()
         op_ids = [r["op_id"] for r in rows]
 
         aggregate = {"ops_driven": 0, "ops_empty": 0, "ops_alerted": 0,

@@ -276,6 +276,30 @@ line 489 pass criteria：
 
 **待 Codex round-5 锁定复审**（effort=low，invariant-completeness framing：3 gap 闭合是否穷举 —— `_safe_key_repr` 是否 total、attention 边界是否对称 DB/deletion、unrecoverable SQL 是否正确镜像候选 state-matrix 门禁且不破正常 exit 0；残留猎：是否还有 operator-attention 态未被三 tally + unrecoverable 覆盖；broken-topology 范围裁定是否成立）。
 
+### 1.13a round-6 闭合（Codex round-5 NOT LOCKABLE，2 blocker）
+
+Codex round-5 复审裁定 **NOT LOCKABLE**，2 blocker（G2 attention 边界 + G3 state-matrix 域确认闭合；G3 rationale 确认 sound）。两者均成立：
+
+| # | Codex round-5 blocker | round-6 闭合 |
+|---|----------------------|--------------|
+| 1 | `_safe_key_repr` 的 `except Exception` **不能**兜住 `BaseException` 子类（`KeyboardInterrupt` / `SystemExit`）—— 一个 `__repr__` 抛 `KeyboardInterrupt` 的键会逃逸为 exit 1；helper 的 "CANNOT raise / ANY exception" docstring 是**假的**。catch `BaseException` 被禁（会吞用户的 Ctrl+C） | **严格 total 修**：diagnostic **完全不调 `repr()`** —— 改 `len()` on plain dict（builtin，不能抛）。畸形 tally 的精确键对 operator action 无操作价值（run doctor），键数 + 期望键集已足够描述 shape mismatch。删 `_safe_key_repr` helper；DB + deletion 两 diagnostic 改 `got = f"dict 含 {len(tally)} 键"`（non-dict 分支用 `type(x).__name__`，同 lines 379/384/389 的 builtin-safe 模式） |
+| 2 | **broken-topology gap**：一个**唯一**资源，state-matrix 正常（pending/failed + post_download/consent_withdrawal）但拓扑断裂（缺/外 ref、credential 不匹配、active op-lease、缺 upload-binding、kind 错配）→ 候选 SELECT 的 witness 谓词**拒绝整个 op**（无 r2 满足）→ op 从不被选出 → `ops_alerted=0` AND round-5 `unrecoverable_resources=0`（domain b 只查 state-matrix，漏拓扑）→ **exit 0 谎报**。round-5 的范围裁定（"broken-topology = TOCTOU 类，不计"）**被 Codex 反驳**：静态 corruption 审计时已存在，与 state-matrix 异常同属 direct-corruption 威胁模型（direct INSERT 绕 validate-then-INSERT），**非** journal-replacement TOCTOU 类（后者是维护运行**期间**并发替换） | **共享谓词 + domain (c)**：(1) 抽 `_DELETION_WITNESS_SUBQUERY_SQL` 模块级常量（候选 SELECT witness 子查询的逐字拷贝，含全部 round-6..13 注释）—— `recover_deletions` 候选 SELECT + `count_recovery_attention` unrecoverable COUNT **共用同一谓词**，消除 Codex round-4/5 反复警告的手工镜像 6+ 拓扑类的 drift 风险；(2) unrecoverable COUNT 加 domain (c)：`status IN (pending,failed) AND reason IN (post_download,consent_withdrawal) AND created_by_operation_id IS NOT NULL AND NOT EXISTS(<共享谓词>)`。外层表别名 `r`（共享谓词相关于 `r.created_by_operation_id`，同候选 SELECT） |
+
+> **round-6 关键设计裁决（范围反转）**：round-5 我裁定 "broken-topology 是 TOCTOU 类、不计" 并用 "primitives 先校验再 INSERT" 论证。Codex 正确反驳：**静态 corruption 审计时已存在**就属于 direct-corruption 威胁模型 —— 与 state-matrix 异常（domain b）**同一**模型（两者都需 direct INSERT 绕过 validate-then-INSERT）。我的 "TOCTOU 类" 标签是**不一致**的：state-matrix 异常也需 direct INSERT，我却计了它们。要么都不计（回到 round-4 谎报），要么都计。round-6 选都计，且用**共享谓词**（非手工镜像）消除 drift。`原则陈述正确 ≠ 实现穷举` —— "fail-closed 覆盖最终态" 这一原则 round-5 已陈述，但实现（domain b 只查 state-matrix）没穷举到拓扑域。
+
+> **domain (c) 范围限定（避免假阳性）**：domain (c) **只**覆盖 claim-eligible 态（pending/failed + post_download/consent_withdrawal），**不**覆盖 `not_started+NULL` 的正常在途 pre-video portrait。否则每个未生成 video 的 op 上的 pre-video 资产都会被计（op 无 witness）→ 正常多资源 pre-video 处理期间 exit 0 不可达。claim-eligible 限定保持 default sweep 刻意的 pre-video 排除（resolver 未释 tail）。
+
+> **共享谓词的 drift 防御**：candidate SELECT（`recover_deletions`，op_repo:~4394）与 attention audit（`count_recovery_attention` unrecoverable COUNT）现在引用**同一** `_DELETION_WITNESS_SUBQUERY_SQL` 常量。任何 witness 谓词的演化（新增拓扑类、收紧门禁）只改一处，两处自动一致。这是 Codex round-4/5 反复建议的 "factor into a shared SQL fragment / read-only selector"。常量 docstring 记录两 caller + 相关变量 `r.created_by_operation_id` + 内部别名（r2/o/ref/ref2/rv/refv/u）局限于子查询 SQLite scope。
+
+**round-6 改动** ——
+1. `src/lecturecast/maintenance.py`：**删** `_safe_key_repr` helper；DB-tally diagnostic（`got = f"dict 含 {len(db_tally)} 键"`）+ deletion-tally diagnostic（对称 `len(del_tally)`）—— 两处都不调 `repr()`，`len()` on plain dict 是 builtin-safe；non-dict 分支保留 `type(x).__name__`。
+2. `src/lecturecast/operation_repository.py`：新增模块级常量 `_DELETION_WITNESS_SUBQUERY_SQL`（候选 SELECT witness 子查询逐字拷贝，`class DeletionCoordinator:` 之前）；`recover_deletions` 候选 SELECT 内联子查询改 `"AND EXISTS (" + _DELETION_WITNESS_SUBQUERY_SQL + ") "`（行为零变化，纯机械抽取，c3 68 测验证）；`count_recovery_attention` 第 3 COUNT 加 domain (c) `NOT EXISTS(<共享谓词>)`，外层别名 `r`；docstring 扩三域 (a 孤儿 / b state-matrix 异常 / c broken-topology) + 共享谓词 + 范围限定。**纯加法只读诊断，不改任何 locked mutation primitive**（候选 SELECT 行为零变化）。
+3. `src/lecturecast/commands/maintenance.py`：exit-code docstring + attention 注释 + operator message 扩 "断裂拓扑资源"（domain c）。
+
+**round-6 测试加固（105 → 109 测，+4）** —— `test_db_tally_malformed_baseexception_repr_key_wrapped_to_skip`（blocker 1 严格 total：`__repr__` 抛 `KeyboardInterrupt`（BaseException）→ round-5 `except Exception` 兜不住会逃逸 exit 1；round-6 `len()` 不调 repr → exit 2 非 1）；更新两 hostile-repr 测试 docstring（round-5 `except Exception` → round-6 no-repr）；`test_attention_audit_unrecoverable_broken_topology_no_witness_gates_clean`（blocker 2 RED：唯一 pending+post_download portrait、无 video、无 upload-binding → 无 witness → unrecoverable=1 → exit 2，round-5 会 exit 0 谎报）；`test_attention_audit_unrecoverable_broken_topology_with_video_witness_not_counted`（blocker 2 control：同一断裂 portrait + `not_started+NULL` video witness → op 可选 → domain c 不计 → exit 0，证明无假阳性 + per-op pass 是 selectable op 的 authority）；`test_attention_audit_unrecoverable_pre_video_asset_no_witness_not_counted`（范围限定 guard：唯一 `not_started+NULL` pre-video portrait、无 witness → domain c 不计（只覆盖 claim-eligible）→ exit 0，防假阳性破坏在途可达性）；修 `test_attention_audit_normal_inflight_states_not_counted_unrecoverable`（加 `not_started+NULL` video witness 让 op 可选，否则 n2/n3/n4 被 domain c 误计）。全量 **1167 测全绿**（1163 + 4 新，零回归）。
+
+**待 Codex round-6 锁定复审**（effort=low，invariant-completeness framing：2 blocker 闭合是否穷举 —— (1) diagnostic 是否真的无 `repr()` 残留（grep 确认）、`len()` on plain dict 是否 builtin-safe；(2) domain (c) 的 `NOT EXISTS(<共享谓词>)` 是否与候选 SELECT 的 `EXISTS(<共享谓词>)` 严格对偶、外层别名 `r` 是否一致、范围限定（只 claim-eligible）是否避免假阳性；残留猎：共享常量抽取是否引入新 drift、是否有 claim-eligible 态仍被 domain c 漏计、是否有正常态被 domain c 误计）。
+
 ---
 
 ## 2. 盲预测（实现前先写死的契约）

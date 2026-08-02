@@ -1338,21 +1338,42 @@ def test_attention_audit_clean_journal_zero_attention_exit_0(
 
 class _HostileReprKey:
     """A key whose ``__repr__`` raises — ``repr()`` is NOT total. Codex round-4
-    blocker 1: the malformed-tally diagnostic renders ``sorted(repr(k) ...)`` to
-    build the skip_reason; without the ``_safe_key_repr`` wrapper this raises
-    RuntimeError OUTSIDE the recovery try-block → exit 1."""
+    blocker 1: the malformed-tally diagnostic rendered ``sorted(repr(k) ...)``
+    to build the skip_reason; without a wrapper this raises RuntimeError OUTSIDE
+    the recovery try-block → exit 1. Codex round-5 wrapped repr in ``except
+    Exception``; Codex round-6 removed ``repr()`` from the diagnostic entirely
+    (``len()`` on a plain dict is builtin-safe) — see the strictly-total note
+    below for WHY ``except Exception`` was still insufficient."""
 
     def __repr__(self):
         raise RuntimeError("repr boom")
 
 
+class _HostileBaseExceptionReprKey:
+    """A key whose ``__repr__`` raises ``KeyboardInterrupt`` (a
+    ``BaseException`` subclass). Codex round-5's ``_safe_key_repr`` caught only
+    ``except Exception`` — ``KeyboardInterrupt`` / ``SystemExit`` would ESCAPE
+    it, so its "CANNOT raise / ANY exception" docstring claim was FALSE (the
+    round-5 closure was incomplete). Catching ``BaseException`` is forbidden
+    (it swallows the user's Ctrl+C). Codex round-6's strictly-total fix: do NOT
+    call ``repr()`` at all — the diagnostic uses ``len()`` (builtin, cannot
+    raise), so neither an Exception- nor a BaseException-raising ``__repr__``
+    can escape. This test pins that round-6-specific closure."""
+
+    def __repr__(self):
+        raise KeyboardInterrupt("repr boom")
+
+
 def test_db_tally_malformed_hostile_repr_key_wrapped_to_skip(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    """Codex round-4 blocker 1 / round-5 fix: a malformed DB tally carrying a
+    """Codex round-4 blocker 1 / round-6 fix: a malformed DB tally carrying a
     key whose ``__repr__`` raises is rejected by ``_valid_tally`` (key set
     mismatch), and the diagnostic that builds the skip_reason must NOT escape via
-    the hostile ``repr``. ``_safe_key_repr`` wraps repr in try/except (total) →
+    the hostile ``repr``. Round-5's ``_safe_key_repr`` (``except Exception``)
+    closed the ordinary-Exception case; round-6 removed ``repr()`` from the
+    diagnostic entirely (uses ``len()``) so EVEN a ``BaseException``-raising
+    ``__repr__`` cannot escape (see the companion BaseException test below) →
     structured skip (db_recovery_failed, exit 2), NOT exit 1."""
     project = _current_project(tmp_path)
     monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
@@ -1370,7 +1391,7 @@ def test_db_tally_malformed_hostile_repr_key_wrapped_to_skip(
     assert "畸形 tally" in report.skip_reason
     assert report.clean is False
 
-    # CLI → exit 2 (NOT exit 1 — the hostile repr is caught by _safe_key_repr).
+    # CLI → exit 2 (NOT exit 1 — the round-6 diagnostic uses len(), not repr()).
     result = _run_cli(project)
     assert result.exit_code == 2
 
@@ -1378,9 +1399,10 @@ def test_db_tally_malformed_hostile_repr_key_wrapped_to_skip(
 def test_deletion_tally_malformed_hostile_repr_key_wrapped_to_skip(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    """Codex round-4 blocker 1 / round-5 fix (deletion symmetric): a malformed
+    """Codex round-4 blocker 1 / round-6 fix (deletion symmetric): a malformed
     deletion tally carrying a key whose ``__repr__`` raises is rejected by
-    ``_valid_tally`` + the diagnostic uses ``_safe_key_repr`` → exit 2, not 1."""
+    ``_valid_tally`` + the round-6 diagnostic uses ``len()`` (NOT ``repr()``) →
+    exit 2, not 1."""
     project = _current_project(tmp_path)
     monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
     tally = dict(_CLEAN_DEL_TALLY)
@@ -1398,6 +1420,40 @@ def test_deletion_tally_malformed_hostile_repr_key_wrapped_to_skip(
     # DB pass committed (real, empty journal) → well-formed 5-key tally.
     assert report.db_recovery == dict(_EMPTY_DB_TALLY)
 
+    result = _run_cli(project)
+    assert result.exit_code == 2
+
+
+def test_db_tally_malformed_baseexception_repr_key_wrapped_to_skip(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Codex round-6 blocker 1 (strict totality): a malformed DB tally carrying
+    a key whose ``__repr__`` raises ``KeyboardInterrupt`` (a ``BaseException``,
+    NOT an ``Exception``) must STILL become a structured exit-2 skip, never an
+    exit-1 escape. Round-5's ``_safe_key_repr`` caught only ``except Exception``
+    — ``KeyboardInterrupt`` / ``SystemExit`` would blow past it (and catching
+    ``BaseException`` is forbidden: it would swallow the user's Ctrl+C). The
+    round-6 fix removed ``repr()`` from the diagnostic entirely (uses ``len()``),
+    so NO ``__repr__`` — Exception or BaseException — is ever invoked on the
+    malformed key. This test would have FAILED under round-5 (KeyboardInterrupt
+    escapes → the CLI process dies / exit 1)."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+    bad_db = {_HostileBaseExceptionReprKey(): 0}  # plain dict, wrong keys
+
+    def spy(self, *, now_iso):
+        return bad_db
+    monkeypatch.setattr(OperationRepository, "recover_withdrawn_asset_cleanups", spy)
+
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.db_recovery_failed is True
+    assert report.network_skipped is True
+    assert report.db_recovery == {}
+    assert report.skip_reason is not None
+    assert "畸形 tally" in report.skip_reason
+    assert report.clean is False
+
+    # CLI → exit 2 (NOT exit 1 — len() never invokes the hostile __repr__).
     result = _run_cli(project)
     assert result.exit_code == 2
 
@@ -1593,18 +1649,36 @@ def test_attention_audit_unrecoverable_orphan_resource_gates_clean(
 def test_attention_audit_normal_inflight_states_not_counted_unrecoverable(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    """Codex round-5 control (normal exit-0 reachability): every producer-valid
-    in-flight + resolved state is NOT counted as unrecoverable — the audit fires
-    ONLY on corruption/schema-legal 直插 anomalies. Seeds one of each normal
-    (status, reason) pair the candidate SELECT admits + a resolved deleted row +
-    a reusable_avatar (dashboard-managed, deliberately excluded), then asserts
-    unrecoverable_resources == 0 (so a normal journal still reaches exit 0)."""
+    """Codex round-5 + round-6 control (normal exit-0 reachability): every
+    producer-valid in-flight + resolved state is NOT counted as unrecoverable —
+    the audit fires ONLY on corruption/schema-legal 直插 anomalies. Seeds one of
+    each normal (status, reason) pair the candidate SELECT admits + a resolved
+    deleted row + a reusable_avatar (dashboard-managed, deliberately excluded),
+    then asserts unrecoverable_resources == 0 (so a normal journal still reaches
+    exit 0).
+
+    Codex round-6: n2/n3/n4 are claim-eligible (pending/failed + reason). Under
+    round-6 domain (c) the audit would count a claim-eligible resource whose op
+    has NO witness — so to keep this a NORMAL-journal control (op progressing,
+    not stuck) the op must HAVE a witness. A ``not_started+NULL`` video (branch
+    A) makes the op selectable; the pending portraits are then the per-op pass's
+    responsibility (claim → advance), NOT the attention audit's. (In the real
+    pipeline these portraits would also carry a ``cleanup_required`` upload
+    binding — same-tx claim invariant — but the attention audit only needs the
+    op to be selectable for domain (c) to defer; the binding is irrelevant
+    here.)"""
     project = _current_project(tmp_path)
     monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
     op_id = _grant_parent(project, assets=(("portrait_photo", D_PORT),))
     conn = _fresh_conn(project)
     try:
         conn.execute("BEGIN")
+        # Codex round-6: a non-deleted video in an admitted state-matrix is a
+        # branch-A witness → the op is selectable → domain (c) does NOT fire on
+        # the pending portraits below (NOT EXISTS(witness) is False). Without
+        # this row, n2/n3/n4 would be falsely counted as unrecoverable.
+        _add_resource_row(conn, op_id=op_id, remote_id="vid_witness",
+                          status="not_started", reason=None, kind="video")
         # Normal in-flight + auto-recoverable pairs the candidate SELECT admits.
         _add_resource_row(conn, op_id=op_id, remote_id="n1",
                           status="not_started", reason=None)  # fresh, never claimed
@@ -1631,5 +1705,119 @@ def test_attention_audit_normal_inflight_states_not_counted_unrecoverable(
     assert report.attention == {"manual_uploads": 0, "manual_force_resources": 0,
                                 "unrecoverable_resources": 0}
     assert report.clean is True  # normal in-flight → exit 0 STILL reachable
+    result = _run_cli(project)
+    assert result.exit_code == 0
+
+
+def test_attention_audit_unrecoverable_broken_topology_no_witness_gates_clean(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Codex round-6 blocker 2 (broken-topology gap): a claim-eligible resource
+    — ``deletion_pending + post_download`` portrait — whose op has NO witness (no
+    video; the portrait has no ``cleanup_required`` upload binding so it is not a
+    branch-B2 witness either) was INVISIBLE to round-5: normal state-matrix
+    (escapes domain b), never selected by the candidate SELECT (so ops_alerted
+    stays 0), and the orphan/state-matrix domains don't catch it → round-5 虚报'd
+    exit 0. Round-6 domain (c) counts it via ``NOT EXISTS(witness)`` (the shared
+    ``_DELETION_WITNESS_SUBQUERY_SQL`` the candidate SELECT itself uses). The
+    portrait HAS its own ref (own-op, no foreign) — the broken-topology is the
+    MISSING UPLOAD BINDING (B2's ``EXISTS(heygen_asset_uploads ...)`` gate fails),
+    the exact same-tx invariant the asset claim enforces (resource→pending
+    atomically pairs with upload→cleanup_required)."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+    op_id = _grant_parent(project, assets=(("portrait_photo", D_PORT),))
+    conn = _fresh_conn(project)
+    try:
+        conn.execute("BEGIN")
+        # Sole resource: claim-eligible state-matrix, but no video on the op and
+        # no upload binding → no r2 satisfies the witness predicate → NOT EXISTS.
+        _add_resource_row(conn, op_id=op_id, remote_id="bt1",
+                          status="deletion_pending", reason="post_download")
+        conn.commit()
+    finally:
+        conn.close()
+
+    _spy_recover_deletions(monkeypatch, {}, tally=_CLEAN_DEL_TALLY)
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.network_skipped is False
+    assert report.deletion_recovery == dict(_CLEAN_DEL_TALLY)  # stubbed clean
+    assert report.attention == {"manual_uploads": 0, "manual_force_resources": 0,
+                                "unrecoverable_resources": 1}
+    assert report.clean is False
+    result = _run_cli(project)
+    assert result.exit_code == 2
+    from lecturecast.commands.maintenance import _format_message
+    msg = "\n".join(_format_message(report))
+    assert "unrecoverable_resources=1" in msg
+
+
+def test_attention_audit_unrecoverable_broken_topology_with_video_witness_not_counted(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Codex round-6 control: the SAME broken-topology portrait (pending +
+    post_download, no upload binding) on an op that HAS a witness (a
+    ``not_started+NULL`` video → branch A) is NOT counted. The op is selectable,
+    so domain (c)'s ``NOT EXISTS(witness)`` is False. This is the round-5 scope
+    argument Codex accepted: a broken-topology resource on a candidate-eligible
+    op is the per-op pass's responsibility (claim → raise → ops_alerted → exit
+    2), NOT the attention audit's — the audit must not double-count it. (The
+    per-op pass is stubbed clean here, so unrecoverable stays 0.)"""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+    op_id = _grant_parent(project, assets=(("portrait_photo", D_PORT),))
+    conn = _fresh_conn(project)
+    try:
+        conn.execute("BEGIN")
+        # Branch-A witness → op selectable.
+        _add_resource_row(conn, op_id=op_id, remote_id="vid_witness",
+                          status="not_started", reason=None, kind="video")
+        # Broken-topology portrait (no binding) — but the op is selectable, so
+        # domain (c) defers to the per-op pass.
+        _add_resource_row(conn, op_id=op_id, remote_id="bt2",
+                          status="deletion_pending", reason="post_download")
+        conn.commit()
+    finally:
+        conn.close()
+
+    _spy_recover_deletions(monkeypatch, {}, tally=_CLEAN_DEL_TALLY)
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.attention == {"manual_uploads": 0, "manual_force_resources": 0,
+                                "unrecoverable_resources": 0}
+    assert report.clean is True
+    result = _run_cli(project)
+    assert result.exit_code == 0
+
+
+def test_attention_audit_unrecoverable_pre_video_asset_no_witness_not_counted(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Codex round-6 false-positive guard: a ``not_started + NULL`` pre-video
+    portrait on an op with NO witness (no video yet, asset freshly uploaded,
+    never claimed) must NOT be counted. Without the round-6 restriction of
+    domain (c) to claim-eligible states (pending/failed + post_download/
+    consent_withdrawal), a naive ``NOT EXISTS(witness)`` over ALL non-deleted
+    resources would count EVERY normal pre-video asset → exit 0 unreachable
+    during normal multi-resource pre-video processing. The restriction keeps the
+    default sweep's deliberate pre-video exclusion intact."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+    op_id = _grant_parent(project, assets=(("portrait_photo", D_PORT),))
+    conn = _fresh_conn(project)
+    try:
+        conn.execute("BEGIN")
+        # Sole resource: not_started + NULL (normal pre-video), no witness on
+        # the op. NOT claim-eligible → domain (c) does not fire.
+        _add_resource_row(conn, op_id=op_id, remote_id="pv1",
+                          status="not_started", reason=None)
+        conn.commit()
+    finally:
+        conn.close()
+
+    _spy_recover_deletions(monkeypatch, {}, tally=_CLEAN_DEL_TALLY)
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.attention == {"manual_uploads": 0, "manual_force_resources": 0,
+                                "unrecoverable_resources": 0}
+    assert report.clean is True
     result = _run_cli(project)
     assert result.exit_code == 0

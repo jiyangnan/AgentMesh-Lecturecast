@@ -21,8 +21,10 @@ carries a stronger contract than doctor's always-0 diagnostic):
       returned a malformed/non-dict tally, or the post-pass attention audit
       raised → ``attention_audit_failed``) OR the attention audit found operator-
       attention states outside the recovery primitives' scopes (non-withdrawn
-      manual uploads, manual_force resources, unrecoverable anomalous/orphaned
-      resources). db_recovery / deletion_recovery may still be non-empty.
+      manual uploads, manual_force resources, unrecoverable resources — schema-
+      legal anomalous state-matrix / orphaned / round-6 broken-topology rows
+      the deletion subsystem refuses to drive). db_recovery / deletion_recovery
+      may still be non-empty.
   1 — reserved for programming/harness errors raised BEFORE ``emit``: a bad
       lib-boundary arg (non-bool force, non-int lease_seconds, non-str
       now_iso/lease_owner) from a DIRECT lib call raises ValueError before a
@@ -115,9 +117,10 @@ def _format_message(report: MaintenanceReport) -> list[str]:
             )
     # Codex round-3 (attention audit): surface the post-pass attention counts so
     # an operator sees WHY exit 2 fired when the recovery tallies are themselves
-    # clean (a non-withdrawn manual upload / manual_force resource / round-5
-    # unrecoverable anomalous-orphan resource sits in the journal outside the
-    # recovery primitives' scopes).
+    # clean (a non-withdrawn manual upload / manual_force resource / round-5+6
+    # unrecoverable resource — anomalous state-matrix, orphaned, OR round-6
+    # broken-topology — sits in the journal outside the recovery primitives'
+    # scopes).
     if report.attention_audit_failed:
         lines.append("⚠ 恢复后 attention 审计失败（见 skip_reason）；最终态无法核实。")
     elif not report.network_skipped and not report.db_recovery_failed:
@@ -136,7 +139,7 @@ def _format_message(report: MaintenanceReport) -> list[str]:
                 f"manual_force_resources={at.get('manual_force_resources', 0)}"
                 f"（operator-only 删除资源）、"
                 f"unrecoverable_resources={at.get('unrecoverable_resources', 0)}"
-                f"（schema-legal 异常态/孤儿资源，删除子系统拒绝驱动）。"
+                f"（schema-legal 异常态/孤儿/断裂拓扑资源，删除子系统拒绝驱动）。"
                 f"请人工核查后处理。"
             )
     if report.network_skipped and report.skip_reason:
