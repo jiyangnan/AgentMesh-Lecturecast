@@ -105,16 +105,34 @@ _DB_TALLY_KEYS: frozenset[str] = frozenset({
     "cancelled", "cleanup_required", "manual", "kept", "left_uploading",
 })
 
+#: The exact 2 keys ``OperationRepository.count_recovery_attention`` returns
+#: (op_repo — read-only post-pass attention audit). Codex round-3: the two
+#: recovery primitives have scoped mandates; states outside BOTH scopes but
+#: still operator-attention-needed (non-withdrawn manual uploads, manual_force
+#: resources) are counted here so the exit-0 contract is honest.
+_ATTENTION_KEYS: frozenset[str] = frozenset({
+    "manual_uploads", "manual_force_resources",
+})
+
 
 def _valid_tally(tally: object, keys: frozenset[str]) -> bool:
-    """True iff ``tally`` is a dict with EXACTLY the ``keys`` set AND every
-    value is a non-negative ``int`` (``type(v) is int`` — rejects bool, which
-    is an int subclass; rejects negative counts a real coordinator cannot
+    """True iff ``tally`` is a PLAIN dict with EXACTLY the ``keys`` set AND
+    every value is a non-negative ``int`` (``type(v) is int`` — rejects bool,
+    which is an int subclass; rejects negative counts a real coordinator cannot
     produce). Codex round-2 blocker 2: this is TYPE-STABLE — a non-dict
     (None/list/str) returns False instead of raising ``AttributeError`` out of
     ``clean`` / the recovery try-block, so a malformed coordinator return
-    becomes a structured skip report (exit 2), never an exit-1 escape."""
-    if not isinstance(tally, dict):
+    becomes a structured skip report (exit 2), never an exit-1 escape.
+
+    Codex round-3 blocker 2B: ``type(tally) is dict`` (NOT ``isinstance``) — a
+    dict SUBCLASS can override ``keys()`` / ``values()`` / ``get()`` to raise,
+    and since the deletion shape check runs OUTSIDE the recovery try-block such
+    an exception would escape as exit 1. The coordinator contract is a PLAIN
+    dict (op_repo inits ``{}`` literals + ``dict`` returns); a strict plain-dict
+    check matches that contract and is type-stable against hostile subclasses.
+    Mirrors the ``type() is bool/int/str`` discipline used at every other guard.
+    """
+    if type(tally) is not dict:
         return False
     if set(tally.keys()) != keys:
         return False
@@ -143,16 +161,33 @@ class MaintenanceReport:
     skip_reason: str | None = None
     force: bool = False
     db_recovery_failed: bool = False
+    #: Codex round-3: the authoritative post-pass attention audit
+    #: (``count_recovery_attention``). ``{}`` when the audit did not run (the
+    #: network pass was skipped, OR ``attention_audit_failed``). On a clean full
+    #: sweep this is the 2-key zero tally — the exit-0 condition gates on it so
+    #: non-withdrawn manual uploads + manual_force resources (invisible to both
+    #: recovery tallies) cannot hide behind exit 0.
+    attention: dict[str, int] = field(default_factory=dict)
+    #: Codex round-3: True iff the post-pass attention audit RAISED. The
+    #: recovery passes DID commit, but the final attention state could not be
+    #: verified → fail-closed (clean False, exit 2). Distinct from
+    #: ``db_recovery_failed`` (DB pass itself raised) and ``network_skipped``
+    #: (network did not run): here both passes ran, only the audit failed.
+    attention_audit_failed: bool = False
 
     @property
     def clean(self) -> bool:
         """True iff the sweep ran AND resolved every candidate with no pending
         work (the exit-0 condition, Codex round-1 blockers 1+2, round-2 type-
-        stability). A cron/``&&`` consumer gates on the exit code alone without
-        parsing the payload.
+        stability, round-3 attention audit). A cron/``&&`` consumer gates on
+        the exit code alone without parsing the payload.
 
         ``clean`` requires, ALL of:
-          (a) the DB pass did not raise (``db_recovery_failed`` False);
+          (a) the DB pass did not raise + returned a well-formed 5-key tally
+              (``db_recovery_failed`` False AND ``_valid_tally(db_recovery)`` —
+              Codex round-3 blocker 3: the DB tally is validated at the boundary
+              now, so a malformed DB return never reaches this report; the
+              property re-checks as a backstop);
           (b) the network pass ran (``network_skipped`` False);
           (c) ``deletion_recovery`` is a well-formed 8-key tally (dict, exact
               keys, non-negative int values — type-stable: a None/list/str/
@@ -179,14 +214,26 @@ class MaintenanceReport:
               op_repo:2995 fix) and ``left_uploading`` (active upload lease left
               intact — its fenced apply will catch the withdraw on the next
               upload attempt; maintenance correctly does not touch it, but it
-              IS unresolved this sweep).
+              IS unresolved this sweep);
+          (h) the post-pass attention audit ran AND found zero attention states
+              (Codex round-3: ``attention_audit_failed`` False AND the 2-key
+              ``attention`` tally is well-formed with every value zero). This
+              closes the scope gap between the recovery primitives' mandates
+              (withdrawn receipts; auto-recoverable deletion reasons) and the
+              journal's FULL attention state — non-withdrawn manual uploads +
+              manual_force resources would otherwise be invisible to exit 0.
         """
         if self.db_recovery_failed or self.network_skipped:
+            return False
+        if self.attention_audit_failed:
             return False
         # (c)+(d) shape + value validation — type-stable (non-dict → False).
         if not _valid_tally(self.deletion_recovery, _DEL_TALLY_KEYS):
             return False
         if not _valid_tally(self.db_recovery, _DB_TALLY_KEYS):
+            return False
+        # (h) attention audit shape — type-stable backstop.
+        if not _valid_tally(self.attention, _ATTENTION_KEYS):
             return False
         d = self.deletion_recovery
         # (f) no per-op exception.
@@ -202,6 +249,11 @@ class MaintenanceReport:
         # (g) DB-side pending work.
         db = self.db_recovery
         if db.get("manual", 0) or db.get("left_uploading", 0):
+            return False
+        # (h) no operator-attention states outside the recovery primitives'
+        # scopes (non-withdrawn manual uploads + manual_force resources).
+        at = self.attention
+        if at.get("manual_uploads", 0) or at.get("manual_force_resources", 0):
             return False
         return True
 
@@ -370,6 +422,41 @@ def run_maintenance(
             force=force,
         )
 
+    # Codex round-3 blocker 3 (DB-tally boundary type-stability): validate the
+    # DB primitive's return shape at THIS boundary — symmetric with the deletion
+    # tally check below — so a malformed DB return (a truthy non-dict, or a
+    # wrong-shape / negative-value dict) becomes a structured skip report
+    # (db_recovery_failed=True, network does not run → exit 2) instead of
+    # reaching the CLI formatter's ``db.get(...)`` and escaping as an exit-1
+    # AttributeError. The locked primitive's contract is the exact 5-key dict
+    # of non-negative ints; a malformed return means serious corruption /
+    # version skew → fail-closed. ``clean`` re-checks the shape as a backstop,
+    # but this boundary check is what protects the FORMATTER (which runs before
+    # ``clean`` is ever read) and the network pass (which must not run on a
+    # half-recovered journal whose DB outcome is unknowable).
+    if not _valid_tally(db_tally, _DB_TALLY_KEYS):
+        if type(db_tally) is not dict:
+            got = f"non-dict {type(db_tally).__name__}"
+            keys_repr: list[str] = []
+        else:
+            got = "畸形"
+            # type-stable: repr() any key (handles mixed int/str keys without
+            # the TypeError ``sorted()`` raises on non-comparable key types —
+            # Codex round-3 blocker 2A). Sort the REPR strings (always str),
+            # never the raw keys.
+            keys_repr = sorted(repr(k) for k in db_tally.keys())
+        return MaintenanceReport(
+            db_recovery={},
+            db_recovery_failed=True,
+            network_skipped=True,
+            skip_reason=(
+                f"recover_withdrawn_asset_cleanups 返回畸形 tally（期望 5 键非负 "
+                f"int dict {sorted(_DB_TALLY_KEYS)}，实际 {got} {keys_repr}）— "
+                f"网络删除恢复未执行。请运行 `lecturecast doctor`。"
+            ),
+            force=force,
+        )
+
     # B1: build the transport + read ITS provider for an early-skip preflight
     # when the key is absent/blank — applies the SAME predicate the transport
     # applies per-request (heygen_http.py:107: not isinstance OR not .strip),
@@ -437,25 +524,60 @@ def run_maintenance(
     # exit-1; negative/non-int values are rejected too). ``clean`` re-checks
     # this as a backstop.
     if not _valid_tally(del_tally, _DEL_TALLY_KEYS):
-        if not isinstance(del_tally, dict):
+        if type(del_tally) is not dict:
             got = f"non-dict {type(del_tally).__name__}"
-            keys = []
+            keys_repr: list[str] = []
         else:
             got = "畸形"
-            keys = sorted(del_tally.keys())
+            # Codex round-3 blocker 2A (type-stability): do NOT ``sorted()`` the
+            # raw keys — a dict carrying mixed-type keys (e.g. a valid 8 str
+            # keys PLUS an int key) cannot be ordered (``TypeError: '<' not
+            # supported between 'int' and 'str'``), and this diagnostic runs
+            # OUTSIDE the recovery try-block, so that TypeError would escape as
+            # exit 1. ``repr()`` every key first (always yields a str), then
+            # sort the REPR strings — fully type-stable.
+            keys_repr = sorted(repr(k) for k in del_tally.keys())
         return MaintenanceReport(
             db_recovery=db_tally,
             network_skipped=True,
             skip_reason=(
                 f"recover_deletions 返回畸形 tally（期望 8 键非负 int dict "
-                f"{sorted(_DEL_TALLY_KEYS)}，实际 {got} {keys}）— "
+                f"{sorted(_DEL_TALLY_KEYS)}，实际 {got} {keys_repr}）— "
                 f"请运行 `lecturecast doctor`。"
             ),
             force=force,
         )
+
+    # Codex round-3 (attention audit): read-only post-pass count of journal
+    # attention states the two scoped recovery primitives do NOT cover (non-
+    # withdrawn manual_reconciliation_required uploads from the frozen-replay /
+    # upload-failure paths; manual_force deletion resources). Without this,
+    # exit 0 would谎报 "clean" while such rows sit in the journal (fail-closed
+    # violation). Runs AFTER both passes commit so it observes the FINAL state
+    # (rows the deletion pass just deleted are no longer counted). The audit is
+    # read-only (mode=ro URI); it creates / writes nothing. A raised exception
+    # → attention_audit_failed (the recovery DID commit, but the final state
+    # could not be verified → exit 2, fail-closed).
+    try:
+        attention = op_repo.count_recovery_attention()
+    except Exception as exc:
+        return MaintenanceReport(
+            db_recovery=db_tally,
+            deletion_recovery=del_tally,
+            network_skipped=False,
+            skip_reason=(
+                f"恢复后 attention 审计失败（count_recovery_attention 抛出）— "
+                f"两趟恢复已提交但最终 attention 态无法核实: "
+                f"{type(exc).__name__}: {exc}。请运行 `lecturecast doctor`。"
+            ),
+            force=force,
+            attention_audit_failed=True,
+        )
+
     return MaintenanceReport(
         db_recovery=db_tally,
         deletion_recovery=del_tally,
+        attention=attention,
         network_skipped=False,
         skip_reason=None,
         force=force,

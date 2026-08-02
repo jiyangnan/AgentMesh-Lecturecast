@@ -48,7 +48,7 @@ from lecturecast.consent import (
     prepare_operation,
 )
 from lecturecast.heygen_journal import init_database
-from lecturecast.maintenance import MaintenanceReport, run_maintenance
+from lecturecast.maintenance import MaintenanceReport, _valid_tally, run_maintenance
 from lecturecast.operation_repository import DeletionCoordinator, OperationRepository
 
 NOW = "2026-08-02T00:00:00Z"
@@ -100,6 +100,12 @@ _LEFT_UPLOADING_DB_TALLY = {
     "cancelled": 0, "cleanup_required": 0, "manual": 0,
     "kept": 0, "left_uploading": 1,
 }
+
+# Codex round-3 — the 2-key attention audit ``count_recovery_attention`` returns
+# {manual_uploads, manual_force_resources}. ``_EMPTY_ATTENTION`` is the clean
+# full-sweep shape (zero attention states outside the recovery primitives'
+# scopes).
+_EMPTY_ATTENTION = {"manual_uploads": 0, "manual_force_resources": 0}
 
 _ASSET_CATEGORIES = {
     "portrait_photo": ["facial_biometric_template", "portrait_image"],
@@ -541,11 +547,13 @@ def test_report_clean_property_matrix() -> None:
       - DB-side manual/left_uploading both zero.
     Static matrix over the report shape so the CLI exit-code contract cannot
     drift from the property."""
-    # Base: clean full sweep. Both tallies must be well-formed (round-2: db
-    # shape enforced too — db_recovery={} no longer passes as clean).
+    # Base: clean full sweep. Both tallies + the attention audit must be
+    # well-formed (round-2: db shape enforced; round-3: attention shape enforced
+    # — db_recovery/attention={} no longer passes as clean).
     assert MaintenanceReport(
         db_recovery=dict(_EMPTY_DB_TALLY),
-        deletion_recovery=dict(_CLEAN_DEL_TALLY), force=False).clean is True
+        deletion_recovery=dict(_CLEAN_DEL_TALLY),
+        attention=dict(_EMPTY_ATTENTION), force=False).clean is True
     # network_skipped → not clean.
     assert MaintenanceReport(
         deletion_recovery={}, network_skipped=True, force=False).clean is False
@@ -613,6 +621,31 @@ def test_report_clean_property_matrix() -> None:
     boolval = dict(_CLEAN_DEL_TALLY)
     boolval["deleted"] = True  # type: ignore[dict-item]
     assert MaintenanceReport(deletion_recovery=boolval, force=False).clean is False
+    # Codex round-3 — attention audit gates clean (the exit-0 contract is honest
+    # about journal states the recovery primitives do NOT cover):
+    # attention_audit_failed → not clean (audit could not verify final state).
+    assert MaintenanceReport(
+        db_recovery=dict(_EMPTY_DB_TALLY),
+        deletion_recovery=dict(_CLEAN_DEL_TALLY),
+        attention=dict(_EMPTY_ATTENTION), attention_audit_failed=True,
+        force=False).clean is False
+    # attention malformed (non-dict / empty / wrong keys / negative) → not clean
+    # (type-stable backstop, mirrors the deletion/db shape checks).
+    for bad in (None, {}, {"manual_uploads": 0}, {"manual_uploads": -1},
+                {"manual_uploads": 1, "extra": 0}):
+        assert MaintenanceReport(
+            db_recovery=dict(_EMPTY_DB_TALLY),
+            deletion_recovery=dict(_CLEAN_DEL_TALLY),
+            attention=bad, force=False).clean is False, bad  # type: ignore[arg-type]
+    # attention with a real operator-attention state → not clean even when both
+    # recovery tallies are themselves clean (the round-3 scope gap).
+    for key in ("manual_uploads", "manual_force_resources"):
+        at = dict(_EMPTY_ATTENTION)
+        at[key] = 1
+        assert MaintenanceReport(
+            db_recovery=dict(_EMPTY_DB_TALLY),
+            deletion_recovery=dict(_CLEAN_DEL_TALLY),
+            attention=at, force=False).clean is False, key
 
 
 # ===========================================================================
@@ -1041,3 +1074,250 @@ def test_entry_guard_lease_owner_non_str_raises_value_error(
     with pytest.raises(ValueError, match="lease_owner must be a str"):
         run_maintenance(tmp_path, now_iso=NOW, lease_owner=bad_owner)  # type: ignore[arg-type]
     assert not (tmp_path / DB_REL).exists()
+
+
+# ===========================================================================
+# Codex round-3 — type-stability closures (2A mixed keys / 2B dict subclass /
+# 3 DB-tally boundary) + attention audit (#1 non-withdrawn manual / #2 manual_force)
+# ===========================================================================
+
+@pytest.mark.parametrize("bad_db", [
+    ["bad"],               # truthy non-dict → formatter .get would AttributeError
+    "manual",             # truthy non-dict (str)
+    {"manual": 1},        # wrong shape (missing 4 keys)
+    {"cancelled": 0, "cleanup_required": 0, "manual": 0, "kept": 0,
+     "left_uploading": 0, "phantom": 0},  # extra key
+    {"manual": -1, "cancelled": 0, "cleanup_required": 0, "kept": 0,
+     "left_uploading": 0},  # negative value
+])
+def test_db_tally_malformed_wrapped_to_skip(tmp_path: Path, monkeypatch, bad_db) -> None:
+    """Codex round-3 blocker 3 (DB-tally boundary type-stability): a malformed
+    ``recover_withdrawn_asset_cleanups`` return (truthy non-dict OR wrong-shape
+    / extra-key / negative dict) is validated at the run_maintenance boundary
+    → structured skip report (db_recovery_failed=True, network_skipped=True,
+    clean False) → exit 2. It must NOT reach the CLI formatter's ``db.get(...)``
+    and escape as exit-1 AttributeError. The network pass does NOT run on a
+    half-recovered journal whose DB outcome is unknowable."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+
+    def spy(self, *, now_iso):
+        return bad_db
+    monkeypatch.setattr(OperationRepository, "recover_withdrawn_asset_cleanups", spy)
+
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.db_recovery_failed is True
+    assert report.network_skipped is True
+    assert report.db_recovery == {}  # malformed → rejected, not surfaced
+    assert report.deletion_recovery == {}  # network did not run
+    assert report.skip_reason is not None
+    assert "畸形 tally" in report.skip_reason
+    assert report.clean is False
+    # No attention audit ran (network skipped before it).
+    assert report.attention == {}
+    assert report.attention_audit_failed is False
+
+    # CLI → exit 2 (NOT exit 1 — the AttributeError escape Codex flagged). The
+    # formatter must not raise on the (now-empty) db_recovery either.
+    result = _run_cli(project)
+    assert result.exit_code == 2
+
+
+def test_recover_deletions_mixed_type_keys_wrapped_to_skip(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Codex round-3 blocker 2A (diagnostic type-stability): a deletion dict
+    carrying the 8 valid str keys PLUS a non-str (int) key is correctly rejected
+    by ``_valid_tally`` (key set mismatch), AND the diagnostic that builds the
+    skip_reason must not ``sorted()`` the raw mixed-type keys (which raises
+    ``TypeError: '<' not supported between instances of 'int' and 'str'`` and
+    would escape as exit 1). The diagnostic ``repr()``s every key first →
+    type-stable → exit 2."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+
+    tally = dict(_CLEAN_DEL_TALLY)
+    tally[1] = 0  # int key mixed with the 8 str keys
+
+    def spy(self, **kw):
+        return tally
+    monkeypatch.setattr(DeletionCoordinator, "recover_deletions", spy)
+
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.network_skipped is True
+    assert report.skip_reason is not None
+    assert "畸形 tally" in report.skip_reason
+    assert report.clean is False
+    # DB pass committed (real, empty journal) → well-formed 5-key tally.
+    assert report.db_recovery == dict(_EMPTY_DB_TALLY)
+
+    result = _run_cli(project)
+    assert result.exit_code == 2
+
+
+class _DictSubclass(dict):
+    """A dict subclass that overrides nothing but is NOT a plain dict — used to
+    verify ``_valid_tally`` rejects subclasses (Codex round-3 blocker 2B: a
+    subclass could override keys()/values()/get() to raise)."""
+
+
+def test_valid_tally_rejects_dict_subclass() -> None:
+    """Codex round-3 blocker 2B: ``_valid_tally`` uses ``type(tally) is dict``
+    (NOT ``isinstance``), so a dict SUBCLASS — even one with the exact right
+    keys + int values — is rejected. The coordinator contract is a PLAIN dict;
+    a subclass could override ``keys()``/``values()``/``get()`` to raise, and
+    since the shape check runs OUTSIDE the recovery try-block such an exception
+    would escape as exit 1. Mirrors the ``type() is bool/int/str`` discipline."""
+    sub = _DictSubclass(_EMPTY_ATTENTION)
+    attention_keys = frozenset(_EMPTY_ATTENTION.keys())
+    assert _valid_tally(sub, attention_keys) is False
+    # A plain dict with the same content passes.
+    assert _valid_tally(dict(_EMPTY_ATTENTION), attention_keys) is True
+    # Same for the deletion/db key sets.
+    sub_del = _DictSubclass(_CLEAN_DEL_TALLY)
+    assert _valid_tally(sub_del, frozenset(_CLEAN_DEL_TALLY.keys())) is False
+
+
+def test_attention_audit_non_withdrawn_manual_gates_clean(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Codex round-3 blocker #1 (non-withdrawn manual invisible): a
+    manual_reconciliation_required asset upload on a NON-withdrawn op (produced
+    by the frozen 24h replay-deadline expiry at op_repo:2637 or upload-failure
+    handling at op_repo:2855) is INVISIBLE to BOTH recovery primitives —
+    ``recover_withdrawn_asset_cleanups`` selects only withdrawn receipts
+    (op_repo:3080), so the real DB pass returns an empty tally. Without the
+    post-pass attention audit, exit 0 would谎报 "clean". The audit counts it
+    (manual_uploads=1) → clean False → exit 2 (fail-closed: 宁可少报绝不虚报)."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+    # GRANT (not withdraw) → op is NOT a recovery candidate for the DB pass.
+    op_id = _grant_parent(project, assets=(("portrait_photo", D_PORT),))
+    conn = _fresh_conn(project)
+    try:
+        conn.execute("BEGIN")
+        _add_uploaded_asset(conn, op_id=op_id, role="portrait_photo", remote_id="p1")
+        # Dock the asset manual — the exact state the frozen-replay deadline
+        # expiry produces (NOT a consent withdrawal).
+        conn.execute(
+            "UPDATE heygen_asset_uploads SET status='manual_reconciliation_required' "
+            "WHERE parent_operation_id=?", (op_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Network pass clean (stub); DB pass REAL (returns empty — op not withdrawn).
+    _spy_recover_deletions(monkeypatch, {}, tally=_CLEAN_DEL_TALLY)
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.network_skipped is False
+    # The DB pass found nothing (op is not withdrawn → not selected).
+    assert report.db_recovery == dict(_EMPTY_DB_TALLY)
+    assert report.deletion_recovery == dict(_CLEAN_DEL_TALLY)
+    # The attention audit caught the non-withdrawn manual row.
+    assert report.attention == {"manual_uploads": 1, "manual_force_resources": 0}
+    assert report.attention_audit_failed is False
+    assert report.clean is False  # ← the round-3 scope gap, now closed
+
+    result = _run_cli(project)
+    assert result.exit_code == 2
+
+    # The human message surfaces WHY exit 2 fired (attention outside scope).
+    from lecturecast.commands.maintenance import _format_message
+    msg = "\n".join(_format_message(report))
+    assert "manual_uploads=1" in msg
+    assert "需人介入" in msg
+
+
+def test_attention_audit_manual_force_resource_gates_clean(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Codex round-3 blocker #2 (manual_force invisible): a NON-deleted resource
+    with deletion_reason='manual_force' (the operator-only integrity path) is
+    EXCLUDED from the deletion candidate SELECT (op_repo:4030), so
+    recover_deletions never sees it. Without the attention audit, exit 0 would
+    谎报 "clean". The audit counts it (manual_force_resources=1) → exit 2.
+    A DELETED manual_force resource is correctly NOT counted (resolved)."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+    op_id = _grant_parent(project, assets=(("portrait_photo", D_PORT),))
+    conn = _fresh_conn(project)
+    try:
+        conn.execute("BEGIN")
+        # One pending manual_force resource (attention) + one DELETED
+        # manual_force resource (resolved → NOT counted).
+        for rid, status in (("mf1", "deletion_pending"), ("mf2", "deleted")):
+            row = conn.execute(
+                "INSERT INTO heygen_remote_resources (credential_profile_id, "
+                "resource_kind, remote_id, retention_mode, created_by_operation_id,"
+                " deletion_status, deletion_reason, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                ("heygen_env_default", "portrait_asset", rid, "ephemeral", op_id,
+                 status, "manual_force", NOW, NOW))
+            conn.execute(
+                "INSERT INTO heygen_resource_operation_refs (resource_id, "
+                "operation_id, created_at) VALUES (?,?,?)",
+                (row.lastrowid, op_id, NOW))
+        conn.commit()
+    finally:
+        conn.close()
+
+    _spy_recover_deletions(monkeypatch, {}, tally=_CLEAN_DEL_TALLY)
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.network_skipped is False
+    assert report.db_recovery == dict(_EMPTY_DB_TALLY)  # op not withdrawn
+    # Only the NON-deleted manual_force resource counts.
+    assert report.attention == {"manual_uploads": 0, "manual_force_resources": 1}
+    assert report.clean is False
+
+    result = _run_cli(project)
+    assert result.exit_code == 2
+
+
+def test_attention_audit_failure_wrapped_to_skip(tmp_path: Path, monkeypatch) -> None:
+    """Codex round-3 (audit fail-closed): if ``count_recovery_attention`` RAISES
+    (DB/schema error mid-audit), both recovery passes DID commit but the final
+    attention state could not be verified → attention_audit_failed=True →
+    clean False → exit 2. Distinct from db_recovery_failed (DB pass raised) and
+    network_skipped (network did not run)."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+
+    def boom(self):
+        raise RuntimeError("audit DB exploded")
+    monkeypatch.setattr(OperationRepository, "count_recovery_attention", boom)
+    _spy_recover_deletions(monkeypatch, {}, tally=_CLEAN_DEL_TALLY)
+
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.network_skipped is False  # both passes ran
+    assert report.db_recovery == dict(_EMPTY_DB_TALLY)  # DB pass committed
+    assert report.deletion_recovery == dict(_CLEAN_DEL_TALLY)  # network committed
+    assert report.attention_audit_failed is True
+    assert report.attention == {}
+    assert report.skip_reason is not None
+    assert "attention 审计失败" in report.skip_reason
+    assert "audit DB exploded" in report.skip_reason
+    assert report.clean is False
+
+    result = _run_cli(project)
+    assert result.exit_code == 2
+
+
+def test_attention_audit_clean_journal_zero_attention_exit_0(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Codex round-3 (happy path): an empty/clean journal → the attention audit
+    returns the well-formed 2-key zero tally → clean True → exit 0. Pins the
+    audit shape on the success path so a future change to
+    count_recovery_attention cannot silently break the exit-0 contract."""
+    project = _current_project(tmp_path)
+    monkeypatch.setenv("HEYGEN_API_KEY", "test-key")
+    _spy_recover_deletions(monkeypatch, {}, tally=_CLEAN_DEL_TALLY)
+
+    report = run_maintenance(project, now_iso=NOW)
+    assert report.network_skipped is False
+    assert report.attention == {"manual_uploads": 0, "manual_force_resources": 0}
+    assert report.attention_audit_failed is False
+    assert report.clean is True
+
+    result = _run_cli(project)
+    assert result.exit_code == 0
