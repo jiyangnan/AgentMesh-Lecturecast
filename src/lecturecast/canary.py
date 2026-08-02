@@ -53,7 +53,7 @@ from .heygen_adapter import DeleteResult
 from .heygen_asset_adapter import AssetDeleteResult
 from .heygen_journal import _SCHEMA_VERSION, init_database
 from .operation_repository import DeletionCoordinator
-from .pricing import next_milestone_cost_or_fail, validate_pricing_estimate
+from .pricing import validate_pricing_estimate
 from .protocol import canonical_digest
 
 # §5 line 489: "一次最多 30 credits" — hard cap on the projected cost of a
@@ -455,36 +455,67 @@ def run_canary(
         passed5, detail5,
     ))
 
-    # #6: client 展示 estimate == server pricing_estimate — exercises the actual
-    # client display path, not just schema validity: (a) validate_pricing_estimate
-    # accepts the estimate AND returns it verbatim (validated == estimate — the
-    # client does not mutate / recompute / hardcode any field between receiving
-    # the server estimate and displaying it); (b) next_milestone_cost_or_fail —
-    # the display-read primitive the client uses to read the cost out of the
-    # session estimate — yields the expected next_milestone_cost from this exact
-    # estimate without raising. The director session↔card estimate-equality
-    # boundary (director.py) is exercised in director's own tests + §5.5e5c.
+    # #6: client 展示 estimate == server pricing_estimate — exercises the REAL
+    # user-visible display projection (round-2: round-1 only proved schema
+    # validity; round-2-next_milestone_cost_or_fail was the credit-cost reader,
+    # not the display path). The display path is director._session_workflow: it
+    # validates the session pricing_estimate via _validated_estimate (which also
+    # enforces card↔session estimate equality), then projects an 8-field subset
+    # into workflow["pricing_estimate"] for user disclosure. The canary drives a
+    # v1.1 confirmed session carrying the server estimate (+ a card with the SAME
+    # estimate) through _session_workflow and asserts the projected display
+    # equals the validated estimate's 8 fields EXACTLY — no transformation /
+    # omission / wrong minimum_total can slip through. It also locks that
+    # validate_pricing_estimate returns the estimate BY IDENTITY (validated is
+    # estimate — no in-place mutation, no copy).
+    _DISPLAYED_KEYS = (
+        "estimate_status", "minimum_total", "maximum_total",
+        "next_milestone_cost", "applicable_milestones",
+        "per_milestone", "charge_model", "pricing_version",
+    )
+    identity_held = bool(estimate_ok) and (validated is estimate)
+    projection_ok = False
+    projection_detail = ""
     try:
-        cost_displayed = next_milestone_cost_or_fail(
-            {"pricing_estimate": estimate, "brief": brief_dict},
-            protocol_version="1.1", brief=brief_dict,
+        from .commands.director import _session_workflow
+        from .director import DirectorState
+
+        st = DirectorState({
+            "schema_version": "1.2", "project_id": "canary-p", "state_revision": 1,
+            "server_url": "https://api.test", "session_id": "canary-s",
+            "session_status": "confirmed", "brief_version": 1, "catalog_version": "cv",
+            "adapter_kind": "codex", "adapter_version": "1.0.0",
+            "protocol_version": "1.1", "generation_id": None,
+            "updated_at": now_iso,
+        })
+        # confirmed session carrying the server estimate; the card carries the
+        # SAME estimate (exercises the card↔session equality boundary too).
+        session_payload = {
+            "status": "confirmed", "pricing_estimate": estimate,
+            "brief": brief_dict,
+            "decision_card_set": {"pricing_estimate": estimate},
+        }
+        workflow = _session_workflow(Path("/tmp"), st, session_payload)
+        displayed = workflow.get("pricing_estimate")
+        expected = {k: validated.get(k) for k in _DISPLAYED_KEYS}
+        projection_ok = isinstance(displayed, dict) and displayed == expected
+        projection_detail = (
+            f"_session_workflow projected the 8 validated fields unchanged "
+            f"(phase={workflow.get('phase')})"
         )
-        display_ok = isinstance(cost_displayed, int) and not isinstance(cost_displayed, bool)
-        if estimate_ok and validated.get("next_milestone_cost") is not None:
-            display_ok = display_ok and (cost_displayed == validated.get("next_milestone_cost"))
-    except Exception as exc:
-        display_ok = False
-        cost_displayed = f"{type(exc).__name__}: {exc}"
-    verbatim = estimate_ok and (validated == estimate)
-    passed6 = bool(verbatim and display_ok)
+    except Exception as exc:  # pragma: no cover - defensive
+        projection_detail = f"display projection raised: {type(exc).__name__}: {exc}"
+    passed6 = bool(identity_held and projection_ok)
     detail6 = (
-        "client displays the server pricing_estimate verbatim — validate_pricing_"
-        "estimate returns it UNCHANGED (validated==estimate, no recompute/hardcode) "
-        f"AND next_milestone_cost_or_fail reads next_milestone_cost={cost_displayed} "
-        "from it (the display-read primitive works on the server estimate)."
+        "client displays the server pricing_estimate verbatim — director._session_"
+        "workflow projects the validated estimate's 8 fields (estimate_status/"
+        "minimum_total/maximum_total/next_milestone_cost/applicable_milestones/"
+        "per_milestone/charge_model/pricing_version) UNCHANGED, AND validate_pricing_"
+        "estimate returns the estimate by IDENTITY (validated is estimate — no "
+        f"mutation/copy). {projection_detail}"
     ) if passed6 else (
-        f"verbatim={verbatim} (validated==estimate); display-read ok={display_ok} "
-        f"(next_milestone_cost_or_fail → {cost_displayed!r}); estimate_ok={estimate_ok}"
+        f"identity_held={identity_held} (validated is estimate); projection_ok="
+        f"{projection_ok} ({projection_detail}); estimate_ok={estimate_ok}"
     )
     invariants.append(CanaryInvariantResult(
         "estimate_equals_pricing", "client 展示 estimate == server pricing_estimate", passed6, detail6,
