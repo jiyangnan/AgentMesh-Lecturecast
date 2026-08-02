@@ -2888,7 +2888,7 @@ class OperationRepository:
     ) -> dict[str, int]:
         """Idempotent, DB-only (NO network): mark every asset upload for this
         parent for consent-withdrawal cleanup, per the locked state machine:
-          cleanup_required/deleted/cancelled → kept (idempotent)
+          cleanup_required/deleted/cancelled → kept (idempotent terminal)
           uploading                          → left intact (its fenced apply
                                               re-checks consent → cleanup_required;
                                               never re-send multipart after withdraw)
@@ -2897,6 +2897,15 @@ class OperationRepository:
           upload_pending/failed, PROVABLY no remote side-effect → cancelled
           upload_pending/failed w/ any maybe-sent trace → manual
           uploaded                           → cleanup_required
+          manual_reconciliation_required     → manual (pre-existing; already docked
+                                              manual by a prior crash/recovery —
+                                              STILL needs human reconciliation, so
+                                              count under `manual` NOT `kept`. Codex
+                                              e5d-c round-2: previously conflated
+                                              into `kept`, hiding pre-existing manual
+                                              rows from maintenance.clean's exit-0
+                                              gate = over-claim. `kept` is reserved
+                                              for resolved/terminal idempotent rows.)
         Returns a tally of actions taken. Network deletion runs in a later
         maintenance pass; this only flips journal state."""
         self._require_tx(conn)
@@ -2993,8 +3002,12 @@ class OperationRepository:
                                           now_iso=now_iso)
                     tally["manual"] += 1
             elif st == "manual_reconciliation_required":
-                # already docked manual by a prior crash/recovery; idempotent.
-                tally["kept"] += 1
+                # already docked manual by a prior crash/recovery; STILL needs
+                # human reconciliation → count under `manual` (NOT `kept`). Codex
+                # e5d-c round-2 B2: previously conflated into `kept`, hiding
+                # pre-existing manual rows from maintenance.clean's exit-0 gate
+                # (over-claim). `kept` is reserved for resolved/terminal rows.
+                tally["manual"] += 1
             else:
                 # An unknown status must NOT fall into a catch-all "kept" — that
                 # would silently swallow a future status and leak a remote asset

@@ -86,13 +86,39 @@ LEASE_OWNER_DEFAULT: str = "lecturecast-maintenance"
 LEASE_SECONDS_DEFAULT: int = 300
 
 #: The exact 8 keys ``DeletionCoordinator.recover_deletions`` returns
-#: (op_repo:4246). Used to validate the tally shape so a malformed/empty
-#: coordinator return cannot masquerade as a clean sweep (Codex round-1:
-#: ``deletion_recovery={}, network_skipped=False`` must NOT be clean).
+#: (op_repo:4246). Used to validate the tally shape so a malformed/empty/
+#: non-dict coordinator return cannot masquerade as a clean sweep (Codex
+#: round-1: ``deletion_recovery={}, network_skipped=False`` must NOT be clean;
+#: Codex round-2: ``recover_deletions`` returning ``None``/list/string must NOT
+#: raise ``AttributeError`` out of the recovery try-block as an exit-1 escape).
 _DEL_TALLY_KEYS: frozenset[str] = frozenset({
     "ops_driven", "ops_empty", "ops_alerted",
     "attempted", "deleted", "failed", "skipped", "alerted",
 })
+
+#: The exact 5 keys ``recover_withdrawn_asset_cleanups`` returns (op_repo:3064).
+#: Codex round-2: the DB tally shape was previously NOT enforced — a partial/
+#: malformed ``db_recovery`` dict could pass ``clean`` because missing
+#: ``manual``/``left_uploading`` defaulted to zero via ``.get``. Validate the
+#: shape symmetrically with the deletion tally.
+_DB_TALLY_KEYS: frozenset[str] = frozenset({
+    "cancelled", "cleanup_required", "manual", "kept", "left_uploading",
+})
+
+
+def _valid_tally(tally: object, keys: frozenset[str]) -> bool:
+    """True iff ``tally`` is a dict with EXACTLY the ``keys`` set AND every
+    value is a non-negative ``int`` (``type(v) is int`` — rejects bool, which
+    is an int subclass; rejects negative counts a real coordinator cannot
+    produce). Codex round-2 blocker 2: this is TYPE-STABLE — a non-dict
+    (None/list/str) returns False instead of raising ``AttributeError`` out of
+    ``clean`` / the recovery try-block, so a malformed coordinator return
+    becomes a structured skip report (exit 2), never an exit-1 escape."""
+    if not isinstance(tally, dict):
+        return False
+    if set(tally.keys()) != keys:
+        return False
+    return all(type(v) is int and v >= 0 for v in tally.values())
 
 
 @dataclass(frozen=True)
@@ -121,15 +147,21 @@ class MaintenanceReport:
     @property
     def clean(self) -> bool:
         """True iff the sweep ran AND resolved every candidate with no pending
-        work (the exit-0 condition, Codex round-1 blockers 1+2). A cron/``&&``
-        consumer gates on the exit code alone without parsing the payload.
+        work (the exit-0 condition, Codex round-1 blockers 1+2, round-2 type-
+        stability). A cron/``&&`` consumer gates on the exit code alone without
+        parsing the payload.
 
         ``clean`` requires, ALL of:
           (a) the DB pass did not raise (``db_recovery_failed`` False);
-          (b) the network pass ran (``network_skipped`` False) AND returned the
-              exact 8-key tally shape (a malformed/empty coordinator return
-              cannot masquerade as clean);
-          (c) every deletion candidate was deleted: ``attempted == deleted``.
+          (b) the network pass ran (``network_skipped`` False);
+          (c) ``deletion_recovery`` is a well-formed 8-key tally (dict, exact
+              keys, non-negative int values — type-stable: a None/list/str/
+              negative/non-int return is rejected, NOT raised as AttributeError;
+              Codex round-2 blocker 2);
+          (d) ``db_recovery`` is a well-formed 5-key tally (same validation —
+              a partial/malformed DB dict cannot pass because missing keys
+              default to zero; Codex round-2 blocker 2);
+          (e) every deletion candidate was deleted: ``attempted == deleted``.
               This one predicate catches every non-deleted dimension the 8-key
               return can carry — ``failed``, ``skipped`` (skipped_no_upload_id /
               skipped_unknown_kind — surfaced anomalies needing attention),
@@ -138,26 +170,36 @@ class MaintenanceReport:
               fence_conflict) which ``recover_deletions`` does NOT aggregate
               into the 8-key return (op_repo:395) — it shows up only as
               ``attempted - (deleted+failed+skipped+alerted) > 0``;
-          (d) no per-op exception (``ops_alerted`` 0);
-          (e) no DB-side pending work: ``manual`` (asset needs human
-              reconciliation) and ``left_uploading`` (active upload lease left
+              ``deleted > attempted`` (an inverted/impossible tally) is also
+              caught (defense-in-depth);
+          (f) no per-op exception (``ops_alerted`` 0);
+          (g) no DB-side pending work: ``manual`` (asset needs human
+              reconciliation — whether flipped THIS sweep OR pre-existing; the
+              locked ``enqueue`` counts both under ``manual`` per the round-2
+              op_repo:2995 fix) and ``left_uploading`` (active upload lease left
               intact — its fenced apply will catch the withdraw on the next
               upload attempt; maintenance correctly does not touch it, but it
               IS unresolved this sweep).
         """
         if self.db_recovery_failed or self.network_skipped:
             return False
+        # (c)+(d) shape + value validation — type-stable (non-dict → False).
+        if not _valid_tally(self.deletion_recovery, _DEL_TALLY_KEYS):
+            return False
+        if not _valid_tally(self.db_recovery, _DB_TALLY_KEYS):
+            return False
         d = self.deletion_recovery
-        # (b) shape: the coordinator always returns the 8 keys; a missing/extra
-        # key means the return is malformed — refuse clean (do not guess).
-        if set(d.keys()) != _DEL_TALLY_KEYS:
+        # (f) no per-op exception.
+        if d.get("ops_alerted", 0):
             return False
-        # (c)+(d) deletion dimensions.
-        if d.get("failed", 0) or d.get("alerted", 0) or d.get("ops_alerted", 0):
-            return False
+        # (e) every candidate deleted: failed/alerted/skipped all 0 (attempted
+        # == deleted with the prior ops_alerted==0 gate ⟹ skipped + not_advanced
+        # both 0). Also catches deleted > attempted (inverted) as not-clean.
         if d.get("attempted", 0) != d.get("deleted", 0):
             return False
-        # (e) DB-side pending work.
+        if d.get("failed", 0) or d.get("alerted", 0) or d.get("skipped", 0):
+            return False
+        # (g) DB-side pending work.
         db = self.db_recovery
         if db.get("manual", 0) or db.get("left_uploading", 0):
             return False
@@ -233,6 +275,17 @@ def run_maintenance(
     # lease_seconds (NOT isinstance — bool is an int subclass; _check_lease_
     # seconds's range check happens to reject True/False as 1/0, but the
     # explicit type guard gives the precise error + matches the force discipline).
+    #
+    # Codex round-2 (type-stability): guard the STR args with `type(...) is str`
+    # FIRST so a non-string now_iso/lease_owner raises ValueError (not
+    # AttributeError at `.replace()` / TypeError in the regex) — the lib's
+    # contract is "raises ValueError on a bad arg"; honoring that uniformly lets
+    # the CLI leaf + tests assert ValueError without catching stray exception
+    # types. These never fire via the CLI (typer delivers str options + the CLI
+    # constructs now_iso itself).
+    if type(lease_owner) is not str:
+        raise ValueError(
+            f"lease_owner must be a str, got {type(lease_owner).__name__}")
     _require_lease_owner(lease_owner)
     if type(lease_seconds) is not int:
         raise ValueError(
@@ -240,6 +293,9 @@ def run_maintenance(
             f"{LEASE_MAX_SECONDS}], got {type(lease_seconds).__name__}"
         )
     _check_lease_seconds(lease_seconds)
+    if type(now_iso) is not str:
+        raise ValueError(
+            f"now_iso must be a tz-aware ISO-8601 str, got {type(now_iso).__name__}")
     _parse_utc(now_iso)  # raises ValueError if not tz-aware ISO-8601
 
     # M1: read-only journal gate. _journal_state opens a mode=ro URI + creates
@@ -374,17 +430,25 @@ def run_maintenance(
             ),
             force=force,
         )
-    # Codex round-1 (empty-tally gap): the coordinator contract is the exact
-    # 8-key dict (op_repo:4246); validate the shape so a malformed/short/
-    # over-keyed return is surfaced as a skip (NOT clean) rather than
-    # masquerading as a no-op sweep. ``clean`` re-checks this as a backstop.
-    if set(del_tally.keys()) != _DEL_TALLY_KEYS:
+    # Codex round-1/2 (malformed tally): the coordinator contract is the exact
+    # 8-key dict of non-negative ints (op_repo:4246); validate shape AND value
+    # types via _valid_tally (type-stable — a non-dict None/list/str return
+    # becomes a skip report instead of AttributeError escaping the try-block as
+    # exit-1; negative/non-int values are rejected too). ``clean`` re-checks
+    # this as a backstop.
+    if not _valid_tally(del_tally, _DEL_TALLY_KEYS):
+        if not isinstance(del_tally, dict):
+            got = f"non-dict {type(del_tally).__name__}"
+            keys = []
+        else:
+            got = "畸形"
+            keys = sorted(del_tally.keys())
         return MaintenanceReport(
             db_recovery=db_tally,
             network_skipped=True,
             skip_reason=(
-                f"recover_deletions 返回畸形 tally（期望 8 键 "
-                f"{sorted(_DEL_TALLY_KEYS)}，实际键 {sorted(del_tally.keys())}）— "
+                f"recover_deletions 返回畸形 tally（期望 8 键非负 int dict "
+                f"{sorted(_DEL_TALLY_KEYS)}，实际 {got} {keys}）— "
                 f"请运行 `lecturecast doctor`。"
             ),
             force=force,

@@ -212,6 +212,27 @@ line 489 pass criteria：
 
 **待 Codex round-2 锁定复审**（effort=low，invariant-completeness framing：4 blocker 闭合是否穷举 + B3 TOCTOU 文档化是否充分 + 入口校验/shape 校验/db_recovery_failed 语义是否无残留 gap）。
 
+**Codex round-2 复审结果（2026-08-02，effort=low）—— NOT LOCKABLE，2 blocker（B1/B3/B4/entry/M3 全 CONFIRMED closed）**：
+
+| # | finding | 闭合方式（round-3） |
+|---|---------|---------------------|
+| B1（skipped/not_advanced）| **CONFIRMED closed** —— 算术正确（attempted = deleted+failed+skipped+alerted+not_advanced；failed/alerted/ops_alerted==0 后 attempted==deleted ⟺ skipped+not_advanced==0）；deleted>attempted 不可能（deleted 是 attempts 子集），不等式也拒 | 无需改（维持 round-2 `attempted==deleted` 谓词；round-3 加 `deleted>attempted` inverted 用例 defense-in-depth） |
+| **B2 残留 blocker** | **pre-existing `manual_reconciliation_required` 行被算进 `kept`（op_repo:2995），非 `manual`** → `clean` 只查 `manual`/`left_uploading` 漏过预存人工行，exit 0 掩盖未决 | **源处修**：op_repo:2995-2997 改 `tally["manual"] += 1`（不再 `kept`）+ docstring 补 `manual_reconciliation_required → manual` disposition。`kept` 复归纯「resolved/terminal idempotent」语义；`manual` = 所有需人工对账行（本 sweep 新翻 OR 预存）。maintenance 的 `clean` 已有的 `db.get("manual",0)` 门禁直接生效，无需新耦合。爆炸半径：`consent.py:602` 丢弃 tally 返回值；无 locked test 覆盖该路径（补 `test_preexisting_manual_counted_as_manual_not_kept` 回归） |
+| B3（TOCTOU）| **CONFIRMED 文档化充分** —— 二次 `_journal_state` 检查太晚（init 可能已重建）；inode/mtime 快照只缩小窗口不闭合；彻底闭合需 recovery-only-open 原语（repo 改动）。单用户本地 CLI 威胁模型下 deferral 合理 | 无需改（维持 round-2 文档化） |
+| B4（DB-pass 异常）| **CONFIRMED closed** —— `except Exception` 适宽（KeyboardInterrupt/SystemExit 继承 BaseException 不被吞）；DB recovery 单一 begin_immediate 无子事务/逐行 commit；失败态一致（db_recovery_failed=True/network_skipped=True/deletion_recovery={}/clean=False） | 无需改 |
+| 入口校验 | **CONFIRMED closed**（顺序对、type is int 拒 bool、bounds 匹配、_parse_utc 拒 naive）+ **minor caveat**：非 str now_iso 抛 AttributeError（.replace()）、非 str lease_owner 抛 TypeError（regex）而非 ValueError | **round-3 修**：入口加 `type(lease_owner) is not str` + `type(now_iso) is not str` 守卫 → 统一 ValueError（lib 契约一致；CLI 永不触发） |
+| **shape 校验 blocker** | **非 type-stable**：`recover_deletions` 返回 None/list/str 时 `del_tally.keys()` 在 try 块外抛 AttributeError → 逃逸 exit 1（非结构化 exit 2）；负值/bool 值漏过；DB tally 5-key shape 完全未强制（`{}`/partial 因 .get 默认 0 过 clean） | **round-3 修**：抽 `_valid_tally(tally, keys)` helper（isinstance dict AND 精确键集 AND 全值 `type(v) is int and v>=0`，bool 被拒）—— type-stable（非 dict 返 False 不抛）；`_DB_TALLY_KEYS` 5-key frozenset；`clean` + `run_maintenance` 双侧用 `_valid_tally` 校验 deletion + DB 两 tally |
+| M3（message）| **CONFIRMED closed** —— 全 8 deletion 键 + 5 DB 键 + db_recovery_failed + skip_reason 都浮出 | 无需改 |
+
+**round-3 改动** ——
+1. `src/lecturecast/operation_repository.py:2995-2997`（locked primitive 修正）：`manual_reconciliation_required` 计 `manual`（非 `kept`）+ docstring 补 disposition。`tests/test_asset_journal.py` 加 `test_preexisting_manual_counted_as_manual_not_kept`（覆盖此前未测的路径）。
+2. `src/lecturecast/maintenance.py`：`_DB_TALLY_KEYS`（5 键）+ `_valid_tally(d, keys)` helper（type-stable shape+value 校验）；`clean` 重写用 `_valid_tally` 双侧校验（deletion 8 键 + DB 5 键）+ inverted `deleted>attempted` defense-in-depth；入口加 `type(lease_owner) is not str` + `type(now_iso) is not str` → ValueError；recover_deletions 后 shape 校验改用 `_valid_tally`（非 dict → 结构化 skip 不抛）。
+3. `src/lecturecast/commands/maintenance.py`：exit-code docstring 更新（exit 2 含 DB 失败/畸形 tally；exit 1 = 直接 lib 误用，CLI 永不触发）。
+
+**round-3 测试加固（61 → 82 测，+21）** —— 矩阵扩展（db shape `{}` 不过 clean / deleted>attempted inverted / non-dict None-list-str-int / negative / bool 值全维度）；`test_recover_deletions_non_dict_wrapped_to_skip`（5 例参数化：None/list/str/int/object → 结构化 skip exit 2 非 1）；`test_recover_deletions_bad_value_types_wrapped_to_skip`（3 例：negative/str/bool 值）；`test_m2_exit_2_on_preexisting_manual`（B2 端到端：seed 预存 manual 行 → 真 DB pass 计 manual → exit 2）；`test_db_failure_message_surfaces_warning_and_reason`（M3：DB 抛时消息含 ⚠ DB 行 + reason + 异常类型，无网络行）；`test_entry_guard_now_iso_non_str_raises_value_error`（5 例）+ `test_entry_guard_lease_owner_non_str_raises_value_error`（5 例，统一 ValueError 非 AttributeError/TypeError）；`test_asset_journal.py::test_preexisting_manual_counted_as_manual_not_kept`（locked primitive 回归）。全量 **1139 测全绿**（基线 823 + 本期增长，零回归；op_repo 改动对 consent/deletion-coordinator 等消费者零影响）。
+
+**待 Codex round-3 锁定复审**（effort=low，invariant-completeness framing：B2 源处修是否穷举 + shape 校验 type-stability 是否无残留 + locked primitive 改动是否引入新不变量回归）。
+
 ---
 
 ## 2. 盲预测（实现前先写死的契约）

@@ -69,18 +69,18 @@
 
 ### 还没做
 
-- §5.5e5d-c maintenance wiring —— **round-1 审决 NOT LOCKABLE（4 blocker + gaps）→ round-2 全闭合（61 测，1118 全绿），待 Codex round-2 锁定复审**
+- §5.5e5d-c maintenance wiring —— **round-2 审决 NOT LOCKABLE（2 blocker：B2 pre-existing manual 混入 kept + shape 校验非 type-stable）→ round-3 全闭合（82 测 + locked primitive 回归，1139 全绿），待 Codex round-3 锁定复审**
 - §5.5e5d-d 交互式降级卡片（D13，director preflight 检测数字人配置缺失 → A 配置/B 降级 M1 交互 next_action）
 - §5.5e6 RecoveryDirectiveCatalog 验签 + failure mapping + 宿主 workflow（§6 #14 依赖它）
 - §6 收尾：补 #9 定价下发 / #10 M1 门禁跨仓契约 + #14（依赖 e6）+ 三仓 CI gate
 
-§5.5e5c（capability wiring）+ §5.5e5d-a（doctor v1.1）+ §5.5e5d-b（canary harness）**已锁定**（6 轮 + a/b 各自 Codex 审阅后锁定）。客户端 **1118 测试全绿**。分支 `feat/digital-human-protocol-v1_1`。
+§5.5e5c（capability wiring）+ §5.5e5d-a（doctor v1.1）+ §5.5e5d-b（canary harness）**已锁定**（6 轮 + a/b 各自 Codex 审阅后锁定）。客户端 **1139 测试全绿**。分支 `feat/digital-human-protocol-v1_1`。
 
 ---
 
-## 下次会话接续点（交接）—— e5d-c maintenance 待 Codex round-2
+## 下次会话接续点（交接）—— e5d-c maintenance 待 Codex round-3
 
-**当前状态**：e5c/e5d-a/e5d-b 全部锁定；e5d-c maintenance wiring（`src/lecturecast/maintenance.py` + `commands/maintenance.py` + `tests/test_maintenance.py` 61 测）—— **Codex round-1 审决 NOT LOCKABLE（4 blocker B1/B2/B3/B4 + lease/now/shape/M3 gaps）→ round-2 全闭合，1118 测全绿，待发 Codex round-2 锁定复审**。round-2 闭合（见 `docs/e5cd-design.md` §1.13 round-1 矩阵）：B1 `clean` 加 `attempted==deleted` 谓词（吞 skipped + not_advanced）；B2 加 `db manual/left_uploading` 检查；B3 TOCTOU 文档化为已知局限（单用户本地 CLI，recovery-only-open 原语 deferred）；B4 DB pass try/except 包 + `db_recovery_failed` 字段；入口校验 lease_owner/lease_seconds/now_iso；`_DEL_TALLY_KEYS` shape 校验（empty/畸形 tally 不伪装 clean）；`_format_message` 浮全 8 键。约束 d 加动态测（instrument 真 adapter 类所有 delete-named 方法证零调用）。M1 穷举（11 类 non-current 参数化 mock）。
+**当前状态**：e5c/e5d-a/e5d-b 全部锁定；e5d-c maintenance wiring —— **Codex round-1 NOT LOCKABLE（4 blocker）→ round-2 全闭合 → Codex round-2 NOT LOCKABLE（2 blocker：B2 pre-existing manual 混入 kept + shape 校验非 type-stable）→ round-3 全闭合，1139 测全绿，待发 Codex round-3 锁定复审**。round-3 闭合（见 `docs/e5cd-design.md` §1.13 round-2 矩阵）：(1) B2 源处修——op_repo:2995 `manual_reconciliation_required` 改计 `manual`（非 `kept`），locked primitive 语义修正，补 `test_preexisting_manual_counted_as_manual_not_kept` 回归（此前该路径零测试）；(2) shape 校验 type-stable——抽 `_valid_tally(tally, keys)` helper（dict + 精确键集 + 全值非负 int，bool 被拒），非 dict 返回 None/list/str 不抛 AttributeError 而转结构化 skip；`_DB_TALLY_KEYS` 5 键 frozenset；`clean` + `run_maintenance` 双侧校验 deletion+DB 两 tally；(3) 入口 `type(lease_owner/now_iso) is not str` → 统一 ValueError；(4) CLI exit-code docstring 更新。B1/B3/B4/M3/entry Codex 全 CONFIRMED closed。
 
 c3 审阅轨迹（13 轮）：round-1~5 候选/witness 门禁迭代 → round-6 DELETED witness 逃过所有 claim 复查（6 类 bypass）→ round-7 B1 终态证明 + B2 asset binding（2 类）→ round-8/9 B1↔B2 op-level 不对称（download_status + single-video）→ round-10/11 claim↔apply 对偶接缝（video not_started reason-blind + apply reason TOCTOU）→ round-12 video apply F1/F2（retention/download_status/remote_id）+ 点名 asset 侧 F3/F4/F5 → round-13 asset op-level F3/F4/F5 + F5 域修正（refs→created_by 镜像 resolver）。**元教训（诚实记录 #13）**：「原则陈述正确 ≠ 实现穷举」——claim↔apply 跨 tx 授权必须逐字段列 claim 在 tx1 读的每个授权字段，逐一确认 apply 在 tx2 也复查；不能只改被 Codex 点名的那个。
 
@@ -104,7 +104,7 @@ capability wiring + doctor/canary：把已锁的删除子系统（coordinator + 
 ```bash
 cd ~/AgentMesh-Lecturecast
 git log --oneline -4   # 最近：6572abc c3 lock 裁定；6767d1f F5 域修正；eae5fbc round-13；25e22a4 round-12
-.venv/bin/python -m pytest -q   # 应 1118 passed（或 UV_CACHE_DIR=/tmp/lc-uv-cache uv run --project . pytest tests/ -c pyproject.toml -q）
+.venv/bin/python -m pytest -q   # 应 1139 passed（或 UV_CACHE_DIR=/tmp/lc-uv-cache uv run --project . pytest tests/ -c pyproject.toml -q）
 ```
 
 Codex e5b0c3c 会话: `019fb840-a93b-73e1-b56c-a29b07a15e3d`（含 c1/c2/c3 全部审阅历史，resume 即续）。发审命令：`cat prompt.txt | codex exec -C ~/AgentMesh-Lecturecast resume <session> - -c 'model_reasoning_effort="low"' --json`（**务必 effort=low**，medium 在新 session 会挂；`-C` 必须在 `resume` 之前）。注：c3 round-13 最终复审用 fresh `codex exec`（非 resume）+ rephrased prompt 绕 cyber 内容过滤——若 resume 触发过滤，改用 fresh exec + invariant-completeness 框架（非 security 措辞）。
