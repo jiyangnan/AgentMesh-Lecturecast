@@ -3144,8 +3144,8 @@ class OperationRepository:
                   condition has two typical causes (Codex round-7 distinguished
                   them): broken topology (c1) — missing/foreign ref, credential
                   mismatch, wrong kind, broken upload-binding; OR an ACTIVE op-
-                  lease (c2), which branch B's ``o.lease_owner IS NULL`` gate
-                  rejects. NOTE: ``no video`` is NOT an independent cause — branch
+                  lease (c2), which branch B's ``o.lease_owner IS NULL AND
+                  o.lease_expires_at IS NULL`` gate rejects. NOTE: ``no video`` is NOT an independent cause — branch
                   B2 explicitly admits a zero-video op (``COUNT(video) <= 1``, not
                   ``== 1``; see the constant @4091-4134), so a properly-bound
                   asset witnesses via B2 even with zero video rows. Round-5
@@ -3169,8 +3169,8 @@ class OperationRepository:
                         ``lease_expires_at`` / ``lease_fence`` /
                         ``attempt_started_at``); the enqueue then sits the asset
                         ``deletion_pending`` on a leased op. Branch B's
-                        ``o.lease_owner IS NULL`` gate makes the op non-selectable
-                        THIS sweep (NOT a missing video — see the note above);
+                        ``o.lease_owner IS NULL AND o.lease_expires_at IS NULL``
+                        gate makes the op non-selectable THIS sweep (NOT a missing video — see the note above);
                         the asset is genuinely pending deletion but blocked. This
                         is NOT corruption and the count is NOT guaranteed zero on
                         every producer-valid journal — it is zero on SETTLED
@@ -3268,8 +3268,8 @@ class OperationRepository:
             #           ops, ``consent_receipt_digest``, ``updated_at``) but does
             #           NOT clear/modify the op lease. The enqueue sits the asset
             #           ``deletion_pending`` on a leased op; branch B's
-            #           ``o.lease_owner IS NULL`` gate then makes it non-selectable
-            #           THIS sweep. NOTE: ``no video`` is NOT an independent cause
+            #           ``o.lease_owner IS NULL AND o.lease_expires_at IS NULL`` gate
+            #           then makes it non-selectable THIS sweep. NOTE: ``no video`` is NOT an independent cause
             #           — branch B2 admits a zero-video op (``COUNT(video) <= 1``;
             #           see the constant @4091-4134), so a properly-bound asset
             #           witnesses via B2 with zero video rows once a fenced
