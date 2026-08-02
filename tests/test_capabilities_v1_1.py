@@ -162,22 +162,40 @@ def _make_db(
     head: int | None = None,
     core_table: bool = False,
     missing_table: str | None = None,
+    stub_columns: bool = False,
 ) -> Path:
-    """Build a journal DB at the expected probe path. core_table=True creates
-    ALL five v6 journal tables so the probe sees a full schema-shaped DB;
-    missing_table skips one (to test the partial-schema guard). Without
-    core_table the DB is empty (only user_version set) — the version-only-lying
-    state the probe must reject (B5)."""
+    """Build a journal DB at the expected probe path.
+
+    core_table=True creates the REAL v6 schema — the same _DDL_STATEMENTS
+    init_database runs — so a head==_SCHEMA_VERSION DB the probe should ACCEPT
+    (round-4 R3-1/R3-2: the prior stub `(id INTEGER PRIMARY KEY)` tables were
+    a test-only fabrication that asserted the very over-report Codex flagged).
+    missing_table drops one table AFTER creating the full schema (to exercise
+    the partial-schema guard). stub_columns=True instead creates the five table
+    NAMES with only `(id INTEGER PRIMARY KEY)` columns (Codex round-3 repro) —
+    names + user_version present but column shape wrong, which the probe must
+    REJECT. Without core_table/stub_columns the DB is empty (the version-only-
+    lying state the probe must reject, B5)."""
     import sqlite3
+
+    from lecturecast.heygen_journal import _DDL_STATEMENTS
 
     runtime = tmp_path / ".lecturecast" / "runtime"
     runtime.mkdir(parents=True)
     db = runtime / "heygen-operations.db"
     conn = sqlite3.connect(str(db))
     if core_table:
+        # Mirror init_database exactly: execute each DDL statement individually
+        # (executescript would issue an implicit COMMIT; irrelevant for a fresh
+        # test DB, but mirroring prod avoids masking a statement-level issue).
+        for stmt in _DDL_STATEMENTS:
+            conn.execute(stmt)
+        if missing_table:
+            # Drop AFTER create so the remaining tables keep their FK references
+            # (dangling refs are exactly the "missing one table" shape we test).
+            conn.execute(f"DROP TABLE IF EXISTS {missing_table}")
+    elif stub_columns:
         for table in _V6_TABLES:
-            if table == missing_table:
-                continue
             conn.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY)")
     if head is not None:
         conn.executescript(f"PRAGMA user_version = {head};")
@@ -356,6 +374,101 @@ def test_default_journal_probe_unwritable_runtime_is_not_ready(
         assert default_heygen_journal_probe(tmp_path) is False
     finally:
         os.chmod(runtime, 0o700)  # restore so pytest can clean up
+
+
+def test_default_journal_probe_stub_columns_is_not_ready(tmp_path: Path) -> None:
+    """§5.5e5c round-4 (R3-1/R3-2): table NAMES + user_version present but each
+    table is a stub `(id INTEGER PRIMARY KEY)` (Codex's repro: a hand-crafted or
+    partially-corrupted head==6 DB). The probe must compare COLUMN sets against
+    the canonical schema, not just names — otherwise the first real repository
+    query fails 'no such column'."""
+    from lecturecast.heygen_journal import _SCHEMA_VERSION
+
+    _make_db(tmp_path, head=_SCHEMA_VERSION, stub_columns=True)
+    assert default_heygen_journal_probe(tmp_path) is False
+
+
+def test_default_journal_probe_readonly_db_file_is_not_ready(tmp_path: Path) -> None:
+    """§5.5e5c round-4 (R3-7): runtime/ is writable but the DB file itself is
+    read-only (chmod 0400 — e.g. a restored backup or a chmod accident). A
+    directory-only writability check passes, but every operation write fails
+    'attempt to write a readonly database'. The probe requires W_OK on the DB
+    file too."""
+    import os
+
+    from lecturecast.heygen_journal import _SCHEMA_VERSION
+
+    db = _make_db(tmp_path, head=_SCHEMA_VERSION, core_table=True)
+    os.chmod(db, 0o400)
+    try:
+        assert default_heygen_journal_probe(tmp_path) is False
+    finally:
+        os.chmod(db, 0o600)  # restore so pytest can clean up
+
+
+def test_default_journal_probe_sentinel_marks_prior_use(tmp_path: Path) -> None:
+    """§5.5e5c round-4 (R3-3): the whole runtime/ was deleted after prior use AND
+    client-capabilities.json was since overwritten with an unconfigured snapshot
+    (the non-monotonic failure Codex identified: recapture erases the caps
+    marker). The durable `.lecturecast/heygen.used` sentinel — written once by
+    init_database, outside runtime/ — survives both, so the probe still treats
+    the missing journal as data loss, not a fresh project."""
+    from lecturecast.heygen_journal import _PRIOR_USE_SENTINEL
+
+    lecturecast_dir = tmp_path / ".lecturecast"
+    lecturecast_dir.mkdir(parents=True)
+    # Prior use happened: init_database wrote the sentinel. runtime/ is gone and
+    # caps never carried configured HeyGen — yet the durable marker persists.
+    (lecturecast_dir / _PRIOR_USE_SENTINEL).touch()
+    assert default_heygen_journal_probe(tmp_path) is False
+
+
+def test_default_adapter_probe_fail_closed_on_missing_orchestrator_class(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§5.5e5c round-4 (R3-6): operation_repository IMPORTS but a required
+    processor / coordinator class is absent (partial / mixed install). Module
+    import alone would pass; the probe must verify each required class resolves
+    as a real type (isinstance(x, type) — mirrors the round-3 R3-5 callable
+    lesson: presence is not enough)."""
+    import lecturecast.operation_repository as mod
+
+    monkeypatch.delattr(mod, "DeleteProcessor", raising=False)
+    assert default_heygen_adapter_probe() is False
+
+
+def test_default_journal_probe_malformed_non_object_caps_is_not_ready(
+    tmp_path: Path,
+) -> None:
+    """§5.5e5c round-4 (R3-4): client-capabilities.json is valid JSON but a
+    non-object (`[1, 2, 3]`). Previously `data.get(...)` raised AttributeError
+    (fail-stop, escaping the shared capture path); now the isinstance guard (or
+    the top-level backstop) treats it as prior-use -> fail-closed. The probe
+    must NOT raise."""
+    lecturecast_dir = tmp_path / ".lecturecast"
+    lecturecast_dir.mkdir(parents=True)
+    (lecturecast_dir / "client-capabilities.json").write_text("[1, 2, 3]")
+    assert default_heygen_journal_probe(tmp_path) is False
+
+
+def test_default_journal_probe_backstop_on_unexpected_raise(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§5.5e5c round-4 (R3-4): the probe is a boolean predicate whose contract
+    is 'never raise'. Any UNEXPECTED error (not sqlite3.Error / OSError) inside
+    the probe must hit the top-level fail-closed backstop, not escape into the
+    shared v1.1 capture path and block M1."""
+    import lecturecast.capabilities as caps
+
+    (tmp_path / ".lecturecast").mkdir(parents=True)
+
+    def _boom(_lecturecast_dir: Path) -> bool:
+        raise ValueError("unexpected non-OS, non-sqlite error")
+
+    monkeypatch.setattr(caps, "_prior_heygen_use_detected", _boom)
+    # Missing DB + writable .lecturecast -> reaches the prior-use call, which
+    # raises ValueError -> top-level backstop -> False (no exception escapes).
+    assert default_heygen_journal_probe(tmp_path) is False
 
 
 def test_m1_independent_of_heygen_config() -> None:
