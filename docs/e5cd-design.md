@@ -369,11 +369,23 @@ Codex round-9 裁定 **NOT LOCKABLE**，1 个纯 doc-only blocker（items 1–5 
 | 4 | `e5cd-design.md:331`（§1.13c row 2，2 处）| 两处 `o.lease_owner IS NULL` gate 均合取化 |
 | 5 | `DIGITAL-HUMAN-PROGRESS.md:83`（handoff round-8 closure (b)）| 合取化 |
 
-against source 核实：branch B 真实谓词 @`operation_repository.py:4065` = `(o.lease_owner IS NULL AND o.lease_expires_at IS NULL`（合取，双列；非时间比较）。grep 全仓 `lease_owner IS NULL` 不跟 `AND` 的残余 —— 修正后 src/ + docs/ **零命中**（exit 1）。auto-resolve 段（docstring @~3180、SQL COMMENT @~3277）round-9 已是合取；`e5b0c3c-c3-design.md:295`（SQL 常量原文）+ `e5cd-design.md:313`（§1.13b accurate 版本）本就合取。round-10 改完后全仓描述 branch B gate 的 site **全部** 合取一致。
+against source 核实：branch B 真实谓词 @`operation_repository.py:4065` = `(o.lease_owner IS NULL AND o.lease_expires_at IS NULL`（合取，双列；非时间比较）。grep 全仓 `lease_owner IS NULL` 不跟 `AND`：**规范性 branch-B 描述零 owner-only 残余**；其余命中（本节 before→after 表的"前"文本 / round-9 blocker 历史记录 / 进度文档历史段）均为**明确标记的历史/错误语境**，非当前规范描述（round-11 修：round-10 原写 "零命中（exit 1）" 自指不准 —— 本节自身的 before-text 就会产生命中）。auto-resolve 段（docstring @~3180、SQL COMMENT @~3277）round-9 已是合取；`e5b0c3c-c3-design.md:295`（SQL 常量原文）+ `e5cd-design.md:313`（§1.13b accurate 版本）本就合取。round-10 改完后全仓**规范性**描述 branch B gate 的 site **全部** 合取一致。
 
 **元教训（#round-10，#3 次同一模式）**：这是 round-8→9 模式的**第 3 次重复** —— round-7 凭直觉写 c2 三处不准（round-8 修）；round-8 修了 auto-resolve 但 prompt 自己写 "expired" + 漏 §1.13b 历史段（round-9 修）；round-9 修了 auto-resolve 合取但漏了 c2 intro/sub-bullet/SQL-COMMENT 的 owner-only 简写（round-10 修）。**根因**：每次修 doc 时只盯 Codex 点名的那个 claim 的"主表述段"，没意识到**同一个谓词会在 docstring 的 intro、sub-bullet、auto-resolve 三个位置分别表述一次**，每处都需独立合取化。同 c3 "原则陈述正确 ≠ 实现穷举" 的 doc 版：**一个谓词在 N 处表述，修 1 处 ≠ 修 N 处**。修正动作：grep 全仓该谓词的每一种简写/全写形态，逐处核对。
 
 **待 Codex round-10 锁定复审**（effort=low，invariant-completeness/doc-accuracy framing：(1) 5 site 是否全合取化、against @4065 真实谓词准确；(2) grep 全仓是否还有 owner-only 简写残留（含 maintenance.py / consent.py / 其他 design doc）；(3) 合取化是否引入新内部不一致（如某处合取项笔误）；(4) 纯 doc，零 runtime/SQL/test 变化，1169 全绿不变）。
+
+### §1.13f round-11（Codex round-10 NOT LOCKABLE → 全闭合，待 Codex round-11 锁定复审）
+
+Codex round-10 裁定 **NOT LOCKABLE**，1 个纯 doc-only blocker（items 1–6 + 8 全 CONFIRMED accurate —— 5 site 全合取化、全仓猎无规范性 owner-only 残留、doc-only/1169 不变）。唯一 blocker（item 7）：§1.13e 写 "grep 全仓 `lease_owner IS NULL` 不跟 `AND` 的残余 —— 修正后 src/ + docs/ **零命中**（exit 1）" —— 这句话**自指不准**：本节自身的 before→after 表 "前" 文本、round-9 blocker 历史记录、进度文档历史段都含 owner-only 串，会产生 grep 命中。**实质结论（零规范性残留）正确，但 "零命中（exit 1）" 字面 claim 错。**
+
+round-11 修正（2 site，纯 doc）：
+- `docs/e5cd-design.md` §1.13e（@~372）："零命中（exit 1）" → "规范性 branch-B 描述零 owner-only 残余；其余命中均为明确标记的历史/错误语境"。
+- `docs/DIGITAL-HUMAN-PROGRESS.md:83`（handoff round-10 闭合段）：同改（Codex 只点了 §1.13e，但同一 false claim 也在 PROGRESS:83 —— 按元教训 grep 全仓同义表述，两处一起改）。
+
+**元教训（#round-11，#4 次同一模式 + 新变体）**：前三次是"修谓词漏同义 site"；这次是**自指陷阱** —— 一条描述 grep 结果的陈述，其本身的成立条件会被同节内的历史/before 文本破坏。写 "grep 零命中" 这类**关于自身文档的元陈述**时，必须把本节将引入的 before/历史文本计入命中集，否则自相矛盾。同 c3 "原则陈述正确 ≠ 实现穷举"：**关于文档的元 claim 也要 against 文档实际内容核实**。
+
+**待 Codex round-11 锁定复审**（effort=low，invariant-completeness/doc-accuracy framing：(1) §1.13e + PROGRESS:83 的 "零命中" 是否改为准确的 "零规范性残留 + 历史命中标注"；(2) 改后是否引入新不准（如把 "规范性" 误写成全量）；(3) 全仓是否还有其他 "零命中/zero hits/exit 1" 类自指元 claim（含 round-9 §1.13d 的 prompt、round-8 历史段）；(4) 纯 doc，零 runtime/SQL/test 变化，1169 全绿不变）。
 
 ---
 
