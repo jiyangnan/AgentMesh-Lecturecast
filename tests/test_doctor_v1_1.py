@@ -143,13 +143,28 @@ def test_doctor_section_all_pass_configured() -> None:
 
 
 def test_doctor_section_key_missing_blocker() -> None:
-    """D4: no key -> key_missing BLOCKER; adapter/journal NOT assessed
-    (redundant without a key — key_missing already blocks)."""
+    """D4: no key -> key_missing BLOCKER. With adapter + journal otherwise OK,
+    key_missing is the sole blocker (adapter_importable=True and journal=current
+    are still ASSESSED for diagnostic richness, but add no blocker)."""
     section = _section(key=None)
     assert section["configured"] is False
     assert section["key_present"] is False
     assert "key_missing" in section["blockers"]
+    # adapter ok + journal current -> no extra blockers.
     assert "adapter_unimportable" not in section["blockers"]
+    assert all(not b.startswith("journal_") for b in section["blockers"])
+
+
+def test_doctor_section_routes_all_blockers_independently() -> None:
+    """D4 (round-1 fix): blockers are routed INDEPENDENTLY — a missing key must
+    NOT suppress adapter/journal blockers. key missing + adapter broken +
+    journal ahead -> ALL THREE surfaced in one doctor pass (the complete fix
+    list), not just the first. configured is still False (AND of all three)."""
+    section = _section(key=None, adapter_ok=False, classification="ahead", head=7)
+    assert section["configured"] is False
+    assert "key_missing" in section["blockers"]
+    assert "adapter_unimportable" in section["blockers"]
+    assert "journal_ahead" in section["blockers"]
 
 
 def test_doctor_section_adapter_unimportable_blocker() -> None:
