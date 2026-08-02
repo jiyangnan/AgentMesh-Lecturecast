@@ -114,15 +114,54 @@ def test_default_adapter_probe_fail_closed_on_missing_attr(
     assert default_heygen_adapter_probe() is False
 
 
-def _init_test_db(tmp_path: Path, head: int | None = None) -> Path:
-    """Create a real (empty) SQLite journal DB at the expected path so the
-    read-only probe can open it; optionally set PRAGMA user_version."""
+def test_default_adapter_probe_fail_closed_on_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§5.5e5c round-2 (B2): a non-ImportError failure during adapter import
+    (RuntimeError / OSError / binary-dep init) must fail closed, not raise —
+    a raise would escape the shared v1.1 capture path and could block the M1
+    base delivery that does not even depend on HeyGen."""
+    import importlib
+
+    real_import_module = importlib.import_module
+
+    def _boom(name, *args, **kwargs):
+        if name == "lecturecast.heygen_http":
+            raise RuntimeError("binary dependency failed to load")
+        return real_import_module(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib, "import_module", _boom)
+    assert default_heygen_adapter_probe() is False
+
+
+def test_default_adapter_probe_fail_closed_on_missing_method(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§5.5e5c round-2 (W1): class resolution alone is not enough — if a
+    reported operation's backing method is stripped (partial / mixed-version
+    install), the probe must fail closed so the server does not bill an
+    operation the client cannot serve."""
+    import lecturecast.heygen_videos_adapter as mod
+
+    monkeypatch.delattr(mod.HeyGenVideosAdapter, "delete_video", raising=False)
+    assert default_heygen_adapter_probe() is False
+
+
+def _make_db(
+    tmp_path: Path, *, head: int | None = None, core_table: bool = False
+) -> Path:
+    """Build a journal DB at the expected probe path. core_table=True creates
+    the heygen_remote_resources table (the probe's required core table) so the
+    probe sees a schema-shaped DB; without it the DB is empty (only user_version
+    set) — the version-only-lying state the probe must reject (B5)."""
     import sqlite3
 
     runtime = tmp_path / ".lecturecast" / "runtime"
     runtime.mkdir(parents=True)
     db = runtime / "heygen-operations.db"
     conn = sqlite3.connect(str(db))
+    if core_table:
+        conn.execute("CREATE TABLE heygen_remote_resources (id INTEGER PRIMARY KEY)")
     if head is not None:
         conn.executescript(f"PRAGMA user_version = {head};")
     conn.close()
@@ -139,13 +178,16 @@ def test_default_journal_probe_missing_db_is_ready(tmp_path: Path) -> None:
 def test_default_journal_probe_head_current_is_ready(tmp_path: Path) -> None:
     from lecturecast.heygen_journal import _SCHEMA_VERSION
 
-    _init_test_db(tmp_path, head=_SCHEMA_VERSION)
+    # §5.5e5c round-2 (B5): head alone is not enough — the core resource table
+    # must exist. A real head=_SCHEMA_VERSION DB with the table is ready.
+    _make_db(tmp_path, head=_SCHEMA_VERSION, core_table=True)
     assert default_heygen_journal_probe(tmp_path) is True
 
 
 def test_default_journal_probe_head_below_is_ready(tmp_path: Path) -> None:
-    """head < _SCHEMA_VERSION is ready — init_database auto-migrates on first op."""
-    _init_test_db(tmp_path, head=3)
+    """head < _SCHEMA_VERSION with the core table is a legitimate prior-version
+    DB that init_database auto-migrates on first op -> ready."""
+    _make_db(tmp_path, head=3, core_table=True)
     assert default_heygen_journal_probe(tmp_path) is True
 
 
@@ -153,7 +195,41 @@ def test_default_journal_probe_head_ahead_is_not_ready(tmp_path: Path) -> None:
     """head > _SCHEMA_VERSION is refuse-downgrade (genuinely incompatible) → False."""
     from lecturecast.heygen_journal import _SCHEMA_VERSION
 
-    _init_test_db(tmp_path, head=_SCHEMA_VERSION + 1)
+    _make_db(tmp_path, head=_SCHEMA_VERSION + 1)
+    assert default_heygen_journal_probe(tmp_path) is False
+
+
+def test_default_journal_probe_empty_db_head_set_is_not_ready(tmp_path: Path) -> None:
+    """§5.5e5c round-2 (B5): a DB whose user_version was set without the tables
+    (manual PRAGMA / partial copy / corruption) must NOT be reported ready.
+    init_database sees head==_SCHEMA_VERSION and skips migration, so the first
+    op would fail 'no such table'. Version alone is not schema shape."""
+    from lecturecast.heygen_journal import _SCHEMA_VERSION
+
+    _make_db(tmp_path, head=_SCHEMA_VERSION, core_table=False)
+    assert default_heygen_journal_probe(tmp_path) is False
+
+
+def test_default_journal_probe_missing_db_with_runtime_dir_is_not_ready(
+    tmp_path: Path,
+) -> None:
+    """§5.5e5c round-2 (B3): runtime/ exists (created by a prior init_database)
+    but the DB is gone -> the journal was initialized before and has since been
+    deleted. Prior remote resources are unrecoverable; reporting ready would
+    over-claim idempotency_24h / delete capability on lost history."""
+    (tmp_path / ".lecturecast" / "runtime").mkdir(parents=True)
+    assert default_heygen_journal_probe(tmp_path) is False
+
+
+def test_default_journal_probe_symlink_component_is_not_ready(tmp_path: Path) -> None:
+    """§5.5e5c round-2 (B4): init_database rejects symlink components
+    (heygen_journal:406). The probe mirrors that rejection so it does not
+    over-report against an init that will raise."""
+    runtime = tmp_path / ".lecturecast" / "runtime"
+    runtime.mkdir(parents=True)
+    link_target = tmp_path / "evil.db"
+    link_target.write_bytes(b"not a sqlite db")
+    (runtime / "heygen-operations.db").symlink_to(link_target)
     assert default_heygen_journal_probe(tmp_path) is False
 
 
@@ -171,6 +247,42 @@ def test_m1_independent_of_heygen_config() -> None:
     payload = caps.model_dump()
     assert payload.get("third_party_processors") in (None, [])
     assert payload["schema_version"] == "1.1"
+
+
+def test_stored_heygen_capability_invalidated_when_live_probe_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§5.5e5c round-2 (B1): a stored configured=true HeyGen payload must be
+    invalidated when the live probes no longer agree, so Director re-captures
+    (omitting HeyGen) instead of billing real credits on a stale snapshot."""
+    from lecturecast.capabilities import capture_capabilities_v1_1
+    from lecturecast.commands.director import _stored_heygen_still_live
+
+    # A stored doc that DOES claim configured HeyGen.
+    doc = capture_capabilities_v1_1(
+        adapter_kind="codex", adapter_version="1.0.0", runner=_probe_runner,
+        env={HEYGEN_API_KEY_ENV: "sk_live"}, path_probe=Path,
+        adapter_probe=_TRUE, journal_probe=_TRUE,
+    )
+    assert doc.model_dump()["third_party_processors"][0]["configured"] is True
+
+    # A doc with no HeyGen claim is always still-live (nothing to invalidate).
+    plain = capture_capabilities_v1_1(
+        adapter_kind="codex", adapter_version="1.0.0", runner=_probe_runner,
+        env={}, path_probe=Path,
+    )
+    assert _stored_heygen_still_live(plain, tmp_path) is True
+
+    # Stored doc claims configured HeyGen. Key present but the journal is now in
+    # a prior-use-data-loss state (runtime/ exists, DB missing) -> live probes
+    # disagree -> the snapshot is stale.
+    monkeypatch.setenv(HEYGEN_API_KEY_ENV, "sk_live")
+    (tmp_path / ".lecturecast" / "runtime").mkdir(parents=True)
+    assert _stored_heygen_still_live(doc, tmp_path) is False
+
+    # Key removed entirely -> also stale (M2 must not bill on the old snapshot).
+    monkeypatch.delenv(HEYGEN_API_KEY_ENV, raising=False)
+    assert _stored_heygen_still_live(doc, tmp_path) is False
 
 
 # ---- capture_capabilities_v1_1 end-to-end (fail-closed by default) ----
