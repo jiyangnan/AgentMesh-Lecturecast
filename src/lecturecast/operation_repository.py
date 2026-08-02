@@ -3140,36 +3140,51 @@ class OperationRepository:
               (c) Codex round-6 (NO-WITNESS / NON-SELECTABLE) — a CLAIM-ELIGIBLE
                   resource (``pending|failed + post_download|consent_withdrawal``)
                   on an op whose witness predicate is currently UNSATISFIED: no r2
-                  on the op satisfies the FULL witness predicate (broken topology
-                  — missing/foreign ref, credential mismatch, wrong kind, broken
-                  upload-binding; OR an ACTIVE op-lease, which branch B's
-                  ``o.lease_owner IS NULL`` gate rejects; OR no video yet on a
-                  pre-video op). Round-5 counted only domains (a)+(b); such a
-                  resource escapes BOTH (normal state-matrix) AND the per-op pass
-                  (never selected → ``ops_alerted`` stays 0) → round-5 虚报'd
-                  exit 0 over it. Domain (c) covers TWO cases Codex round-7
-                  distinguished:
+                  on the op satisfies the FULL witness predicate. The no-witness
+                  condition has two typical causes (Codex round-7 distinguished
+                  them): broken topology (c1) — missing/foreign ref, credential
+                  mismatch, wrong kind, broken upload-binding; OR an ACTIVE op-
+                  lease (c2), which branch B's ``o.lease_owner IS NULL`` gate
+                  rejects. NOTE: ``no video`` is NOT an independent cause — branch
+                  B2 explicitly admits a zero-video op (``COUNT(video) <= 1``, not
+                  ``== 1``; see the constant @4091-4134), so a properly-bound
+                  asset witnesses via B2 even with zero video rows. Round-5
+                  counted only domains (a)+(b); such a resource escapes BOTH
+                  (normal state-matrix) AND the per-op pass (never selected →
+                  ``ops_alerted`` stays 0) → round-5 虚报'd exit 0 over it. The
+                  two cases:
                     (c1) STATIC CORRUPTION — broken topology via direct INSERT
                         evading validate-then-INSERT (the SAME threat model as
                         (b); primitive-unreachable, zero on producer-valid
                         journals). NOT the documented journal-replacement TOCTOU
                         class (the row EXISTS at audit time; no concurrent
                         mutation).
-                    (c2) TRANSIENT BLOCKED-PENDING (producer-valid) —
-                        ``consent_withdrawal`` cleanup claimed an asset on an op
-                        whose lease is still active (``withdraw`` does NOT clear
-                        the op lease — consent.py:591 UPDATEs only the receipt)
-                        and/or that has no video yet. Branch B's lease gate +
-                        branch A's video requirement make the op non-selectable
-                        THIS sweep; the asset is genuinely pending deletion but
-                        blocked. This is NOT corruption and the count is NOT
-                        guaranteed zero on every producer-valid journal — it is
-                        zero on SETTLED journals and non-zero during the brief
-                        withdrawn-but-leased window, which is CORRECT (the
-                        deletion cannot proceed this sweep; exit 2 is honest).
-                        It auto-resolves: once the lease clears (and a video
-                        appears for post_download), the op becomes selectable,
-                        the coordinator drives it, and the count returns to 0.
+                    (c2) TRANSIENT BLOCKED-PENDING (producer-valid) — a cleanup
+                        (``consent_withdrawal`` or ``post_download``) claimed an
+                        asset on an op whose lease is still active. ``withdraw``
+                        (consent.py:591-673) UPDATEs the receipt AND the op's
+                        consent-lifecycle fields (``status`` for pristine ops,
+                        ``consent_receipt_digest``, ``updated_at``) but does NOT
+                        clear or modify the op lease (``lease_owner`` /
+                        ``lease_expires_at`` / ``lease_fence`` /
+                        ``attempt_started_at``); the enqueue then sits the asset
+                        ``deletion_pending`` on a leased op. Branch B's
+                        ``o.lease_owner IS NULL`` gate makes the op non-selectable
+                        THIS sweep (NOT a missing video — see the note above);
+                        the asset is genuinely pending deletion but blocked. This
+                        is NOT corruption and the count is NOT guaranteed zero on
+                        every producer-valid journal — it is zero on SETTLED
+                        journals (lease cleared) and non-zero during the brief
+                        active-lease window, which is CORRECT (the deletion cannot
+                        proceed this sweep; exit 2 is honest). It auto-resolves:
+                        once the lease clears independently (expired / fenced /
+                        released), branch B's lease gate passes; a properly-bound
+                        asset then witnesses via B2 (``consent_withdrawal`` is
+                        delivery-independent; ``post_download`` requires
+                        ``download_status='verified'`` + ``COUNT(video) <= 1``,
+                        both satisfiable with zero video rows), the op becomes
+                        selectable, the coordinator drives it, and the count
+                        returns to 0.
                 Domain (c) mirrors the FULL witness predicate via the SHARED
                 ``_DELETION_WITNESS_SUBQUERY_SQL`` constant (the SAME constant
                 ``recover_deletions``'s candidate SELECT uses) — eliminating the
@@ -3192,12 +3207,13 @@ class OperationRepository:
         +NULL`` (fresh resource, never claimed); active ``uploading`` leases (the
         DB pass's ``left_uploading`` tally already flags these per-sweep). The
         SAME ``post_download``/``consent_withdrawal`` reason on a NON-selectable
-        op (no witness — leased or pre-video) IS counted — that is domain (c2)
-        above, a genuinely blocked deletion. Counting the selectable-op case
-        would make exit 0 unreachable during normal multi-resource consent-
-        withdrawal cleanup (video must delete before assets), conflating
-        "progressing" with "stuck" (Codex round-3 #3 — pushed back: this is §3.5
-        ordering, not a strand).
+        op (no witness — typically an ACTIVE LEASE; ``no video`` alone does NOT
+        make an op non-selectable, since branch B2 admits zero-video ops) IS
+        counted — that is domain (c2) above, a genuinely blocked deletion.
+        Counting the selectable-op case would make exit 0 unreachable during
+        normal multi-resource consent-withdrawal cleanup (video must delete
+        before assets), conflating "progressing" with "stuck" (Codex round-3 #3
+        — pushed back: this is §3.5 ordering, not a strand).
 
         Opens ``file:<escaped>?mode=ro`` (mirrors ``capabilities._journal_state``
         at line 340) — creates / migrates / writes NOTHING. Read-only by
@@ -3237,17 +3253,25 @@ class OperationRepository:
             #           match, wrong kind, broken upload-binding — a direct INSERT
             #           evades the primitives' validate-then-INSERT. Primitive-un-
             #           reachable; zero on producer-valid. SAME threat model as (b).
-            #       (c2) TRANSIENT BLOCKED-PENDING (PRODUCER-VALID, round-7):
-            #           ``withdraw`` enqueues a ``consent_withdrawal`` cleanup on
-            #           the asset BUT does NOT clear the op lease (consent.py:591).
-            #           If the op is leased and has no video witness yet, the asset
-            #           sits ``deletion_pending+consent_withdrawal`` with no witness
-            #           until the lease clears and a future sweep's resolver releases
-            #           the tail. This is NOT corruption — it is an honest transient
+            #       (c2) TRANSIENT BLOCKED-PENDING (PRODUCER-VALID, round-7/8):
+            #           a cleanup (``consent_withdrawal`` or ``post_download``)
+            #           claimed an asset on an op whose lease is still active.
+            #           ``withdraw`` (consent.py:591-673) UPDATEs the receipt AND
+            #           the op's consent-lifecycle fields (``status`` for pristine
+            #           ops, ``consent_receipt_digest``, ``updated_at``) but does
+            #           NOT clear/modify the op lease. The enqueue sits the asset
+            #           ``deletion_pending`` on a leased op; branch B's
+            #           ``o.lease_owner IS NULL`` gate then makes it non-selectable
+            #           THIS sweep. NOTE: ``no video`` is NOT an independent cause
+            #           — branch B2 admits a zero-video op (``COUNT(video) <= 1``;
+            #           see the constant @4091-4134), so a properly-bound asset
+            #           witnesses via B2 with zero video rows once the lease
+            #           clears. This is NOT corruption — it is an honest transient
             #           "blocked-pending" the operator may legitimately see mid-
             #           flight. NOT guaranteed zero on every producer-valid journal;
-            #           only zero on SETTLED journals. Counting it (exit 2) is the
-            #           fail-closed / 宁可少报绝不虚报 choice — never under-report.
+            #           only zero on SETTLED journals (lease cleared). Counting it
+            #           (exit 2) is the fail-closed / 宁可少报绝不虚报 choice — never
+            #           under-report.
             # Mirroring the FULL witness predicate (not just state-matrix) via the
             # SHARED _DELETION_WITNESS_SUBQUERY_SQL constant eliminates the drift
             # risk Codex round-4/5 flagged (hand-mirroring 6+ topology classes by
