@@ -260,3 +260,35 @@ def digital_human_decide(
 - ❌ 不引入 force-include HeyGen 的任何路径（约束 a）。
 - ❌ 不改 DirectorState schema / consent / lease / fence / 删除子系统任一已锁不变量（约束 d）。
 - ❌ 不在 v1.0 触发（v1.0 无 HeyGen）。
+
+---
+
+## §8 Codex round-1 记录（2026-08-03，NOT LOCKABLE → 已修 → 待 round-2）
+
+### Codex 裁决：NOT LOCKABLE，1 gap
+
+> **gap 1**（director.py:993-998, 1043-1048, 1068-1073）：v1.1 stored capabilities 含 `third_party_processors=[]` 或 `[{heygen, configured:false}]`，+ `avatar=="photo"` + `--accept-digital-human-downgrade` → stored doc 原样转发，`create_generation` 收到 `third_party_processors` key（HeyGen 未配），违 payload-omission / no-force-include 不变量。
+
+Codex 同时确认其余 6 项全过：触发四连合取无 false-positive（v1.0/none/absent/malformed/non-str avatar/configured live 均不 fire）；photo+unconfigured 不经 explicit flag 到不了 create_generation；configure 路由 read-only doctor（mutates=False）；invalid choice → LectureCastError(invalid_choice)；卡片 host_choice 与现有一致可执行；未动任一已锁子系统（deletion/consent/lease/fence/DirectorState schema）。
+
+### 逐子句核实（against source，[[feedback_no_trial_error]]）
+
+Codex 的 gap 把两个子句合讲；逐条核后**一假一真**：
+
+1. **`third_party_processors=[]`（空 list）子句 — 不可达，Codex 判断错**：`client-capabilities.schema.json:338` 顶层 `third_party_processors` 有 `"minItems": 1` → `parse_client_capabilities`（走 `Draft202012Validator`）拒空 list → 既不能 `save_capabilities` 存、也不能 `load` 出。capture 也永不产生空 list（capabilities.py:657-658 仅 `processor is not None` 时 set `[processor]`）。**该子句 provably unreachable。**
+
+2. **`[{heygen, configured:false}]` 子句 — schema-permitted + B1 放行 = REAL**：
+   - schema 允许：`client-capabilities.schema.json:170-172` `configured: {type: boolean}`（非 `const: true`），minItems 已满足 1。
+   - capture 永不产生：`heygen_processor`（capabilities.py:472/474/478）只返 `None` 或 `configured: True`，**绝不** `configured: False`。
+   - **B1 放行（linchpin）**：`_stored_heygen_still_live`（director.py:843-844）`if not heygen_configured: return True` —— 对 `[configured:false]`，`heygen_configured = any(... and p.configured) = False` → 返 True（"nothing to invalidate"）→ stored doc **原样 reuse，不 recapture**。
+   - hand-tampering 被消化：digest 链（`_verify_documents` @project.py:241-249）会拒篡改件；但 `save_capabilities(crafted)` 会为 crafted 件重算合法 digest → 可经直接 API 调用产生（无现成 caller，但 schema+API 不禁）。
+   - **结论**：`[configured:false]` 件可达性 =「capture 不产 / 篡改被消化 / 唯通路是 crafted save_capabilities（无现成 caller）」。**对当前 production 不可达，但 schema+B1 不本地禁它**。
+
+### 裁决 + 修
+
+- **no-force-include 不变量未被违反**：`[configured:false]` truthfully 报「未配」，不声称 configured=true → 不是 false-configured 上报。
+- **但 payload-omission 契约（§0.3 / D-T4 断言 key absent）被违反**：key 在 payload 里。本仓 fail-closed 文化（[[feedback_fencing_identity_binding]]「原则陈述正确 ≠ 实现穷举」+ e5d-c 13 轮先例）要求不变量**本地可执行**，不靠「capture 干净」一层兜底。
+- **修**：generate 在 create_generation 前加 **fail-closed 守卫**（director.py:1068 block）：v1.1 + `third_party_processors` key present + `_d13_heygen_configured(capabilities)` False → `raise LectureCastError(manifest_incompatible)`，create_generation **不调用**。守卫**绝不 add key**（非 force-include，非新 truthy 源，§2.4 不破）；digest-safe（不改 payload、不改 stored doc）；不动 locked B1/capture/deletion/consent（新下游 gate，非改既有锁逻辑）。prompt 用户 `project capabilities` 重采。
+- 测试：`test_generate_guard_refuses_present_but_not_configured_processor`（save schema-valid `[configured:false]` 件 → option B → 守卫 fire → manifest_incompatible + create_generation 0 调用）。全量 **1190 passed**（1189 + 1 守卫测）。
+
+留 round-2 确认：守卫谓词是否漏其他「present-but-not-live」形态；以及 schema 层是否应进一步把 `configured` 钉 `const: true`（schema 改动，跨 digest-stability，非 D13 scope，记为 follow-up）。
