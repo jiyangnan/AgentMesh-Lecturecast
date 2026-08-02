@@ -4,8 +4,14 @@ from pathlib import Path
 
 import typer
 
-from ..capabilities import capture_capabilities
+from ..capabilities import (
+    capture_capabilities,
+    capture_capabilities_v1_1,
+    default_heygen_adapter_probe,
+    default_heygen_journal_probe,
+)
 from ..commercial import require_commercial_access
+from ..config import resolve_protocol_version
 from ..errors import LectureCastError
 from ..host_agent import (
     HOST_ADAPTER_VERSION,
@@ -177,12 +183,27 @@ def capabilities(
                 message="命令提供的 Adapter version 与当前 Skill 合同不一致。",
                 next_action="不要手工指定版本；在新任务中按当前 Skill 继续。",
             )
-        document = capture_capabilities(
-            adapter_kind=str(receipt_adapter["kind"]),
-            adapter_version=str(receipt_adapter["version"]),
-            project_root=directory,
-            repo_root=Path(__file__).resolve().parents[3],
-        )
+        protocol_version = resolve_protocol_version()
+        if protocol_version == "1.1":
+            # §5.5e5c: v1.1 capture with real HeyGen probes (mirror director.py
+            # generate path) so the persisted client-capabilities.json carries
+            # third_party_processors when the shipped stack is importable + the
+            # journal is not in a refuse-downgrade state.
+            document = capture_capabilities_v1_1(
+                adapter_kind=str(receipt_adapter["kind"]),
+                adapter_version=str(receipt_adapter["version"]),
+                project_root=directory,
+                repo_root=Path(__file__).resolve().parents[3],
+                adapter_probe=default_heygen_adapter_probe,
+                journal_probe=lambda: default_heygen_journal_probe(directory),
+            )
+        else:
+            document = capture_capabilities(
+                adapter_kind=str(receipt_adapter["kind"]),
+                adapter_version=str(receipt_adapter["version"]),
+                project_root=directory,
+                repo_root=Path(__file__).resolve().parents[3],
+            )
         updated = store.save_capabilities(document, expected_revision=state.revision)
         emit(
             {

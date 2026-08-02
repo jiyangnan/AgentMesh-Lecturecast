@@ -6,7 +6,12 @@ from typing import Any
 
 import typer
 
-from ..capabilities import capture_capabilities, capture_capabilities_v1_1
+from ..capabilities import (
+    capture_capabilities,
+    capture_capabilities_v1_1,
+    default_heygen_adapter_probe,
+    default_heygen_journal_probe,
+)
 from ..commercial import require_commercial_access
 from ..director import (
     DIRECTOR_ADAPTER_KINDS,
@@ -768,16 +773,26 @@ def generate(
             protocol_version=state.protocol_version,
         )
         if capabilities is None:
-            capture = (
-                capture_capabilities_v1_1 if state.protocol_version == "1.1"
-                else capture_capabilities
-            )
-            capabilities = capture(
-                adapter_kind=adapter_kind,
-                adapter_version=adapter_version,
-                project_root=directory,
-                repo_root=Path(__file__).resolve().parents[3],
-            )
+            if state.protocol_version == "1.1":
+                # §5.5e5c: pass real adapter + journal probes so the HeyGen
+                # capability is reported when the shipped stack is actually
+                # importable + the journal is not in a refuse-downgrade state.
+                # The key is still gated inside heygen_processor (env HEYGEN_API_KEY).
+                capabilities = capture_capabilities_v1_1(
+                    adapter_kind=adapter_kind,
+                    adapter_version=adapter_version,
+                    project_root=directory,
+                    repo_root=Path(__file__).resolve().parents[3],
+                    adapter_probe=default_heygen_adapter_probe,
+                    journal_probe=lambda: default_heygen_journal_probe(directory),
+                )
+            else:
+                capabilities = capture_capabilities(
+                    adapter_kind=adapter_kind,
+                    adapter_version=adapter_version,
+                    project_root=directory,
+                    repo_root=Path(__file__).resolve().parents[3],
+                )
             project = project_store.load()
             project_store.save_capabilities(
                 capabilities, expected_revision=project.revision

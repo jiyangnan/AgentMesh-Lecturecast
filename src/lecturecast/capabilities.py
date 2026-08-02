@@ -4,6 +4,7 @@ import json
 import platform
 import re
 import shutil
+import sqlite3
 import subprocess
 import uuid
 from datetime import UTC, datetime
@@ -33,6 +34,63 @@ def _not_available() -> bool:
     shipped yet (landed in §5.5e). Production never claims an unexecutable
     capability; tests inject a probe that returns True."""
     return False
+
+
+def default_heygen_adapter_probe() -> bool:
+    """Real HeyGen adapter probe (§5.5e5c): the three shipped adapter modules
+    import cleanly AND expose their key classes. Presence-only — proves the
+    adapter code is importable on this host, not that the network authenticates
+    or that a key is configured (the key is gated separately in heygen_processor).
+    Used by production capture call sites (director generate + project
+    capabilities); tests inject their own probe. Fail-closed on any ImportError
+    or missing attribute."""
+    import importlib
+
+    for module_name, attr in (
+        ("lecturecast.heygen_http", "HeyGenHttpTransport"),
+        ("lecturecast.heygen_videos_adapter", "HeyGenVideosAdapter"),
+        ("lecturecast.heygen_asset_adapter", "HeyGenAssetAdapter"),
+    ):
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            return False
+        if getattr(module, attr, None) is None:
+            return False
+    return True
+
+
+def default_heygen_journal_probe(project_root: Path | str) -> bool:
+    """Real HeyGen journal probe (§5.5e5c), READ-ONLY: is the journal DB in a
+    state the current client can serve? A missing DB or head<=_SCHEMA_VERSION
+    is ready (the first operation auto-inits/migrates via OperationRepository
+    -> init_database, which is locked, atomic, idempotent — op_repo:424). Only
+    head>_SCHEMA_VERSION is refuse-downgrade (genuinely incompatible) -> False.
+
+    Opens `file:...?mode=ro` (URI): NEVER creates, writes, or migrates the DB.
+    Safe for doctor/canary (constraint: read-only). The physical init is the
+    operation path's responsibility, not the probe's — so a not-yet-initialized
+    DB correctly reports ready (the adapter_probe already proved init_database
+    is importable)."""
+    from .heygen_journal import _SCHEMA_VERSION
+
+    db_path = Path(project_root) / ".lecturecast" / "runtime" / "heygen-operations.db"
+    if not db_path.exists():
+        return True  # not yet initialized; first op will init (adapter proved importable)
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+    except sqlite3.Error:
+        return False
+    try:
+        head = conn.execute("PRAGMA user_version").fetchone()[0]
+    except sqlite3.Error:
+        return False
+    finally:
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
+    return head <= _SCHEMA_VERSION
 
 
 def _default_readable(path: str) -> bool:
@@ -91,9 +149,25 @@ def heygen_processor(
         "api_version": "v3",
         "configured": True,
         "credential_mode": "byo_local",
-        # Only operations the shipped adapter actually implements.
-        "operations": ["direct_asset_upload", "photo_avatar", "prerecorded_audio_lipsync"],
-        "features": ["idempotency_24h"],
+        # Operations reflect §5.5e5b0c3c locked primitives (asset/video delete
+        # adapters + DeletionCoordinator now shipped). avatar_delete OMITTED —
+        # no dedicated primitive (ephemeral portrait_photo reuses the
+        # asset_delete path; reusable_avatar is a future dashboard-revoked
+        # lifecycle, structurally inert today — _asset_retention_mode always
+        # 'ephemeral'). Declaring it would be a false capability claim.
+        "operations": [
+            "direct_asset_upload",
+            "photo_avatar",
+            "prerecorded_audio_lipsync",
+            "asset_delete",
+            "video_delete",
+        ],
+        # idempotency_24h: 24h reconcile + asset-upload windows (op_repo:70,3120).
+        # title_query: HeyGenVideosAdapter.query_videos_by_title (videos_adapter:204).
+        # read_only_auth_check: HeyGenAssetAdapter.get_asset docstring designates
+        # it "Used for doctor / manual reconciliation only" — a GET on a known
+        # id distinguishes 401/403 (auth_failed) from 200/404 (key valid).
+        "features": ["idempotency_24h", "title_query", "read_only_auth_check"],
     }
 
 
