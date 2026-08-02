@@ -147,13 +147,27 @@ def test_default_adapter_probe_fail_closed_on_missing_method(
     assert default_heygen_adapter_probe() is False
 
 
+_V6_TABLES = (
+    "heygen_operations",
+    "heygen_consent_receipts",
+    "heygen_remote_resources",
+    "heygen_resource_operation_refs",
+    "heygen_asset_uploads",
+)
+
+
 def _make_db(
-    tmp_path: Path, *, head: int | None = None, core_table: bool = False
+    tmp_path: Path,
+    *,
+    head: int | None = None,
+    core_table: bool = False,
+    missing_table: str | None = None,
 ) -> Path:
     """Build a journal DB at the expected probe path. core_table=True creates
-    the heygen_remote_resources table (the probe's required core table) so the
-    probe sees a schema-shaped DB; without it the DB is empty (only user_version
-    set) — the version-only-lying state the probe must reject (B5)."""
+    ALL five v6 journal tables so the probe sees a full schema-shaped DB;
+    missing_table skips one (to test the partial-schema guard). Without
+    core_table the DB is empty (only user_version set) — the version-only-lying
+    state the probe must reject (B5)."""
     import sqlite3
 
     runtime = tmp_path / ".lecturecast" / "runtime"
@@ -161,7 +175,10 @@ def _make_db(
     db = runtime / "heygen-operations.db"
     conn = sqlite3.connect(str(db))
     if core_table:
-        conn.execute("CREATE TABLE heygen_remote_resources (id INTEGER PRIMARY KEY)")
+        for table in _V6_TABLES:
+            if table == missing_table:
+                continue
+            conn.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY)")
     if head is not None:
         conn.executescript(f"PRAGMA user_version = {head};")
     conn.close()
@@ -170,7 +187,10 @@ def _make_db(
 
 def test_default_journal_probe_missing_db_is_ready(tmp_path: Path) -> None:
     """A not-yet-initialized journal is ready — the first op auto-inits via
-    init_database (locked, idempotent). The probe is read-only (never creates)."""
+    init_database (locked, idempotent). The probe is read-only (never creates).
+    Real fresh state: the project is initialized (.lecturecast/ exists,
+    writable) but HeyGen was never used (no runtime/, no prior configured caps)."""
+    (tmp_path / ".lecturecast").mkdir(parents=True)
     assert default_heygen_journal_probe(tmp_path) is True
     assert not (tmp_path / ".lecturecast" / "runtime" / "heygen-operations.db").exists()
 
@@ -178,17 +198,21 @@ def test_default_journal_probe_missing_db_is_ready(tmp_path: Path) -> None:
 def test_default_journal_probe_head_current_is_ready(tmp_path: Path) -> None:
     from lecturecast.heygen_journal import _SCHEMA_VERSION
 
-    # §5.5e5c round-2 (B5): head alone is not enough — the core resource table
-    # must exist. A real head=_SCHEMA_VERSION DB with the table is ready.
+    # §5.5e5c round-3 (R3-1): head alone is not enough — ALL five v6 tables
+    # must exist. A real head=_SCHEMA_VERSION DB with the full schema is ready.
     _make_db(tmp_path, head=_SCHEMA_VERSION, core_table=True)
     assert default_heygen_journal_probe(tmp_path) is True
 
 
-def test_default_journal_probe_head_below_is_ready(tmp_path: Path) -> None:
-    """head < _SCHEMA_VERSION with the core table is a legitimate prior-version
-    DB that init_database auto-migrates on first op -> ready."""
+def test_default_journal_probe_head_below_is_not_ready(tmp_path: Path) -> None:
+    """§5.5e5c round-3 (R3-2): head < _SCHEMA_VERSION -> fail-closed. A legit
+    prior-version DB CAN be migrated, but the probe cannot cheaply verify the
+    prior-version schema is complete enough to migrate without failing (a
+    partial old schema can advance user_version yet leave an unusable DB). The
+    doctor / canary path (§5.5e5d) provides explicit migration; the billing
+    path never depends on an upgrade succeeding."""
     _make_db(tmp_path, head=3, core_table=True)
-    assert default_heygen_journal_probe(tmp_path) is True
+    assert default_heygen_journal_probe(tmp_path) is False
 
 
 def test_default_journal_probe_head_ahead_is_not_ready(tmp_path: Path) -> None:
@@ -231,6 +255,107 @@ def test_default_journal_probe_symlink_component_is_not_ready(tmp_path: Path) ->
     link_target.write_bytes(b"not a sqlite db")
     (runtime / "heygen-operations.db").symlink_to(link_target)
     assert default_heygen_journal_probe(tmp_path) is False
+
+
+def test_default_journal_probe_missing_one_v6_table_is_not_ready(
+    tmp_path: Path,
+) -> None:
+    """§5.5e5c round-3 (R3-1): head==_SCHEMA_VERSION but one of the five v6
+    tables is missing (here heygen_asset_uploads) -> asset upload / delete
+    would fail at runtime. The probe requires the FULL v6 schema, not just one
+    core table."""
+    from lecturecast.heygen_journal import _SCHEMA_VERSION
+
+    _make_db(tmp_path, head=_SCHEMA_VERSION, core_table=True,
+             missing_table="heygen_asset_uploads")
+    assert default_heygen_journal_probe(tmp_path) is False
+
+
+def test_default_journal_probe_runtime_deleted_but_caps_configured_is_not_ready(
+    tmp_path: Path,
+) -> None:
+    """§5.5e5c round-3 (R3-3): the whole runtime/ was deleted after prior use.
+    FS has no HeyGen trace under runtime/, but client-capabilities.json (stored
+    at .lecturecast/, outside runtime/) still records a prior configured=true
+    claim -> prior-use data loss -> fail-closed (do not re-report on lost history)."""
+    import json
+
+    lecturecast_dir = tmp_path / ".lecturecast"
+    lecturecast_dir.mkdir(parents=True)
+    # Prior caps once claimed configured HeyGen. runtime/ is gone entirely.
+    (lecturecast_dir / "client-capabilities.json").write_text(json.dumps({
+        "schema_version": "1.1",
+        "third_party_processors": [{"provider": "heygen", "configured": True}],
+    }))
+    assert default_heygen_journal_probe(tmp_path) is False
+
+
+def test_default_journal_probe_resolve_failure_is_not_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§5.5e5c round-3 (R3-4): if db_path.resolve() raises (OSError / symlink
+    loop / permission), the probe must fail closed, not propagate a raise that
+    could escape the shared v1.1 capture path and block M1."""
+    from lecturecast.heygen_journal import _SCHEMA_VERSION
+
+    _make_db(tmp_path, head=_SCHEMA_VERSION, core_table=True)
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("symbolic link loop")
+
+    monkeypatch.setattr(Path, "resolve", _boom)
+    assert default_heygen_journal_probe(tmp_path) is False
+
+
+def test_default_adapter_probe_fail_closed_on_non_callable_method(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§5.5e5c round-3 (R3-5): a required attribute set to a non-callable
+    (e.g. delete_video = 1) must fail closed. `is not None` would pass it and
+    the operation would raise TypeError at runtime."""
+    import lecturecast.heygen_videos_adapter as mod
+
+    monkeypatch.setattr(mod.HeyGenVideosAdapter, "delete_video", 1)
+    assert default_heygen_adapter_probe() is False
+
+
+def test_default_adapter_probe_fail_closed_on_missing_orchestrator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§5.5e5c round-3 (R3-6): the adapters ship but the journal-backed
+    processor / orchestrator module (operation_repository) does not import in
+    a mixed install -> the operations cannot execute -> fail closed."""
+    import importlib
+
+    real_import_module = importlib.import_module
+
+    def _boom(name, *args, **kwargs):
+        if name == "lecturecast.operation_repository":
+            raise ImportError("operation_repository not shipped in this install")
+        return real_import_module(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib, "import_module", _boom)
+    assert default_heygen_adapter_probe() is False
+
+
+def test_default_journal_probe_unwritable_runtime_is_not_ready(
+    tmp_path: Path,
+) -> None:
+    """§5.5e5c round-3 (R3-7): runtime/ is readable but not writable. Every
+    processor writes (WAL + BEGIN IMMEDIATE + journal rows), so a read-only
+    probe that ignores writability would over-report against an init that will
+    fail. The probe requires W_OK|X_OK on runtime/."""
+    import os
+
+    from lecturecast.heygen_journal import _SCHEMA_VERSION
+
+    _make_db(tmp_path, head=_SCHEMA_VERSION, core_table=True)
+    runtime = tmp_path / ".lecturecast" / "runtime"
+    os.chmod(runtime, 0o500)  # r-x: readable + traversable, NOT writable
+    try:
+        assert default_heygen_journal_probe(tmp_path) is False
+    finally:
+        os.chmod(runtime, 0o700)  # restore so pytest can clean up
 
 
 def test_m1_independent_of_heygen_config() -> None:
