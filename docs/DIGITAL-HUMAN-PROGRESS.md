@@ -69,18 +69,18 @@
 
 ### 还没做
 
-- §5.5e5d-c maintenance wiring —— **round-2 审决 NOT LOCKABLE（2 blocker：B2 pre-existing manual 混入 kept + shape 校验非 type-stable）→ round-3 全闭合（82 测 + locked primitive 回归，1139 全绿），待 Codex round-3 锁定复审**
+- §5.5e5d-c maintenance wiring —— **round-3 审决 NOT LOCKABLE（5 blocker：2A sorted 混合键 TypeError / 2B dict 子类 / 3 DB tally 边界未校验 / #1 非撤回 manual 不可见 / #2 manual_force 不可见）→ round-4 全闭合（96 测 + 只读 attention 审计，1150 全绿），待 Codex round-4 锁定复审**
 - §5.5e5d-d 交互式降级卡片（D13，director preflight 检测数字人配置缺失 → A 配置/B 降级 M1 交互 next_action）
 - §5.5e6 RecoveryDirectiveCatalog 验签 + failure mapping + 宿主 workflow（§6 #14 依赖它）
 - §6 收尾：补 #9 定价下发 / #10 M1 门禁跨仓契约 + #14（依赖 e6）+ 三仓 CI gate
 
-§5.5e5c（capability wiring）+ §5.5e5d-a（doctor v1.1）+ §5.5e5d-b（canary harness）**已锁定**（6 轮 + a/b 各自 Codex 审阅后锁定）。客户端 **1139 测试全绿**。分支 `feat/digital-human-protocol-v1_1`。
+§5.5e5c（capability wiring）+ §5.5e5d-a（doctor v1.1）+ §5.5e5d-b（canary harness）**已锁定**（6 轮 + a/b 各自 Codex 审阅后锁定）。客户端 **1150 测试全绿**。分支 `feat/digital-human-protocol-v1_1`。
 
 ---
 
-## 下次会话接续点（交接）—— e5d-c maintenance 待 Codex round-3
+## 下次会话接续点（交接）—— e5d-c maintenance 待 Codex round-4
 
-**当前状态**：e5c/e5d-a/e5d-b 全部锁定；e5d-c maintenance wiring —— **Codex round-1 NOT LOCKABLE（4 blocker）→ round-2 全闭合 → Codex round-2 NOT LOCKABLE（2 blocker：B2 pre-existing manual 混入 kept + shape 校验非 type-stable）→ round-3 全闭合，1139 测全绿，待发 Codex round-3 锁定复审**。round-3 闭合（见 `docs/e5cd-design.md` §1.13 round-2 矩阵）：(1) B2 源处修——op_repo:2995 `manual_reconciliation_required` 改计 `manual`（非 `kept`），locked primitive 语义修正，补 `test_preexisting_manual_counted_as_manual_not_kept` 回归（此前该路径零测试）；(2) shape 校验 type-stable——抽 `_valid_tally(tally, keys)` helper（dict + 精确键集 + 全值非负 int，bool 被拒），非 dict 返回 None/list/str 不抛 AttributeError 而转结构化 skip；`_DB_TALLY_KEYS` 5 键 frozenset；`clean` + `run_maintenance` 双侧校验 deletion+DB 两 tally；(3) 入口 `type(lease_owner/now_iso) is not str` → 统一 ValueError；(4) CLI exit-code docstring 更新。B1/B3/B4/M3/entry Codex 全 CONFIRMED closed。
+**当前状态**：e5c/e5d-a/e5d-b 全部锁定；e5d-c maintenance wiring —— **Codex round-1 NOT LOCKABLE（4 blocker）→ round-2 全闭合 → Codex round-2 NOT LOCKABLE（2 blocker）→ round-3 全闭合 → Codex round-3 NOT LOCKABLE（5 blocker）→ round-4 全闭合，1150 测全绿，待发 Codex round-4 锁定复审**。round-4 闭合（见 `docs/e5cd-design.md` §1.13 round-3 矩阵）：(1) **2A** diagnostic `sorted(repr(k) ...)` 替 `sorted(keys)`（混合 int/str 键 type-stable，不抛 TypeError）；(2) **2B** `_valid_tally` 改 `type(tally) is dict`（拒 dict 子类，与 bool/int/str 纪律一致）；(3) **3** DB pass 后边界校验 db_tally 形状 → 畸形结构化 skip（exit 2 非 1，formatter `isinstance` 守卫 defense-in-depth）；(4) **#1+#2** 新增只读 `OperationRepository.count_recovery_attention()`（mode=ro URI，不写；COUNT manual_uploads + manual_force_resources）+ `MaintenanceReport.attention`/`attention_audit_failed` 字段 + `clean` (h) gate —— 非撤回 op 的 manual_reconciliation_required 上传（冻结窗口过期/上传失败产生）+ manual_force 资源（deletion 候选排除）原本对两 tally 不可见 → exit 0 谎报 clean，现 audit 后置计全表 → fail-closed（宁可少报绝不虚报）；(5) **#3 PUSH BACK**（stranded cleanup 耦合）—— 撤回 op 的 cleanup_required 资源会进 deletion 候选（失败则 `attempted!=deleted`→不 clean），asset-behind-unverified-video 是 §3.5 正常 video-first 在途排序非卡死，计它会令正常多资源撤回清理永不到 exit 0。**纯加法只读诊断方法 `count_recovery_attention` 不改任何 locked mutation primitive**（claim/apply/recover 不变）。
 
 c3 审阅轨迹（13 轮）：round-1~5 候选/witness 门禁迭代 → round-6 DELETED witness 逃过所有 claim 复查（6 类 bypass）→ round-7 B1 终态证明 + B2 asset binding（2 类）→ round-8/9 B1↔B2 op-level 不对称（download_status + single-video）→ round-10/11 claim↔apply 对偶接缝（video not_started reason-blind + apply reason TOCTOU）→ round-12 video apply F1/F2（retention/download_status/remote_id）+ 点名 asset 侧 F3/F4/F5 → round-13 asset op-level F3/F4/F5 + F5 域修正（refs→created_by 镜像 resolver）。**元教训（诚实记录 #13）**：「原则陈述正确 ≠ 实现穷举」——claim↔apply 跨 tx 授权必须逐字段列 claim 在 tx1 读的每个授权字段，逐一确认 apply 在 tx2 也复查；不能只改被 Codex 点名的那个。
 
@@ -104,7 +104,7 @@ capability wiring + doctor/canary：把已锁的删除子系统（coordinator + 
 ```bash
 cd ~/AgentMesh-Lecturecast
 git log --oneline -4   # 最近：6572abc c3 lock 裁定；6767d1f F5 域修正；eae5fbc round-13；25e22a4 round-12
-.venv/bin/python -m pytest -q   # 应 1139 passed（或 UV_CACHE_DIR=/tmp/lc-uv-cache uv run --project . pytest tests/ -c pyproject.toml -q）
+.venv/bin/python -m pytest -q   # 应 1150 passed（或 UV_CACHE_DIR=/tmp/lc-uv-cache uv run --project . pytest tests/ -c pyproject.toml -q）
 ```
 
 Codex e5b0c3c 会话: `019fb840-a93b-73e1-b56c-a29b07a15e3d`（含 c1/c2/c3 全部审阅历史，resume 即续）。发审命令：`cat prompt.txt | codex exec -C ~/AgentMesh-Lecturecast resume <session> - -c 'model_reasoning_effort="low"' --json`（**务必 effort=low**，medium 在新 session 会挂；`-C` 必须在 `resume` 之前）。注：c3 round-13 最终复审用 fresh `codex exec`（非 resume）+ rephrased prompt 绕 cyber 内容过滤——若 resume 触发过滤，改用 fresh exec + invariant-completeness 框架（非 security 措辞）。

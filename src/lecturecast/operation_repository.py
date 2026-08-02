@@ -3087,6 +3087,72 @@ class OperationRepository:
                     aggregate[key] = aggregate.get(key, 0) + val
         return aggregate
 
+    def count_recovery_attention(self) -> dict[str, int]:
+        """Read-only post-recovery ATTENTION AUDIT (Codex e5d-c round-3).
+
+        The two recovery primitives have DELIBERATELY SCOPED mandates (locked
+        across many review rounds — their scopes must NOT be broadened silently):
+          - ``recover_withdrawn_asset_cleanups`` selects ONLY operations whose
+            receipt is ``withdrawn`` (op_repo:3080). A manual_reconciliation_
+            required asset row on a NON-withdrawn op — produced by the frozen
+            24h replay-deadline expiry (op_repo:2637) or upload-failure handling
+            (op_repo:2855) — is INVISIBLE to the DB pass's ``manual`` tally.
+          - ``recover_deletions`` excludes ``manual_force`` from its candidate
+            SELECT (op_repo:4030 — the operator-only integrity path; c1 claims
+            it ``not_ready``, never auto-deleted). A non-deleted ``manual_force``
+            resource is INVISIBLE to the deletion tally.
+
+        Both classes are operator-attention-needed but neither recovery primitive
+        touches them. Without this audit, the maintenance exit-0 contract
+        ("nothing needs attention") would be谎报 — exit 0 with a stuck manual row
+        or a pending ``manual_force`` resource (fail-closed violation:
+        宁可少报绝不虚报). This read-only post-pass query counts them so the
+        maintenance exit code is HONEST about the journal's FINAL attention state.
+
+        Counts:
+          - ``manual_uploads``: every ``heygen_asset_uploads`` row in
+            ``manual_reconciliation_required`` (ALL rows — the withdrawn-ops'
+            rows overlap the DB pass's ``manual`` tally; the non-withdrawn rows
+            are the gap this audit closes). Each needs human reconciliation
+            (the system cannot determine whether the upload hit HeyGen).
+          - ``manual_force_resources``: every NON-deleted ``heygen_remote_
+            resources`` row with ``deletion_reason='manual_force'``. Each needs
+            explicit operator action (never auto-recovered).
+
+        NOT counted (in-flight pipeline states that WILL resolve on a future
+        sweep — NOT stuck attention): ``deletion_pending`` resources with an
+        auto-recoverable reason (``post_download`` / ``consent_withdrawal``)
+        correctly waiting behind §3.5 video-first ordering; active ``uploading``
+        leases (the DB pass's ``left_uploading`` tally already flags these
+        per-sweep). Counting these would make exit 0 unreachable during normal
+        multi-resource consent-withdrawal cleanup (video must delete before
+        assets), conflating "progressing" with "stuck" (Codex round-3 #3 —
+        pushed back: this is §3.5 ordering, not a strand).
+
+        Opens ``file:<escaped>?mode=ro`` (mirrors ``capabilities._journal_state``
+        at line 340) — creates / migrates / writes NOTHING. Read-only by
+        construction; safe to call after either recovery pass commits. Raises
+        on DB/schema error so maintenance fails-closed (exit 2 with
+        ``attention_audit_failed``) rather than silently over-claiming clean.
+        """
+        import urllib.parse
+
+        resolved = self._db_path.resolve().as_posix()
+        uri = "file:" + urllib.parse.quote(resolved) + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=2.0)
+        try:
+            manual_uploads = conn.execute(
+                "SELECT COUNT(*) FROM heygen_asset_uploads "
+                "WHERE status='manual_reconciliation_required'").fetchone()[0]
+            manual_force = conn.execute(
+                "SELECT COUNT(*) FROM heygen_remote_resources "
+                "WHERE deletion_reason='manual_force' "
+                "AND deletion_status != 'deleted'").fetchone()[0]
+        finally:
+            conn.close()
+        return {"manual_uploads": int(manual_uploads),
+                "manual_force_resources": int(manual_force)}
+
 
 def _output_ref(operation_id: str) -> str:
     return f"outputs/heygen/{operation_id}.mp4"

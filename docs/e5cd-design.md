@@ -233,6 +233,28 @@ line 489 pass criteria：
 
 **待 Codex round-3 锁定复审**（effort=low，invariant-completeness framing：B2 源处修是否穷举 + shape 校验 type-stability 是否无残留 + locked primitive 改动是否引入新不变量回归）。
 
+**Codex round-3 复审结果（2026-08-02，effort=low）—— NOT LOCKABLE，5 blocker**：
+
+| # | finding | 闭合方式（round-4） |
+|---|---------|---------------------|
+| B2（pre-existing manual 分类）| **CONFIRMED closed**（10/10）—— op_repo:2949 每个 status 分支映射正确；amendment at op_repo:3004 纯 tally-only（无 SQL update/状态翻转/resource mutation）；aggregate at op_repo:3077 正确传播 manual；primitive 回归 + real aggregate 端到端测覆盖充分 | 无需改 |
+| 入口校验 | **CONFIRMED closed**（顺序对、非 str now_iso/lease_owner 不能达 regex/_parse_utc） | 无需改 |
+| **2A（诊断 sorted 混合键）** | `_valid_tally` 正确拒混合型键 dict，但 diagnostic `sorted(del_tally.keys())` 在 try 块**外**对 int+str 混合键抛 TypeError → 逃逸 exit 1 | **round-4 修**：diagnostic 改 `sorted(repr(k) for k in keys)`（repr 恒 str，排序 str 恒 type-stable）；DB + deletion 两 diagnostic 同改 |
+| **2B（dict 子类）** | `isinstance(tally, dict)` 接受 dict 子类；子类可覆写 keys()/values()/get() 抛异常；shape 校验在 try 块外 → 逃逸 exit 1 | **round-4 修**：`_valid_tally` 改 `type(tally) is dict`（非 isinstance）—— 协调器契约是 plain dict（`{}` literal + dict 返回）；与 `type() is bool/int/str` 纪律一致；子类走 "non-dict <SubclassName>" 分支不调其 keys() |
+| **3（DB tally 边界未校验）** | `run_maintenance` 校验 deletion tally 形状但**不**校验 db_tally 形状 —— 畸形 DB 返回（truthy non-dict / 错形 dict）流入 report，CLI formatter `db.get(...)` 抛 AttributeError → exit 1（`clean` 虽校验但 formatter 先于 `clean` 读） | **round-4 修**：DB pass 后边界校验 `_valid_tally(db_tally, _DB_TALLY_KEYS)` → 畸形则 db_recovery_failed=True + network_skipped=True + 结构化 skip（exit 2 非 1，网络不在半恢复 journal 上跑）；formatter 再加 `isinstance(db, dict)` 守卫 defense-in-depth |
+| **#1（非撤回 manual 不可见）** | `manual_reconciliation_required` 不限于撤回 op —— 冻结 24h 重放窗口过期（op_repo:2637）/ 上传失败（op_repo:2855）都产生；但 `recover_withdrawn_asset_cleanups` 只 SELECT withdrawn receipts（op_repo:3080）→ 两 tally 都不见 → exit 0 谎报 clean（fail-closed 违反：宁可少报绝不虚报） | **round-4 修**：加 read-only `count_recovery_attention()` 后置审计（mode=ro URI，不写）—— 计全表 `heygen_asset_uploads.status='manual_reconciliation_required'`；`clean` + exit 0 gate 其上；CLI 浮出 counts |
+| **#2（manual_force 不可见）** | deletion 候选 SELECT 排除 manual_force（op_repo:4030，operator-only）→ 非 deleted manual_force 资源永不进 recover_deletions → exit 0 谎报 | **round-4 修**：同审计计 `heygen_remote_resources WHERE deletion_reason='manual_force' AND deletion_status!='deleted'`；deleted 的 manual_force 不计（已解决） |
+| #3（stranded cleanup 耦合）| **PUSH BACK**（8/10）—— 撤回 op 的 cleanup_required 资源**会**进 deletion 候选（non-deleted + non-reusable → op_repo:4011 SELECT 选出 → deletion pass 删；失败则 deletion tally `failed/skipped` → `attempted!=deleted` → 不 clean）。asset-behind-unverified-video 是 §3.5 正常 video-first 在途排序（非卡死），下趟 video 删后即释放；计它会令正常多资源撤回清理永不到 exit 0（把"在途"误判"卡死"） | **不改**（文档化：在途 ≠ 卡死；video 被卡时**那**是 attention 态，由 video 自身状态浮现，asset 是正确等待，非重复计） |
+
+**round-4 改动** ——
+1. `src/lecturecast/operation_repository.py`：新增 `count_recovery_attention()` 只读方法（op_repo recover_withdrawn_asset_cleanups 之后）—— mode=ro URI（mirror `_journal_state` capabilities.py:340），不创建/迁移/写；COUNT manual_uploads + manual_force_resources；raise 则 maintenance fail-closed（attention_audit_failed → exit 2）。**纯加法只读诊断方法，不改任何 locked mutation primitive**（claim/apply/recover 不变；constraint d 关于不旁路 locked 删除链——只读 COUNT 不旁路任何删除）。
+2. `src/lecturecast/maintenance.py`：`_valid_tally` 改 `type(tally) is dict`（2B）；两 diagnostic 改 `sorted(repr(k) ...)`（2A）；DB pass 后边界 `_valid_tally(db_tally, _DB_TALLY_KEYS)` 校验 → 畸形结构化 skip（3）；`_ATTENTION_KEYS` 2 键 frozenset；`MaintenanceReport` 加 `attention` + `attention_audit_failed` 字段；`clean` 加 (h) attention gate（audit 未失败 + 形状合规 + 全零）；recover_deletions 后 + DB 校验后调 `count_recovery_attention()`（try/except → attention_audit_failed）。
+3. `src/lecturecast/commands/maintenance.py`：exit-code docstring 扩（exit 2 含 attention 态 / attention_audit_failed / DB 畸形；exit 1 永不经 CLI）；`_format_message` 加 `isinstance(db/d/attention, dict)` 守卫 + 浮出 attention counts + audit 失败 ⚠ 行。
+
+**round-4 测试加固（82 → 96 测，+14）** —— 矩阵扩展（attention_audit_failed / attention 非法形 / manual_uploads / manual_force_resources 各维 → 不 clean）；`test_db_tally_malformed_wrapped_to_skip`（5 例参数化：truthy non-dict list/str + 错形/extra/negative dict → exit 2 非 1，network 不跑）；`test_recover_deletions_mixed_type_keys_wrapped_to_skip`（2A：8 str 键 + int 键 → repr 排序 type-stable → exit 2 非 TypeError）；`test_valid_tally_rejects_dict_subclass`（2B：dict 子类被拒，plain dict 通过）；`test_attention_audit_non_withdrawn_manual_gates_clean`（#1 端到端：grant 非 withdraw + dock manual → 真 DB pass 返空 + 真 audit 计 manual_uploads=1 → exit 2）；`test_attention_audit_manual_force_resource_gates_clean`（#2：pending manual_force 计 1 / deleted manual_force 不计 → exit 2）；`test_attention_audit_failure_wrapped_to_skip`（audit 抛 → attention_audit_failed + 两 pass 已提交 → exit 2）；`test_attention_audit_clean_journal_zero_attention_exit_0`（happy path：空 journal → audit 2 键零 → exit 0，pin audit 形状）。全量 **1150 测全绿**（1139 + 11 新，零回归）。
+
+**待 Codex round-4 锁定复审**（effort=low，invariant-completeness framing：5 blocker 闭合是否穷举 + `count_recovery_attention` 只读方法是否引入新不变量回归 / SQL 注入面 / TOCTOU + #3 push-back 的 §3.5 在途论证是否成立 + attention audit 是否漏计其他 operator-attention 态）。
+
 ---
 
 ## 2. 盲预测（实现前先写死的契约）
