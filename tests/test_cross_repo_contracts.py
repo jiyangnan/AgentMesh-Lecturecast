@@ -328,6 +328,104 @@ class TestPricingDeliveryContract:
         assert "pricing_estimate" not in json.dumps(v10)
 
 
+# === §6 #10: M1 能力门禁独立于 HeyGen（v1.3） ============================
+#
+# Contract: a photo user WITHOUT HeyGen configured can still create + deliver an
+# M1 (base) video; HeyGen `configured` is consulted ONLY on the M2
+# (presenter_plan) gate. Four sub-contracts, each asserted against source:
+#   1. The server M1 create gate (`validate_generation_capabilities`) checks
+#      rendering/runtime/tts/etc. — never `third_party_processors` / `configured`.
+#   2. The server's `configured` semantics are an M2-only compatibility gate
+#      (docstring), and the capability carries NO `verified` field (v1.3 §0
+#      Principle 6: preflight stays local, never uploaded).
+#   3. The client omits `third_party_processors` from the upload payload when
+#      HeyGen is unconfigured (the `if processor is not None` guard).
+#   4. The v1.1 schema keeps `third_party_processors` OPTIONAL (not required),
+#      and `configured` has no default — so an unconfigured client legally
+#      reports the key absent, and a photo M1 path is not gated by it.
+
+SERVER_GENERATIONS_PY = SERVER_ROOT / "app" / "services" / "generations.py"
+SERVER_CAPABILITIES_PY = SERVER_ROOT / "app" / "schemas" / "capabilities.py"
+CLIENT_CAPABILITIES_SRC = CLIENT_ROOT / "src" / "lecturecast" / "capabilities.py"
+
+
+@skip_cross_repo
+class TestM1CapabilityGateIndependentOfHeyGen:
+    """§6 #10: M1 create must never gate on HeyGen configured; configured is M2-only."""
+
+    def test_server_m1_gate_never_mentions_heygen(self):
+        # The server's M1 capability gate (validate_generation_capabilities)
+        # checks digest / manifest version / local runtime / components / aspect
+        # ratio / output format / tts. A regression that added
+        # third_party_processors or configured to this gate would make an
+        # unconfigured photo user's M1 fail on the server.
+        gate = SERVER_GENERATIONS_PY.read_text(encoding="utf-8")
+        body = gate.split("def validate_generation_capabilities", 1)[1]
+        assert "third_party_processors" not in body, (
+            "server M1 gate (validate_generation_capabilities) references "
+            "third_party_processors — M1 must be independent of HeyGen (§6 #10)"
+        )
+        assert "configured" not in body, (
+            "server M1 gate references `configured` — M1 must not gate on "
+            "HeyGen configured (§6 #10)"
+        )
+
+    def test_server_configured_is_m2_only_and_has_no_verified_field(self):
+        # `configured` = capability presence, explicitly an M2 compatibility
+        # gate. And there is deliberately NO `verified` field (preflight is
+        # local advisory, never uploaded — §0 Principle 6).
+        source = SERVER_CAPABILITIES_PY.read_text(encoding="utf-8")
+        assert "M2" in source, (
+            "ThirdPartyProcessorCapability docstring must declare configured as "
+            "the M2 compatibility gate (§6 #10)"
+        )
+        body = source.split("class ThirdPartyProcessorCapability", 1)[1]
+        # Cut at the next class boundary — ClientCapabilitiesV1_1 has its own
+        # docstring that ALSO mentions "verified" (again only to deny it), which
+        # is outside this capability's field declarations.
+        body = body.split("\nclass ", 1)[0]
+        # Strip the class docstring: it mentions "verified" only to DENY it
+        # ("There is deliberately NO `verified` field"), which must not trip
+        # the field-absence check below.
+        if '"""' in body:
+            _, _, body = body.partition('"""')
+            _, _, body = body.partition('"""')
+        assert "configured: bool" in body
+        assert "verified" not in body, (
+            "ThirdPartyProcessorCapability field declarations leaked a "
+            "`verified` field — preflight results are local advisory, never "
+            "uploaded (§0 Principle 6)"
+        )
+
+    def test_client_omits_processors_when_unconfigured(self):
+        # capture_capabilities_v1_1 only adds third_party_processors inside
+        # `if processor is not None:` — an unconfigured client legally omits the
+        # key from the upload payload, so a photo M1 create is not blocked.
+        source = CLIENT_CAPABILITIES_SRC.read_text(encoding="utf-8")
+        assert "if processor is not None:" in source, (
+            "client must gate the third_party_processors payload on the processor "
+            "being present (§6 #10)"
+        )
+        # The payload mutation is inside that guard, not unconditional.
+        assert 'payload["third_party_processors"] = [processor]' in source
+
+    def test_v1_1_schema_processors_optional_and_configured_has_no_default(self):
+        # The wire contract: third_party_processors is NOT in the required list,
+        # and `configured` is a plain boolean with no default. An unconfigured
+        # client therefore reports the key absent — valid — and the server's M1
+        # gate never needs to see it.
+        schema = json.loads(
+            (CLIENT_V11_SCHEMAS / "client-capabilities.schema.json").read_text()
+        )
+        assert "third_party_processors" not in schema.get("required", []), (
+            "v1.1 client-capabilities made third_party_processors required — "
+            "an unconfigured client must be able to omit it (§6 #10)"
+        )
+        tpc = schema["$defs"]["ThirdPartyProcessorCapability"]
+        assert "configured" in tpc["required"]
+        assert "default" not in tpc["properties"]["configured"]
+
+
 # === §6 #12 + #15: HeyGen journal invariants (v1.3) =========================
 
 class TestHeyGenJournalContracts:
