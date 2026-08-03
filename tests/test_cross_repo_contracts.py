@@ -250,6 +250,84 @@ def _assert_no_verified_property(schema: object, label: str) -> None:
             _assert_no_verified_property(item, label)
 
 
+# === §6 #9: 定价下发（v1.3） ==============================================
+#
+# The client only DISPLAYS the server's pricing estimate — it must not hardcode
+# milestone costs in a way that diverges from server authority, and it must not
+# gate on maximum_total (the real charge gate is the server's per-milestone
+# 402). Three sub-contracts:
+#   1. The client's display constants (legacy MANIFEST_CREDIT_COST + v1.1
+#      pricing_version/charge_model) equal the server's authoritative values.
+#   2. total_max is NOT a client start gate: the balance check compares against
+#      the single-milestone manifest cost, never maximum_total.
+#   3. The v1.0 session schema must not expose pricing_estimate (old clients
+#      that don't know the field still work — it only exists on the v1.1 path).
+
+@skip_cross_repo
+class TestPricingDeliveryContract:
+    """§6 #9: client pricing constants == server authority; total_max is not a gate."""
+
+    def test_client_manifest_cost_matches_server(
+        self,
+        lecturecast_registry_actions,
+        server_milestone_costs,
+    ):
+        # Client legacy display constant must equal server authority.
+        client_config = (CLIENT_ROOT / "src" / "lecturecast" / "config.py").read_text(
+            encoding="utf-8"
+        )
+        m = re.search(r"MANIFEST_CREDIT_COST\s*=\s*(\d+)", client_config)
+        assert m, "MANIFEST_CREDIT_COST not found in client config.py"
+        assert int(m.group(1)) == server_milestone_costs["manifest"], (
+            "client MANIFEST_CREDIT_COST != server MILESTONE_LOCKED_COST[manifest]"
+        )
+
+    def test_client_pricing_version_matches_server(self):
+        # v1.1 pricing_version + charge_model must match the server's constants.
+        client_pricing = (CLIENT_ROOT / "src" / "lecturecast" / "pricing.py").read_text(
+            encoding="utf-8"
+        )
+        version_m = re.search(r"_PRICING_VERSION\s*=\s*\"([^\"]+)\"", client_pricing)
+        model_m = re.search(r"_CHARGE_MODEL\s*=\s*\"([^\"]+)\"", client_pricing)
+        assert version_m and model_m, "pricing constants not found in client pricing.py"
+        server = SERVER_MILESTONE_PY.read_text(encoding="utf-8")
+        server_version = re.search(r'PRICING_VERSION\s*=\s*"([^"]+)"', server)
+        assert server_version, "PRICING_VERSION not found in server milestone_billing.py"
+        assert version_m.group(1) == server_version.group(1), (
+            "client _PRICING_VERSION != server PRICING_VERSION"
+        )
+        # charge_model is a closed literal on both sides; assert the shared value.
+        assert model_m.group(1) == "per_milestone_success"
+        assert "per_milestone_success" in server
+
+    def test_total_max_is_not_a_client_start_gate(self):
+        # §6 #9: "total_max 非门禁（余额 20 放行 M1 on 30-max）". The client's
+        # balance check gates on the single-milestone manifest cost, never on
+        # maximum_total. A regression that introduced maximum_total into the
+        # start gate would make M1 unreachable when balance < full-path total.
+        commercial = (CLIENT_ROOT / "src" / "lecturecast" / "commercial.py").read_text(
+            encoding="utf-8"
+        )
+        assert "maximum_total" not in commercial, (
+            "client commercial.py references maximum_total — total_max must NOT "
+            "be a start gate (§6 #9)"
+        )
+
+    def test_v1_0_session_schema_omits_pricing_estimate(self):
+        # §6 #9: 旧 client schema 不收 pricing_estimate 仍正常 — the v1.0
+        # decision-card-set schema (frozen) must not expose the PricingEstimate
+        # definition; it exists only on the v1.1 path. This keeps old clients
+        # working against a v1.0 server without breaking on an unknown field.
+        v10 = json.loads(
+            (CLIENT_V10_SCHEMAS / "decision-card-set.schema.json").read_text()
+        )
+        assert "PricingEstimate" not in v10.get("$defs", {}), (
+            "v1.0 decision-card-set schema leaked PricingEstimate — the v1.0 "
+            "path must stay frozen"
+        )
+        assert "pricing_estimate" not in json.dumps(v10)
+
+
 # === §6 #12 + #15: HeyGen journal invariants (v1.3) =========================
 
 class TestHeyGenJournalContracts:
