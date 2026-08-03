@@ -385,11 +385,11 @@ def _recovery_workflow(
 
 1. ✅ vendor v1.1 bundle（§4.1）—— `update_protocol.py` re-vendor，bundle_digest `960d9855…` 与 server lock 字节一致；v1.0 bundle 零改动。
 2. ✅ `models.py` 加 `RecoveryDirectiveCatalog` + `__init__.py` 导出（§4.2）—— 含 directives key↔failure_kind 语义校验；`documents_for_protocol_version("1.1")` 注册 `recovery_catalog`。
-3. ⬜ `manifest.py` 加 `verify_recovery_catalog_signature`（§4.3）。
-4. ⬜ 新 `recovery.py`：`recover_from_failure`（§4.4）。
-5. ⬜ `commands/director.py`：`_recovery_workflow` + 错误路径接线（§4.5）。
+3. ✅ `manifest.py` 加 `verify_recovery_catalog_signature`（§4.3）—— 镜像 verify_manifest 但 **无 created_at 时间窗检查**（catalog schema 无 created_at）。
+4. ✅ 新 `recovery.py`：`recover_from_failure` + `failure_kind_for_error`（§4.4）—— server code→base failure_kind 显式映射 + 目录驱动的透传（`or error.code`）。
+5. ✅ `commands/director.py`：`_recovery_workflow` + 错误路径接线（§4.5）—— resume 错误路径先试 recovery workflow，None 落回 `_resume_error_workflow`；`keyring` 可注入（测试）。
 6. ✅ tests F-C1..F-C14（§5，RED-first）—— #120 已落地 **F-C1/F-C2/F-C3 + mgo re-vendor 检查 + v1.0 golden**（9 测），F-C4..F-C14 归 #121。
-7. ✅ 全量测试（**1201 passed**，基线 1191 + #120 新增 9）+ commit + Codex round-1。
+7. ✅ 全量测试（**1224 passed**，基线 1191 + #120 新增 9 + mgo/#120 fix 修复 + #121 新增 16）—— commit + Codex round-1。
 
 ---
 

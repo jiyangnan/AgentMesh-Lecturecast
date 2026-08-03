@@ -32,6 +32,7 @@ from ..host_agent import (
     require_host_adapter,
     require_project_host_workflow,
 )
+from ..manifest import verify_recovery_catalog_signature as _verify_catalog_signature
 from ..project import ProjectStore
 from ..protocol import ClientCapabilities, canonical_digest, parse_client_capabilities
 from .output import emit, fail
@@ -1234,6 +1235,17 @@ def generation_resume(
         # Build a command-specific workflow for resume errors (don't use the
         # generic fail() — the user needs structured next_action guidance).
         root = str(directory.expanduser().resolve())
+        # §5.5e6 #121: if the v1.3 state carries a pre-signed recovery catalog,
+        # present the matching directive first (fail-closed: an unverified or
+        # non-matching catalog falls through to _resume_error_workflow).
+        recovery_workflow = _recovery_workflow(error, state.recovery_catalog, root)
+        if recovery_workflow is not None:
+            emit(
+                {"director": state.to_dict(), "error": error.to_dict(), "workflow": recovery_workflow},
+                json_output=json_output,
+                message=error.message,
+            )
+            raise typer.Exit(code=1)
         workflow = _resume_error_workflow(error, root)
         if workflow is not None:
             emit(
@@ -1246,6 +1258,73 @@ def generation_resume(
             fail(error, json_output=json_output)
     except Exception as exc:
         _unexpected(exc, json_output=json_output)
+
+
+def _recovery_workflow(
+    error: LectureCastError,
+    catalog: dict[str, Any] | None,
+    root: str,
+    *,
+    keyring: Any | None = None,
+) -> dict[str, Any] | None:
+    """Present a recovery directive for a failure_kind if the catalog has one
+    (tech spec §7.3/§7.4, Host Conformance Contract). Returns None when the
+    catalog is missing / unverified / has no matching directive — the caller
+    falls back to _resume_error_workflow / generic fail.
+
+    The catalog is verified HERE (fail-closed, §3 invariant 2): an unverified
+    catalog never drives a directive. `keyring` is injectable for tests and
+    mirrors verify_recovery_catalog_signature's contract."""
+    if catalog is None:
+        return None
+
+    try:
+        _verify_catalog_signature(catalog, keyring=keyring)
+    except LectureCastError:
+        return None  # unverified → never present directive 话术
+
+    from ..recovery import failure_kind_for_error, recover_from_failure
+
+    # Deterministic error→failure_kind: the explicit server-code mapping first
+    # (insufficient_credits → m1_insufficient_credits), then a catalog-driven
+    # pass-through — if the error code is itself a directive key in the verified
+    # catalog (local adapter failures like local_renderer_missing / heygen_*),
+    # look it up directly. Non-matching codes resolve to None and fall through
+    # (never hard-code a new failure_kind, §3 invariant 5 / §7.5).
+    failure_kind = failure_kind_for_error(error) or error.code
+    directive = recover_from_failure(failure_kind, catalog)
+    if directive is None:
+        return None
+    is_main_blocker = directive["is_main_blocker"]
+    if is_main_blocker:
+        phase = "main_blocker_recovery_required"
+    else:
+        phase = "recovery_directive_required"
+    return {
+        "phase": phase,
+        "policy": "execute_only_returned_next_action",
+        "next_action": {
+            "id": "director.recovery.decide",
+            "kind": "host_choice",
+            "question_id": f"recovery_{directive['failure_kind']}",
+            "question_label": directive["user_message"],
+            "options": [
+                {
+                    "id": opt["option_id"],
+                    "label": opt["label"] + ("（推荐）" if opt["recommended"] else ""),
+                }
+                for opt in directive["options"]
+            ],
+            "argv_template": [
+                "lecturecast", "director", "recovery", "decide",
+                root, "--choice", "<option_id>", "--json",
+            ],
+            "mutates": True,
+            "requires_user_approval": True,
+            "steer_back_line": directive["steer_back_line"],
+            "do_not": directive.get("do_not") or [],
+        },
+    }
 
 
 def _resume_error_workflow(error: LectureCastError, root: str) -> dict[str, Any] | None:
