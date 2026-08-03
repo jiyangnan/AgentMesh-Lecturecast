@@ -16,6 +16,92 @@ from lecturecast.protocol import ManifestGenerationOutV1_1
 _NOW = "2026-07-28T12:00:00Z"
 
 
+def _signed_catalog_keyring(key_id: str):
+    """Return (PublicKeyRing, Ed25519PrivateKey) for a fresh key."""
+    import base64 as _b64
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from lecturecast.manifest import PublicKeyRing, SigningKey
+
+    private_key = Ed25519PrivateKey.generate()
+    public_key = _b64.b64encode(
+        private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+    ).decode()
+    ring = PublicKeyRing(
+        [
+            SigningKey(
+                key_id=key_id,
+                algorithm="Ed25519",
+                public_key=public_key,
+                status="current",
+                not_before="2026-01-01T00:00:00Z",
+                not_after="2027-01-01T00:00:00Z",
+            )
+        ]
+    )
+    return ring, private_key
+
+
+def _sign_bytes(payload: dict, private_key) -> dict:
+    """Blank signature.value, sign canonical bytes, fill base64."""
+    import base64 as _b64
+
+    from lecturecast.protocol import manifest_signing_bytes
+
+    signed = json.loads(json.dumps(payload))
+    signed["signature"] = {
+        "algorithm": "Ed25519",
+        "key_id": signed["signature"]["key_id"],
+        "value": "",
+    }
+    value = private_key.sign(manifest_signing_bytes(signed))
+    signed["signature"]["value"] = _b64.b64encode(value).decode()
+    return signed
+
+
+def _signed_catalog_for(failure_kind: str, key_id: str, private_key) -> dict:
+    """A signed catalog with a single directive for the given failure_kind."""
+    directive = {
+        "failure_kind": failure_kind,
+        "is_main_blocker": True,
+        "user_message": "云端制作额度不足，本期正片暂时无法在云端生成。",
+        "options": [
+            {
+                "option_id": "top_up_and_resume",
+                "label": "去充值后继续",
+                "recommended": True,
+                "resume_action": {
+                    "action_id": "open_provider_dashboard",
+                    "args": {"provider": "lecturecast"},
+                },
+            },
+        ],
+        "steer_back_line": "额度到账后回到原项目继续，主线脚本不丢。",
+        "do_not": ["不要让用户重复点击生成刷屏"],
+        "external_handoff": None,
+        "signature": {"algorithm": "Ed25519", "key_id": key_id, "value": "A" * 86 + "=="},
+    }
+    signed_directive = _sign_bytes(directive, private_key)
+    catalog = {
+        "catalog_version": "recovery_base_v1",
+        "directives": {failure_kind: signed_directive},
+        "signature": {"algorithm": "Ed25519", "key_id": key_id, "value": "A" * 86 + "=="},
+    }
+    return _sign_bytes(catalog, private_key)
+
+
+def _verify_with(key_id: str, ring, catalog) -> Any:
+    """Verify a signed catalog against the injected keyring (test helper)."""
+    from lecturecast.manifest import verify_recovery_catalog_signature
+
+    return verify_recovery_catalog_signature(catalog, keyring=ring)
+
+
 def _v1_1_generation(billing_state: str = "charged", resume_available: bool = False) -> dict[str, Any]:
     return {
         "generation_id": "gen_1",
@@ -464,6 +550,122 @@ def test_resume_error_retryable_string_false_not_coerced(tmp_path: Path, monkeyp
     body = json.loads(result.output)
     # v1.1 schema rejects retryable="false" (string) → manifest_incompatible via generic fail().
     assert body["code"] == "manifest_incompatible"
+
+
+# ---- §5.5e6 #121: recovery-directive wiring on the resume error path ----
+
+def _setup_resume_project_with_catalog(tmp_path: Path, monkeypatch, status_code: int, error_body: dict, catalog: dict):
+    """Like _setup_resume_project but the v1.3 state persists a recovery_catalog,
+    and the resume call returns an error. The command's _recovery_workflow is
+    patched to accept the test-signed catalog via the injected keyring."""
+    from typer.testing import CliRunner
+    from lecturecast.cli import app
+    from lecturecast.director import DirectorStateStore
+
+    monkeypatch.setattr("lecturecast.commands.project.require_commercial_access", lambda: None)
+    monkeypatch.setattr("lecturecast.commands.director.require_commercial_access", lambda: None)
+    monkeypatch.setattr("lecturecast.commands.director.require_project_host_workflow", lambda *a, **kw: None)
+    monkeypatch.setenv("LECTURECAST_API_KEY", "test_key")
+
+    store = DirectorStateStore(tmp_path)
+    store.project.init(name="T")
+    state = store.create(
+        server_url="https://api.test",
+        session={"session_id": "s1", "status": "confirmed", "brief_version": 1,
+                 "catalog_version": "cv", "updated_at": _NOW},
+        adapter_kind="codex", adapter_version="1.0.0", protocol_version="1.1",
+    )
+    state = store.update(state, generation_id="gen_1", generation_status="queued")
+    state = store.update(state, generation={
+        "generation_id": "gen_1", "status": "queued", "updated_at": _NOW,
+        "billing_state": "awaiting_credits", "resume_available": True,
+        "recovery_catalog": catalog,
+    })
+    assert state.payload["schema_version"] == "1.3"
+
+    class _ErrorCapture:
+        def request(self, *, method, url, headers, payload, timeout):
+            return status_code, error_body
+
+    import lecturecast.commands.director as d
+    from lecturecast.director import DirectorClient
+    d._make_client = lambda _url: DirectorClient(_url, transport=_ErrorCapture())
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["director", "generation-resume", str(tmp_path), "--json"])
+    return result
+
+
+def test_resume_error_emits_recovery_workflow_when_catalog_matches(tmp_path: Path, monkeypatch):
+    """F-C12: on the generation-resume error path, a persisted recovery catalog
+    whose directive matches the mapped failure_kind yields a recovery phase
+    (recovery_directive_required) instead of the generic _resume_error_workflow."""
+    import lecturecast.commands.director as d
+    from lecturecast.manifest import VerificationResult
+
+    key_id = "recovery_test_v1"
+    ring, private_key = _signed_catalog_keyring(key_id)
+    catalog = _signed_catalog_for("m1_insufficient_credits", key_id, private_key)
+    # Accept the test-signed catalog (the command path uses the real keyring).
+    monkeypatch.setattr(
+        d,
+        "_verify_catalog_signature",
+        lambda c, keyring=None: _verify_with(key_id, ring, c),
+    )
+
+    result = _setup_resume_project_with_catalog(tmp_path, monkeypatch, 402, {
+        "detail": {"code": "insufficient_credits", "message": "余额不足。",
+                   "next_action": "充值后重试。", "retryable": False},
+    }, catalog)
+
+    assert result.exit_code == 1
+    body = json.loads(result.output)
+    assert body["workflow"]["phase"] == "main_blocker_recovery_required"
+    assert body["workflow"]["next_action"]["id"] == "director.recovery.decide"
+    assert body["workflow"]["next_action"]["kind"] == "host_choice"
+    assert body["workflow"]["next_action"]["requires_user_approval"] is True
+
+
+def test_resume_error_falls_back_when_catalog_missing(tmp_path: Path, monkeypatch):
+    """F-C13: without a persisted catalog the resume error path must fall back
+    to the existing _resume_error_workflow (no regression)."""
+    result, store, _ = _setup_resume_project(tmp_path, monkeypatch, 402, {
+        "detail": {"code": "insufficient_credits", "message": "余额不足。",
+                   "next_action": "充值后重试。", "retryable": False},
+    })
+    assert result.exit_code == 1
+    body = json.loads(result.output)
+    assert body["workflow"]["phase"] == "credit_top_up_required"
+    assert body["workflow"]["next_action"]["id"] == "director.generation.resume"
+
+
+def test_resume_error_falls_back_when_catalog_unverified(tmp_path: Path, monkeypatch):
+    """F-C13: a persisted but UNVERIFIED catalog (signed with a key the real
+    keyring does not trust) must fall through to _resume_error_workflow —
+    fail-closed: never present a directive for an unverified catalog."""
+    import lecturecast.commands.director as d
+    from lecturecast.errors import LectureCastError
+
+    key_id = "untrusted_key_v1"
+    ring, private_key = _signed_catalog_keyring(key_id)
+    catalog = _signed_catalog_for("m1_insufficient_credits", key_id, private_key)
+    # verify_recovery_catalog_signature uses the REAL keyring (no such key) → raise.
+    def _real_verify_fails(c, keyring=None):
+        raise LectureCastError(
+            code="manifest_signature_invalid", message="签名无效。",
+            next_action="不要根据未验签内容继续。",
+        )
+
+    monkeypatch.setattr(d, "_verify_catalog_signature", _real_verify_fails)
+
+    result = _setup_resume_project_with_catalog(tmp_path, monkeypatch, 402, {
+        "detail": {"code": "insufficient_credits", "message": "余额不足。",
+                   "next_action": "充值后重试。", "retryable": False},
+    }, catalog)
+
+    assert result.exit_code == 1
+    body = json.loads(result.output)
+    assert body["workflow"]["phase"] == "credit_top_up_required"  # fallback
 
 
 def test_full_recovery_chain_status_resume_charged_review(tmp_path: Path, monkeypatch):

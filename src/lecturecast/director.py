@@ -490,6 +490,14 @@ class DirectorState:
         """Last observed resume_available from the server. Advisory display only."""
         return bool(self.payload.get("resume_available"))
 
+    @property
+    def recovery_catalog(self) -> dict[str, Any] | None:
+        """Last delivered pre-signed RecoveryDirectiveCatalog (v1.3 state). At
+        resume-error time the catalog is reachable here (finding #6 resolution).
+        The client still verifies its signature before acting (fail-closed)."""
+        value = self.payload.get("recovery_catalog")
+        return value if isinstance(value, dict) else None
+
     def to_dict(self) -> dict[str, Any]:
         return dict(self.payload)
 
@@ -522,6 +530,11 @@ class DirectorStateStore:
         # v1.2: 17 keys (adds billing_state / resume_available / billing_updated_at)
         #       — written when the first v1.1 generation response with billing
         #       state is persisted. Old v1.0/v1.1 files load unchanged.
+        # v1.3: 18 keys (adds recovery_catalog — the pre-signed RecoveryDirective
+        #       Catalog delivered with the v1.1 session/generation response).
+        #       Written when a response carrying recovery_catalog is persisted,
+        #       so the catalog is reachable at resume-error time. Old v1.0-v1.2
+        #       files load unchanged (recovery_catalog defaults to None).
         schema_version = payload.get("schema_version")
         if schema_version == "1.0":
             if set(payload) != required:
@@ -558,6 +571,40 @@ class DirectorStateStore:
                 if "timezone-aware" in str(exc) or "must be" in str(exc):
                     raise
                 raise ValueError(f"billing_updated_at is not a valid timestamp: {updated!r}")
+        elif schema_version == "1.3":
+            v1_3_keys = {
+                "protocol_version", "billing_state", "resume_available",
+                "billing_updated_at", "recovery_catalog",
+            }
+            if set(payload) != required | v1_3_keys:
+                raise ValueError("unexpected or incomplete Director state")
+            if payload.get("protocol_version") != "1.1":
+                raise ValueError("v1.3 state requires protocol_version=1.1")
+            # Strict type/vocab validation for billing snapshot fields.
+            billing_state = payload.get("billing_state")
+            if billing_state not in (
+                "in_progress", "awaiting_credits", "partially_charged", "charged", "blocked",
+            ):
+                raise ValueError(f"invalid billing_state: {billing_state!r}")
+            if type(payload.get("resume_available")) is not bool:
+                raise ValueError(f"resume_available must be bool, got {type(payload.get('resume_available'))}")
+            updated = payload.get("billing_updated_at")
+            if not isinstance(updated, str) or not updated:
+                raise ValueError("billing_updated_at must be a non-empty string")
+            try:
+                from datetime import datetime
+                parsed = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    raise ValueError("billing_updated_at must be timezone-aware")
+            except ValueError as exc:
+                if "timezone-aware" in str(exc) or "must be" in str(exc):
+                    raise
+                raise ValueError(f"billing_updated_at is not a valid timestamp: {updated!r}")
+            # recovery_catalog must be a dict (or None), never an arbitrary
+            # truthy non-dict — the client reads it back at error time.
+            recovery_catalog = payload.get("recovery_catalog")
+            if recovery_catalog is not None and not isinstance(recovery_catalog, dict):
+                raise ValueError("recovery_catalog must be an object or null")
         else:
             raise ValueError("unsupported Director state version")
         revision = payload.get("state_revision")
@@ -760,6 +807,18 @@ class DirectorStateStore:
                     # One-way upgrade to schema 1.2 on first billing snapshot.
                     if payload.get("schema_version") == "1.1":
                         payload["schema_version"] = "1.2"
+                    # v1.3 (finding #6 resolution): persist the pre-signed
+                    # recovery catalog delivered with the v1.1 generation
+                    # response so it is reachable at resume-error time (the
+                    # error path has no fresh response dict). The server always
+                    # sends billing + recovery_catalog together, so this is
+                    # gated on the billing snapshot — a v1.3 state is exactly
+                    # v1.2 + recovery_catalog, no other shape is valid.
+                    generation_catalog = generation.get("recovery_catalog")
+                    if generation_catalog is not None:
+                        payload["recovery_catalog"] = generation_catalog
+                        if payload.get("schema_version") == "1.2":
+                            payload["schema_version"] = "1.3"
             if generation_id is not None:
                 payload["generation_id"] = generation_id
             if generation_status is not None:
