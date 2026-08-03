@@ -33,6 +33,7 @@ on:
       - "src/lecturecast/protocol/schemas/**"
       - "tests/test_cross_repo_contracts.py"
       - ".github/workflows/cross-repo-contract.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
