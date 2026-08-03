@@ -389,7 +389,7 @@ def _recovery_workflow(
 4. ✅ 新 `recovery.py`：`recover_from_failure` + `failure_kind_for_error`（§4.4）—— server code→base failure_kind 显式映射 + 目录驱动的透传（`or error.code`）。
 5. ✅ `commands/director.py`：`_recovery_workflow` + 错误路径接线（§4.5）—— resume 错误路径先试 recovery workflow，None 落回 `_resume_error_workflow`；`keyring` 可注入（测试）。
 6. ✅ tests F-C1..F-C14（§5，RED-first）—— #120 已落地 **F-C1/F-C2/F-C3 + mgo re-vendor 检查 + v1.0 golden**（9 测），F-C4..F-C14 归 #121。
-7. ✅ 全量测试（**1224 passed**，基线 1191 + #120 新增 9 + mgo/#120 fix 修复 + #121 新增 16）—— commit + Codex round-1。
+7. ✅ 全量测试（**1224 passed**，基线 1191 + #120 新增 9 + mgo/#120 fix 修复 + #121 新增 16）—— commit + Codex round-1（round-1 修复后 **1230 passed**）。
 
 ---
 
@@ -411,3 +411,15 @@ def _recovery_workflow(
 | 8 | 无问题 | schema defs 逐字节一致 / 静默 return 分支被 schema 前置覆盖 / key↔failure_kind 逻辑无假阳性 | — | — |
 
 **修复后全量：1208 passed**（commit `??`）。
+
+### #121（verify + failure_kind + workflow）— round-1 Codex
+
+**发现 3 项，裁决如下：**
+
+| # | 级别 | 发现 | 裁决 | 处理 |
+|---|------|------|------|------|
+| 1 | **High** | malformed persisted catalog 绕过 fallback：v1.3 state 接受任意 dict 作 `recovery_catalog`；本地损坏成 `{}` 时 `RecoveryDirectiveCatalog.model_validate` 抛 `ProtocolValidationError`（非 `LectureCastError`），`_recovery_workflow` 只 catch `LectureCastError` → generation-resume 走进 unexpected-error 路径而非 `_resume_error_workflow`。不显示未验签 directive，但缺失/未验签/无匹配的 fallback 已回归。 | **确认 real**（schema 校验 shape，验签入口抛错类型漏网） | 已修：`verify_recovery_catalog_signature` 的 `model_validate` 包 `except ProtocolValidationError → manifest_signature_invalid`（fail-closed，不泄漏）；补 `test_recovery_workflow_malformed_catalog_returns_none` + `test_recovery_catalog_verify_rejects_malformed_catalog_dict` |
+| 2 | Low | verifier 声称单 error-code 契约：缺 `cryptography` 抛 `client_upgrade_required`、schema 校验失败漏 `ProtocolValidationError`，均非 `manifest_signature_invalid`，与 docstring "on any failure" 不符。仍 fail-closed，缺依赖行为与 `verify_manifest` 一致。 | **确认**（主要是契约一致性） | 已修 docstring 精确化：缺依赖→`client_upgrade_required`（对齐 verify_manifest），其余→`manifest_signature_invalid` |
+| 3 | Low | 重要失败/迁移边界缺直测：malformed catalog fallback、algorithm mismatch、invalid signature/public-key base64、invalid keyring load、缺 crypto 依赖、`previous` key 接受、v1.3 invalid billing/catalog 字段、catalog-without-billing 不升级、真实 v1.0/v1.2 reload（旧测试只构造 v1.1）。 | **确认**（覆盖缺 9 类） | 已补 6 测：algorithm mismatch 拒绝、`previous` key 接受、keyring-load 失败 fail-closed、malformed catalog fail-closed ×2、v1.2/v1.0 reload 扩展 |
+
+**修复后全量：1230 passed**（基线 1224 + r1 修复新增 6 测，含 #122 recovery-schema byte-match 契约 1 测）。

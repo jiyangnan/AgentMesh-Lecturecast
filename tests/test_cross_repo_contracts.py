@@ -110,6 +110,7 @@ class TestProtocolLockCrossRepoIdentity:
         "manifest-generation-out.schema.json",
         "presenter-plan.schema.json",
         "orchestration-plan.schema.json",
+        "recovery-directive-catalog.schema.json",
     ])
     def test_v1_1_schema_bytes_match_server(self, filename):
         assert (CLIENT_V11_SCHEMAS / filename).read_bytes() == \
