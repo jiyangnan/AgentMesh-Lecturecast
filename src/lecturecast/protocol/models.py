@@ -87,6 +87,22 @@ def _validate_asset_uri(uri: str) -> None:
     _reject_unsafe_json(uri, location="asset.uri")
 
 
+# URL schemes a recovery handoff may safely surface to the user / a browser.
+_ALLOWED_HANDOFF_SCHEMES = {"https"}
+
+
+def _reject_unsafe_handoff_scheme(value: str, *, location: str) -> None:
+    """Reject strings that carry a dangerous URI scheme (javascript:, data:,
+    file:, ...). Only relative text or https:// are acceptable handoff values."""
+    if ":" not in value:
+        return
+    # Split on the first scheme colon; scheme must be [a-z][a-z0-9+.-]* to count.
+    candidate = value.split(":", 1)[0]
+    if candidate and candidate[0].isascii() and candidate[0].isalpha():
+        if all(ch.isascii() and (ch.isalnum() or ch in "+.-") for ch in candidate) and candidate.lower() not in _ALLOWED_HANDOFF_SCHEMES:
+            raise ProtocolValidationError(f"unsafe URI scheme at {location}: {candidate!r}")
+
+
 def _parse_datetime(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
@@ -348,6 +364,12 @@ class ManifestGenerationOutV1_1(ProtocolDocument):
                 "in_progress", "awaiting_credits", "partially_charged", "charged", "blocked",
             ):
                 raise ProtocolValidationError(f"unknown billing_state: {billing_state}")
+        # Embedded recovery catalog (resume path, server step 5) is schema-validated
+        # by the mgo schema but its semantics must also hold — the defense-in-depth
+        # key↔failure_kind check must not be bypassable via the embedded path.
+        recovery_catalog = payload.get("recovery_catalog")
+        if isinstance(recovery_catalog, dict):
+            RecoveryDirectiveCatalog._validate_semantics(recovery_catalog)
 
 
 def documents_for_protocol_version(protocol_version: str) -> dict[str, type[ProtocolDocument]]:
@@ -421,6 +443,37 @@ class RecoveryDirectiveCatalog(ProtocolDocument):
                 raise ProtocolValidationError(
                     f"directives key {key!r} does not match failure_kind {directive_failure_kind!r}"
                 )
+            # option_id uniqueness within a directive (schema cannot express it).
+            options = directive.get("options")
+            if isinstance(options, list):
+                option_ids = [opt.get("option_id") for opt in options if isinstance(opt, dict)]
+                _ensure_unique(option_ids, label="option_id")
+                # At most one recommended option per directive.
+                if sum(1 for opt in options if isinstance(opt, dict) and opt.get("recommended") is True) > 1:
+                    raise ProtocolValidationError("more than one recommended option")
+            # Args/external_handoff are free-form strings that the client will
+            # render or hand off — reject executable/path-escape/unsafe-scheme
+            # content (the schema is server-locked and cannot add these
+            # constraints). NUL/absolute-local-path are covered by
+            # _reject_unsafe_json; dangerous URL schemes (javascript:, file:,
+            # data:, ...) must never reach a URL opener (§7.3).
+            for opt in options or []:
+                if not isinstance(opt, dict):
+                    continue
+                resume_action = opt.get("resume_action")
+                if isinstance(resume_action, dict):
+                    args = resume_action.get("args")
+                    if isinstance(args, dict):
+                        for value in args.values():
+                            if isinstance(value, str):
+                                _reject_unsafe_json(value, location="resume_action.args")
+                                _reject_unsafe_handoff_scheme(value, location="resume_action.args")
+            handoff = directive.get("external_handoff")
+            if isinstance(handoff, dict):
+                _reject_unsafe_json(handoff, location="external_handoff")
+                for value in handoff.values():
+                    if isinstance(value, str):
+                        _reject_unsafe_handoff_scheme(value, location="external_handoff")
 
 
 @dataclass(frozen=True)
