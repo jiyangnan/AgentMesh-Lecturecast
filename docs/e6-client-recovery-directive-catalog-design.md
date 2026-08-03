@@ -437,3 +437,14 @@ def _recovery_workflow(
 ### §6 #14 RecoveryDirectiveCatalog cross-repo contract test（#122 收尾）
 
 `tests/test_cross_repo_contracts.py` 已补 `recovery-directive-catalog.schema.json` 进 `test_v1_1_schema_bytes_match_server` 逐字节比对参数表（此前缺该 schema，lock 比对涵盖但字节级漏）。本机三仓并排下 **42 passed**（含 recovery case 收集确认）。`@skip_cross_repo` 在三仓不全时跳过（单仓 checkout 仍全绿）。
+
+### §6 三仓 cross-repo CI gate（#122 收尾，落地）
+
+**新增 `.github/workflows/cross-repo-contract.yml`**：push/pull_request（paths 限定 protocol/**、lock、schemas、contract 测试、workflow 自身）+ `workflow_dispatch`。job 把三个仓库 checkout 成 sibling（`parent/AgentMesh-Lecturecast` + `parent/lecturecast-server` + `parent/agentmesh-core`），只跑 `tests/test_cross_repo_contracts.py`。server/core 私有仓用 repo secret `PAT_CROSS_REPO`（Content:read）读取，无该 secret 时 checkout 显式 fail-fast 而非静默跳过。
+
+**落地过程（关键决策记录）**：
+- 三仓 feature 分支全推远端（`feat/digital-human-edition` / `feat/digital-human-milestone-actions` / `feat/digital-human-protocol-v1_1`）。client 分支首次 push 被 GitHub Push Protection 拦：旧 commit `tests/test_consent.py` 的负向测试 fixture `sk_live_XYc8RpGp9mW6WtwQZFn0DyoOsNqoaV5Y`（断言 `_identity()` 拒绝任意 credential，非真 key，长度即不符 Stripe 24 位）被 secret-scan 误报，owner unblock 后通过。
+- sibling checkout 钉 feature 分支 ref（server main 无 `protocol/v1.1/`，直到协同 merge 后才能切 main）。
+- 踩坑：`pip install -e ".[dev]"` 需在 client checkout 子目录内跑（`cd parent/AgentMesh-Lecturecast`），否则报 "neither setup.py nor pyproject.toml"。
+
+**CI 结果：42 passed**（GitHub Actions ubuntu-latest, Python 3.11，cross-repo contract tests 全绿，与本机三仓并排一致）。
