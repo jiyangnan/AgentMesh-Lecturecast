@@ -363,6 +363,7 @@ def documents_for_protocol_version(protocol_version: str) -> dict[str, type[Prot
             "orchestration_plan": OrchestrationPlanV1_1,
             "production_manifest": ProductionManifest,
             "manifest_generation_out": ManifestGenerationOutV1_1,
+            "recovery_catalog": RecoveryDirectiveCatalog,
         }
     if protocol_version == "1.0":
         return {
@@ -388,6 +389,38 @@ def parse_creative_brief(payload: dict[str, Any]) -> ProtocolDocument:
     if payload.get("schema_version") == "1.1":
         return CreativeBriefV1_1.model_validate(payload)
     return CreativeBrief.model_validate(payload)
+
+
+@dataclass(frozen=True)
+class RecoveryDirectiveCatalog(ProtocolDocument):
+    """Pre-signed recovery-directive catalog (tech spec §7.3).
+
+    Delivered with the v1.1 session (DirectorSessionOutV1_1.recovery_catalog)
+    and the v1.1 generation view (ManifestGenerationOutV1_1.recovery_catalog).
+    The client maps a local failure to a failure_kind, looks it up here, and
+    presents the directive's message/options/steer_back (Host Conformance
+    Contract §7.4). Catalog is advisory — never gates billing."""
+
+    schema_dir: ClassVar[Path] = _V1_1_SCHEMA_DIR
+    schema_filename: ClassVar[str] = "recovery-directive-catalog.schema.json"
+
+    @classmethod
+    def _validate_semantics(cls, payload: dict[str, Any]) -> None:
+        # Defense-in-depth: directives object keys must be valid failure_kind
+        # strings and match their directive's failure_kind (self-consistency).
+        # The schema already enforces shape; this catches a key↔value mismatch
+        # (a swap that a re-signed catalog would otherwise mask).
+        directives = payload.get("directives")
+        if not isinstance(directives, dict):
+            return
+        for key, directive in directives.items():
+            if not isinstance(directive, dict):
+                continue
+            directive_failure_kind = directive.get("failure_kind")
+            if isinstance(directive_failure_kind, str) and directive_failure_kind != key:
+                raise ProtocolValidationError(
+                    f"directives key {key!r} does not match failure_kind {directive_failure_kind!r}"
+                )
 
 
 @dataclass(frozen=True)

@@ -431,6 +431,174 @@
       "title": "QualityResult",
       "type": "object"
     },
+    "RecoveryAction": {
+      "additionalProperties": false,
+      "properties": {
+        "action_id": {
+          "enum": [
+            "continue_without_presenter",
+            "use_stock_voice",
+            "pause_and_retry_provider",
+            "open_provider_dashboard",
+            "change_brief",
+            "accept_fallback"
+          ],
+          "title": "Action Id",
+          "type": "string"
+        },
+        "args": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "maxProperties": 8,
+          "title": "Args",
+          "type": "object"
+        }
+      },
+      "required": [
+        "action_id"
+      ],
+      "title": "RecoveryAction",
+      "type": "object"
+    },
+    "RecoveryDirective": {
+      "additionalProperties": false,
+      "properties": {
+        "do_not": {
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Do Not",
+          "type": "array"
+        },
+        "external_handoff": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "External Handoff"
+        },
+        "failure_kind": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Failure Kind",
+          "type": "string"
+        },
+        "is_main_blocker": {
+          "title": "Is Main Blocker",
+          "type": "boolean"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/RecoveryOption"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "title": "Options",
+          "type": "array"
+        },
+        "signature": {
+          "$ref": "#/$defs/SignatureMetadata"
+        },
+        "steer_back_line": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Steer Back Line",
+          "type": "string"
+        },
+        "user_message": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "User Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "failure_kind",
+        "is_main_blocker",
+        "user_message",
+        "options",
+        "steer_back_line",
+        "signature"
+      ],
+      "title": "RecoveryDirective",
+      "type": "object"
+    },
+    "RecoveryDirectiveCatalog": {
+      "additionalProperties": false,
+      "description": "Pre-signed, delivered in two layers: a base catalog with the M1 response\n(covers M1 blockers like insufficient credits / signer / schema / renderer)\nand a provider-specific increment with M2/M3 (covers HeyGen key / balance /\nrate-limit). The client selects locally; nothing about provider runtime\nstatus is uploaded.",
+      "properties": {
+        "catalog_version": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Catalog Version",
+          "type": "string"
+        },
+        "directives": {
+          "additionalProperties": {
+            "$ref": "#/$defs/RecoveryDirective"
+          },
+          "title": "Directives",
+          "type": "object"
+        },
+        "signature": {
+          "$ref": "#/$defs/SignatureMetadata"
+        }
+      },
+      "required": [
+        "catalog_version",
+        "directives",
+        "signature"
+      ],
+      "title": "RecoveryDirectiveCatalog",
+      "type": "object"
+    },
+    "RecoveryOption": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "option_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Option Id",
+          "type": "string"
+        },
+        "recommended": {
+          "title": "Recommended",
+          "type": "boolean"
+        },
+        "resume_action": {
+          "$ref": "#/$defs/RecoveryAction"
+        }
+      },
+      "required": [
+        "option_id",
+        "label",
+        "recommended",
+        "resume_action"
+      ],
+      "title": "RecoveryOption",
+      "type": "object"
+    },
     "SceneNode": {
       "additionalProperties": false,
       "properties": {
@@ -808,6 +976,17 @@
       "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
       "title": "Model Policy Version",
       "type": "string"
+    },
+    "recovery_catalog": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RecoveryDirectiveCatalog"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "resume_available": {
       "title": "Resume Available",
