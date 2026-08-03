@@ -397,4 +397,17 @@ def _recovery_workflow(
 
 ### #120（vendor + parse）— round-1 Codex
 
-（待发）
+**发现 8 项，全部裁决：**
+
+| # | 级别 | 发现 | 裁决 | 处理 |
+|---|------|------|------|------|
+| 1 | **High** | mgo 内嵌 catalog 绕过语义校验：`ManifestGenerationOutV1_1._validate_semantics` 未委托 `RecoveryDirectiveCatalog._validate_semantics`，key↔failure_kind 只在校验独立解析路径 | **确认 real**（schema 校验覆盖 shape，语义层有缝；#122 接 resume 路径即暴露） | 已修：mgo 语义校验对 dict 型 `recovery_catalog` 委托 catalog 语义校验；补 `test_mgo_embedded_catalog_rejects_key_mismatch` |
+| 2 | Med | args/external_handoff 值无 `_reject_unsafe_json` 防御（`javascript:`/绝对路径可干净通过） | **确认 real**（tech spec §7.3 v1.4 #8：per-action args 禁透传 subprocess/shell/URL；server 注释明示"client validates per-action"） | 已修：args 值与 external_handoff 跑 `_reject_unsafe_json` + 新增 scheme allowlist（`_reject_unsafe_handoff_scheme`，仅 https 白名单） |
+| 3 | Med | option_id 唯一性未校验（schema 无法表达，其它模型用 `_ensure_unique`） | **确认 real**（#122 decide 映射歧义） | 已修：`_ensure_unique(option_id)` + 测试 |
+| 4 | Low | 多 `recommended: true` 未约束 | **确认 real**（server 每 directive 至多一个推荐） | 已修：>1 拒绝 + 测试 |
+| 5 | Low | `documents_for_protocol_version("1.1")` 注册未测 | **确认 real**（注册行删除测试仍绿） | 已修：`test_documents_registers_recovery_catalog` |
+| 6 | 命名 | `test_recovery_catalog_model_accepts_dict_form` 实际测 `model_validate_json` | **确认** | 已改 `test_recovery_catalog_model_accepts_json_string` |
+| 7 | 流程 | "byte-identical to server" 仓内不可证（常量随 commit 同改） | 认可，流程外锚定 | 锁测试注释记录 server 侧 digest 来源，供人工比对 |
+| 8 | 无问题 | schema defs 逐字节一致 / 静默 return 分支被 schema 前置覆盖 / key↔failure_kind 逻辑无假阳性 | — | — |
+
+**修复后全量：1208 passed**（commit `??`）。

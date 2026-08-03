@@ -10,9 +10,11 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from lecturecast.protocol import (
+    ManifestGenerationOutV1_1,
     ProtocolValidationError,
     RecoveryDirectiveCatalog,
     canonical_digest,
+    documents_for_protocol_version,
     manifest_signing_bytes,
 )
 
@@ -128,7 +130,9 @@ def test_recovery_catalog_model_validates_roundtrip() -> None:
     assert document.model_dump() == catalog
 
 
-def test_recovery_catalog_model_accepts_dict_form() -> None:
+def test_recovery_catalog_model_accepts_json_string() -> None:
+    """model_validate_json accepts a JSON string (the wire form) and yields the
+    same payload as the dict path."""
     catalog = _signed_catalog()
 
     document = RecoveryDirectiveCatalog.model_validate_json(json.dumps(catalog))
@@ -175,3 +179,111 @@ def test_recovery_catalog_rejects_invalid_action_id() -> None:
 
     with pytest.raises(ProtocolValidationError):
         RecoveryDirectiveCatalog.model_validate(catalog)
+
+
+def test_recovery_catalog_rejects_duplicate_option_id() -> None:
+    """Same directive must not expose two options with the same option_id —
+    downstream mapping (#122 decide command) would be ambiguous."""
+    catalog = _signed_catalog()
+    directive = copy.deepcopy(catalog["directives"]["m1_insufficient_credits"])
+    dup = copy.deepcopy(directive["options"][0])
+    dup["recommended"] = False
+    directive["options"].append(dup)
+    catalog["directives"]["m1_insufficient_credits"] = directive
+
+    with pytest.raises(ProtocolValidationError, match="duplicate option_id"):
+        RecoveryDirectiveCatalog.model_validate(catalog)
+
+
+def test_recovery_catalog_rejects_multiple_recommended() -> None:
+    """At most one recommended option per directive (server contract) — two
+    recommended flags would make the host's single recommendation ambiguous."""
+    catalog = _signed_catalog()
+    directive = copy.deepcopy(catalog["directives"]["m1_insufficient_credits"])
+    second = copy.deepcopy(directive["options"][0])
+    second["option_id"] = "second_recommended"
+    second["recommended"] = True
+    directive["options"].append(second)
+    catalog["directives"]["m1_insufficient_credits"] = directive
+
+    with pytest.raises(ProtocolValidationError, match="more than one recommended"):
+        RecoveryDirectiveCatalog.model_validate(catalog)
+
+
+def test_recovery_catalog_rejects_unsafe_action_args() -> None:
+    """args are rendered/acted on by the host — NUL/path-escape/absolute values
+    must fail at the parse boundary (never forwarded to a URL opener, §7.3)."""
+    catalog = _signed_catalog()
+    directive = copy.deepcopy(catalog["directives"]["m1_insufficient_credits"])
+    directive["options"][0]["resume_action"]["args"]["provider"] = "javascript:alert(1)"
+    catalog["directives"]["m1_insufficient_credits"] = directive
+
+    with pytest.raises(ProtocolValidationError, match="unsafe"):
+        RecoveryDirectiveCatalog.model_validate(catalog)
+
+
+def test_recovery_catalog_rejects_unsafe_external_handoff() -> None:
+    """external_handoff is surfaced to the user / other tools — a path-escape
+    or absolute-local-path value must be rejected at parse time."""
+    catalog = _signed_catalog()
+    directive = copy.deepcopy(catalog["directives"]["m1_insufficient_credits"])
+    directive["external_handoff"] = {"help_url": "/../../etc/passwd"}
+    catalog["directives"]["m1_insufficient_credits"] = directive
+
+    with pytest.raises(ProtocolValidationError, match="unsafe"):
+        RecoveryDirectiveCatalog.model_validate(catalog)
+
+
+def _v1_1_mgo_with_catalog(recovery_catalog: dict | None) -> dict:
+    return {
+        "generation_id": "gen_1",
+        "session_id": "sess_1",
+        "brief_version": 1,
+        "status": "ready",
+        "model_policy_version": "flash_all_v1",
+        "capability_digest": "sha256:" + "a" * 64,
+        "manifest_digest": "sha256:" + "b" * 64,
+        "manifest": None,
+        "deducted_credits": 30,
+        "error_code": None,
+        "credit_return_status": "not_required",
+        "attempt_count": 1,
+        "created_at": "2026-07-28T12:00:00Z",
+        "updated_at": "2026-07-28T12:00:00Z",
+        "completed_at": "2026-07-28T12:00:00Z",
+        "milestone_charges": [
+            {"milestone": "manifest", "artifact_type": "manifest", "cost": 10,
+             "status": "charged", "artifact_digest": "sha256:" + "a" * 64,
+             "deducted_credits": 10, "last_error_code": None, "completed_at": "2026-07-28T12:00:00Z"},
+        ],
+        "billing_state": "charged",
+        "resume_available": False,
+        "recovery_catalog": recovery_catalog,
+    }
+
+
+def test_mgo_embedded_catalog_passes_semantics() -> None:
+    """A well-formed embedded catalog (resume path, server step 5) parses fine."""
+    mgo = _v1_1_mgo_with_catalog(_signed_catalog())
+    ManifestGenerationOutV1_1.model_validate(mgo)
+
+
+def test_mgo_embedded_catalog_rejects_key_mismatch() -> None:
+    """The defense-in-depth key↔failure_kind check must not be bypassable via
+    the embedded mgo path — a swapped failure_kind must be rejected there too."""
+    catalog = _signed_catalog()
+    directive = copy.deepcopy(catalog["directives"]["m1_insufficient_credits"])
+    directive["failure_kind"] = "m1_schema_unsupported"
+    catalog["directives"] = {"m1_insufficient_credits": directive}
+    mgo = _v1_1_mgo_with_catalog(catalog)
+
+    with pytest.raises(ProtocolValidationError, match="does not match failure_kind"):
+        ManifestGenerationOutV1_1.model_validate(mgo)
+
+
+def test_documents_registers_recovery_catalog() -> None:
+    """documents_for_protocol_version("1.1") must expose the recovery_catalog
+    document type so the client can parse the delivered catalog."""
+    v1_1 = documents_for_protocol_version("1.1")
+    assert v1_1["recovery_catalog"] is RecoveryDirectiveCatalog
+    assert "recovery_catalog" not in documents_for_protocol_version("1.0")
