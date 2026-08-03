@@ -423,3 +423,17 @@ def _recovery_workflow(
 | 3 | Low | 重要失败/迁移边界缺直测：malformed catalog fallback、algorithm mismatch、invalid signature/public-key base64、invalid keyring load、缺 crypto 依赖、`previous` key 接受、v1.3 invalid billing/catalog 字段、catalog-without-billing 不升级、真实 v1.0/v1.2 reload（旧测试只构造 v1.1）。 | **确认**（覆盖缺 9 类） | 已补 6 测：algorithm mismatch 拒绝、`previous` key 接受、keyring-load 失败 fail-closed、malformed catalog fail-closed ×2、v1.2/v1.0 reload 扩展 |
 
 **修复后全量：1230 passed**（基线 1224 + r1 修复新增 6 测，含 #122 recovery-schema byte-match 契约 1 测）。
+
+### #121（verify + failure_kind + workflow）— round-2 Codex 锁定复审
+
+**零 findings，LOCK-review PASS**（commit `e2d87d1`）。逐项确认：
+
+1. **malformed-catalog fail-closed 完整**：`verify_recovery_catalog_signature` 把 `model_validate` 的每类 schema/语义拒绝转成 `manifest_signature_invalid`，malformed-JSON 路径一致抛 `ProtocolValidationError`；合法 `RecoveryDirectiveCatalog` 实例保留直通验签路径。`_recovery_workflow` catch 后返回 None → 走 `_resume_error_workflow`。
+2. **docstring 精确**：缺 crypto→`client_upgrade_required`；malformed/trust-root/key status/algorithm/signature→`manifest_signature_invalid`。
+3. **6 个新测各自命中其宣称的失败类**（keyring-load 失败路径用 mock 的 `PublicKeyRing.load` 拒绝构造，真 base64 非法另有测试）。
+4. **新测有意义**：两个 malformed-catalog 测在 `e2d87d1^` 会 RED（一个泄漏 `ProtocolValidationError`、一个不返回 None）；其余四个是既有行为的直测（finding #3 本就要 coverage 而非修实现），非空转。
+5. **无回归**：tampering/unknown/revoked/algorithm mismatch/trust-root fail-closed、`previous` key 接受、failure_kind catalog-driven、v1.3 billing-gated、v1.0/v1.2 reload、`manifest_signing_bytes`+`signature.value` 全部保持；cross-repo byte-identity 已含 recovery schema。
+
+### §6 #14 RecoveryDirectiveCatalog cross-repo contract test（#122 收尾）
+
+`tests/test_cross_repo_contracts.py` 已补 `recovery-directive-catalog.schema.json` 进 `test_v1_1_schema_bytes_match_server` 逐字节比对参数表（此前缺该 schema，lock 比对涵盖但字节级漏）。本机三仓并排下 **42 passed**（含 recovery case 收集确认）。`@skip_cross_repo` 在三仓不全时跳过（单仓 checkout 仍全绿）。
