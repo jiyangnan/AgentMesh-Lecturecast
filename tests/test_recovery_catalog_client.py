@@ -412,6 +412,59 @@ def test_recovery_catalog_verify_rejects_revoked_key() -> None:
     assert excinfo.value.code == "manifest_signature_invalid"
 
 
+def test_recovery_catalog_verify_rejects_algorithm_mismatch() -> None:
+    """Codex r1 finding #3: a catalog whose signature algorithm does not match
+    the key must be rejected (fail-closed), matching verify_manifest."""
+    from lecturecast.errors import LectureCastError
+    from lecturecast.manifest import verify_recovery_catalog_signature
+
+    key_id = "test_key_v1"
+    ring, private_key = _keyring_for(key_id)
+    catalog = _build_catalog(key_id, private_key)
+    catalog["signature"]["algorithm"] = "Ed25519-extra"
+
+    with pytest.raises(LectureCastError) as excinfo:
+        verify_recovery_catalog_signature(catalog, keyring=ring)
+    assert excinfo.value.code == "manifest_signature_invalid"
+
+
+def test_recovery_catalog_verify_accepts_previous_key() -> None:
+    """Codex r1 finding #3: a catalog signed by a previous (not current) key
+    must verify — key rotation means old signed catalogs remain valid."""
+    from lecturecast.manifest import verify_recovery_catalog_signature
+
+    key_id = "test_key_v1"
+    ring, private_key = _keyring_for(key_id, status="previous")
+    catalog = _build_catalog(key_id, private_key)
+
+    result = verify_recovery_catalog_signature(catalog, keyring=ring)
+    assert result.valid is True
+    assert result.key_status == "previous"
+
+
+def test_recovery_catalog_verify_rejects_invalid_public_key_base64(monkeypatch) -> None:
+    """Codex r1 finding #3: when the keyring cannot load a valid public key
+    (invalid base64 / wrong length), verification must fail-closed with
+    manifest_signature_invalid — matching verify_manifest's keyring-load
+    failure contract."""
+    from lecturecast.errors import LectureCastError
+    from lecturecast.manifest import PublicKeyRing, verify_recovery_catalog_signature
+
+    key_id = "test_key_v1"
+    ring, private_key = _keyring_for(key_id)
+    catalog = _build_catalog(key_id, private_key)
+
+    def _broken_load(path=None):
+        # The ring constructor rejects invalid base64 / wrong-length public
+        # keys at build time; a load() failing is the same fail-closed class.
+        raise ValueError("invalid Ed25519 public key")
+
+    monkeypatch.setattr(PublicKeyRing, "load", staticmethod(_broken_load))
+    with pytest.raises(LectureCastError) as excinfo:
+        verify_recovery_catalog_signature(catalog, keyring=None)
+    assert excinfo.value.code == "manifest_signature_invalid"
+
+
 def test_recovery_from_failure_hit_returns_directive() -> None:
     """F-C7: recover_from_failure with a matching failure_kind returns the
     directive dict (is_main_blocker/user_message/options/steer_back_line)."""
@@ -478,6 +531,36 @@ def test_recovery_workflow_unverified_catalog_returns_none() -> None:
 
     workflow = _recovery_workflow(error, catalog, "/tmp/proj")
     assert workflow is None
+
+
+def test_recovery_workflow_malformed_catalog_returns_none() -> None:
+    """Codex r1 finding #1: a schema-invalid persisted catalog (e.g. locally
+    corrupted v1.3 state reduced to {} ) must fail closed to None — NOT escape
+    as ProtocolValidationError into the unexpected-error path. The malformed
+    catalog must never present a directive, and the caller must be able to
+    fall back to _resume_error_workflow."""
+    from lecturecast.commands.director import _recovery_workflow
+    from lecturecast.errors import LectureCastError
+
+    error = LectureCastError(
+        code="insufficient_credits", message="余额不足。", next_action="充值。",
+        http_status=402,
+    )
+
+    workflow = _recovery_workflow(error, {}, "/tmp/proj")
+    assert workflow is None
+
+
+def test_recovery_catalog_verify_rejects_malformed_catalog_dict() -> None:
+    """Codex r1 finding #1: verify_recovery_catalog_signature on a schema-
+    invalid catalog dict must raise LectureCastError(manifest_signature_invalid),
+    never leak ProtocolValidationError to the caller."""
+    from lecturecast.errors import LectureCastError
+    from lecturecast.manifest import verify_recovery_catalog_signature
+
+    with pytest.raises(LectureCastError) as excinfo:
+        verify_recovery_catalog_signature({}, keyring=None)
+    assert excinfo.value.code == "manifest_signature_invalid"
 
 
 def test_recovery_workflow_is_main_blocker_false_phase() -> None:
@@ -607,3 +690,35 @@ def test_v1_3_state_loads_older_versions(tmp_path: Path):
     )
     assert state.payload["schema_version"] == "1.1"
     assert state.recovery_catalog is None
+
+    # v1.2 state (billing snapshot, no recovery_catalog) — a v1.1 state driven
+    # through update() with billing but no catalog. update() requires the
+    # generation_id to be set first (it validates generation_id match), so set
+    # it before passing the billing-bearing generation dict.
+    v12 = store.update(state, generation_id="gen_1", generation_status="queued")
+    v12 = store.update(
+        v12,
+        generation={
+            "generation_id": "gen_1", "status": "queued", "updated_at": NOW,
+            "billing_state": "awaiting_credits", "resume_available": True,
+        },
+    )
+    assert v12.payload["schema_version"] == "1.2"
+    assert v12.recovery_catalog is None
+
+    # Both must reload from disk unchanged (back-compat; recovery_catalog=None).
+    reloaded = store.load()
+    assert reloaded.payload["schema_version"] == "1.2"
+    assert reloaded.recovery_catalog is None
+
+    # v1.0 file on disk loads unchanged (no protocol_version key, no billing).
+    v10 = dict(state.to_dict())
+    v10["schema_version"] = "1.0"
+    v10.pop("protocol_version", None)
+    v10.pop("recovery_catalog", None)
+    for k in ("billing_state", "resume_available", "billing_updated_at"):
+        v10.pop(k, None)
+    store.path.write_text(json.dumps(v10, ensure_ascii=False), encoding="utf-8")
+    reloaded10 = store.load()
+    assert reloaded10.payload["schema_version"] == "1.0"
+    assert reloaded10.recovery_catalog is None

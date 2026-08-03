@@ -205,9 +205,11 @@ def verify_recovery_catalog_signature(
 ) -> VerificationResult:
     """Verify the Ed25519 signature on a RecoveryDirectiveCatalog (tech spec
     §7.3). Mirrors verify_manifest() but WITHOUT the created_at time-window
-    check — the catalog schema has no created_at. Failures raise
-    LectureCastError(code="manifest_signature_invalid") — an unverified catalog
-    must never drive a recovery directive (fail-closed, §3 invariant 2)."""
+    check — the catalog schema has no created_at. Verification failures raise
+    LectureCastError (missing crypto → client_upgrade_required, matching
+    verify_manifest; everything else → manifest_signature_invalid) — an
+    unverified catalog must never drive a recovery directive (fail-closed,
+    §3 invariant 2)."""
     try:
         from cryptography.exceptions import InvalidSignature
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -217,13 +219,23 @@ def verify_recovery_catalog_signature(
             message="当前安装缺少签名验证依赖。",
             next_action="重新运行官方安装器；不要跳过签名验证。",
         ) from None
-    from .protocol import RecoveryDirectiveCatalog
+    from .protocol import ProtocolValidationError, RecoveryDirectiveCatalog
 
-    document = (
-        catalog
-        if isinstance(catalog, RecoveryDirectiveCatalog)
-        else RecoveryDirectiveCatalog.model_validate(catalog)
-    )
+    try:
+        document = (
+            catalog
+            if isinstance(catalog, RecoveryDirectiveCatalog)
+            else RecoveryDirectiveCatalog.model_validate(catalog)
+        )
+    except ProtocolValidationError:
+        # A schema-invalid catalog (e.g. locally corrupted v1.3 state) must
+        # fail closed as signature-invalid so the caller falls back — never
+        # let ProtocolValidationError escape _recovery_workflow's catch.
+        raise LectureCastError(
+            code="manifest_signature_invalid",
+            message="Recovery 目录内容无效，无法验签。",
+            next_action="重新获取目录；不要根据未验签内容继续。",
+        ) from None
     payload = document.model_dump()
     signature = payload["signature"]
     try:
