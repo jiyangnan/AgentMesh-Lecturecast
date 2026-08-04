@@ -360,7 +360,15 @@ class TestM1CapabilityGateIndependentOfHeyGen:
         # third_party_processors or configured to this gate would make an
         # unconfigured photo user's M1 fail on the server.
         gate = SERVER_GENERATIONS_PY.read_text(encoding="utf-8")
-        body = gate.split("def validate_generation_capabilities", 1)[1]
+        # Bound the slice at the start of the M2 gate: since m2-2 the next
+        # sibling function (validate_presenter_capabilities) legitimately
+        # references third_party_processors/configured. Slicing to end-of-file
+        # would count the M2 gate against M1 (§6 #10). If the M2 gate is later
+        # renamed, find() returns -1 and we fall back to end-of-file → the M2
+        # gate body is re-included → this test goes RED (fail-safe, not green).
+        next_fn = gate.find("def validate_presenter_capabilities", gate.find("def validate_generation_capabilities"))
+        end = next_fn if next_fn != -1 else len(gate)
+        body = gate[gate.find("def validate_generation_capabilities"):end]
         assert "third_party_processors" not in body, (
             "server M1 gate (validate_generation_capabilities) references "
             "third_party_processors — M1 must be independent of HeyGen (§6 #10)"
@@ -488,3 +496,97 @@ def _insert_op(conn, operation_id: str, *, download_status: str) -> None:
         (operation_id, f"idem-{operation_id}", f"lc:{operation_id}", download_status),
     )
     conn.commit()
+
+
+# === §6 M2: presenter_plan awaiting_credits resume 跨仓契约 =================
+#
+# m2-4 把 M2 presenter_plan 扣费接到同步 create 路径；m2-5 回归 M2 awaiting →
+# /resume 恢复。这些契约防漂移：server 改 resume route / MILESTONE_ORDER，或
+# client 改 resume URL / 里程碑枚举 / 402 投影，契约立即红。
+
+SERVER_DIRECTOR_PY = SERVER_ROOT / "app" / "routes" / "director.py"
+CLIENT_DIRECTOR_PY = CLIENT_ROOT / "src" / "lecturecast" / "director.py"
+CLIENT_DIRECTOR_CMD = CLIENT_ROOT / "src" / "lecturecast" / "commands" / "director.py"
+SERVER_MILESTONE_BILLING_PY = SERVER_MILESTONE_PY
+
+
+@skip_cross_repo
+class TestM2ResumeCrossRepoContract:
+    """§6 M2: client resume path == server route; milestone enum aligned."""
+
+    def test_client_resume_path_matches_server_route(self):
+        # Client DirectorClient.resume_generation POSTs /director/generations/{id}/resume.
+        client = CLIENT_DIRECTOR_PY.read_text(encoding="utf-8")
+        m = re.search(r'url=f".*?/director/generations/\{generation_id\}/resume"', client)
+        assert m, "client resume URL not found in director.py"
+        # Bound to the resume_generation body: the URL pattern is on the line just
+        # above method="POST" in DirectorClient.resume_generation (director.py:436).
+        body = client.split("def resume_generation", 1)[1].split("def ", 1)[0]
+        assert re.search(r'method="POST"', body), (
+            "client resume_generation must POST — otherwise it cannot trigger "
+            "the server's await/charge resume path"
+        )
+        # Server route registers the same path + method (POST). The decorator is
+        # `@router.post(\n    "/director/generations/{generation_id}/resume"` — read
+        # the token that precedes the quoted path on its own decorator block.
+        server = SERVER_DIRECTOR_PY.read_text(encoding="utf-8")
+        path_idx = server.find('"/director/generations/{generation_id}/resume"')
+        assert path_idx != -1, "server resume route not found in routes/director.py"
+        head = server[:path_idx]
+        decorator = re.search(r"@router\.\w+\(?", head[::-1][:80][::-1])
+        assert decorator and "post" in decorator.group(0), (
+            "server resume route must be POST — client resume_generation POSTs it"
+        )
+
+    def test_client_resume_projection_matches_billing_aggregation(self):
+        # The client offers resume only when the server says awaiting_credits +
+        # resume_available. Regression guard: if the server renamed the field or
+        # changed the resume gate, the client projection must follow.
+        client_cmd = CLIENT_DIRECTOR_CMD.read_text(encoding="utf-8")
+        assert '"awaiting_credits"' in client_cmd, (
+            "client _status_workflow lost the awaiting_credits resume projection"
+        )
+        assert 'billing_state == "awaiting_credits" and resume_available' in client_cmd, (
+            "client resume gate drifted from server billing_state+resume_available"
+        )
+        server = SERVER_MILESTONE_BILLING_PY.read_text(encoding="utf-8")
+        assert 'state = "awaiting_credits"' in server, (
+            "server aggregate_billing_state lost awaiting_credits aggregation"
+        )
+        assert "resume_available" in server, (
+            "server aggregate_billing_state lost resume_available"
+        )
+
+    def test_milestone_enum_matches_cross_repo(self):
+        # Server MILESTONE_ORDER == client _CORE_MILESTONES (manifest →
+        # presenter_plan → orchestration). A milestone added/renamed on either
+        # side without the other breaks the resume iteration order.
+        server = SERVER_MILESTONE_BILLING_PY.read_text(encoding="utf-8")
+        sm = re.search(r'MILESTONE_ORDER[^=]*=\s*\(([^)]*)\)', server)
+        assert sm, "server MILESTONE_ORDER not found"
+        server_ms = [x.strip().strip('"') for x in sm.group(1).split(",") if x.strip()]
+        client_canary = (CLIENT_ROOT / "src" / "lecturecast" / "canary.py").read_text(
+            encoding="utf-8"
+        )
+        cm = re.search(r'_CORE_MILESTONES\s*=\s*\(([^)]*)\)', client_canary)
+        assert cm, "client _CORE_MILESTONES not found"
+        client_ms = [x.strip().strip('"') for x in cm.group(1).split(",") if x.strip()]
+        assert server_ms == client_ms, (
+            f"milestone enum drifted: server={server_ms} client={client_ms}"
+        )
+        assert "presenter_plan" in server_ms
+
+    def test_server_resume_route_is_v1_1_envelope(self):
+        # M2 resume is a v1.1 feature: the route must raise the v1.1 error
+        # envelope (wider code set incl. presenter-plan codes) and return a view
+        # the v1.1 client parser understands.
+        server = SERVER_DIRECTOR_PY.read_text(encoding="utf-8")
+        assert "raise_api_error_v1_1" in server, (
+            "server resume route must use raise_api_error_v1_1 (M2 codes)"
+        )
+        assert "milestone_billing_enabled" in server, (
+            "server resume route lost the feature-flag gate"
+        )
+        # The resume view carries milestone_charges (ManifestGenerationOutV1_1)
+        # so a presenter_plan awaiting/charged row is visible to the client.
+        assert "milestone_charges" in server
