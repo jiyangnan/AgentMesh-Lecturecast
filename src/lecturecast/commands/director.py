@@ -19,6 +19,7 @@ from ..director import (
     DirectorClient,
     DirectorState,
     DirectorStateStore,
+    derive_billing_state,
     load_source_file,
     normalize_adapter_identity,
     resolve_server_url,
@@ -301,11 +302,26 @@ def _can_release_manifest(generation: dict[str, Any], *, protocol_version: str) 
     )
 
 
+def _presenter_plan_charged(generation: dict[str, Any]) -> bool:
+    """Whether the M2 presenter_plan milestone is already charged. When it is,
+    the status workflow must NOT re-offer create (idempotent re-run guard)."""
+    charges = generation.get("milestone_charges") or []
+    charge = next(
+        (c for c in charges if c.get("milestone") == "presenter_plan"), None,
+    )
+    return charge is not None and charge.get("status") == "charged"
+
+
 def _status_workflow(
-    state: DirectorState, generation: dict[str, Any], root: str,
+    state: DirectorState,
+    generation: dict[str, Any],
+    root: str,
+    project_store: ProjectStore | None = None,
 ) -> dict[str, Any]:
     """Build the workflow for a generation status response. Extracted so the
-    v1.1/v1.0 credit_returned phase/action split is directly testable."""
+    v1.1/v1.0 credit_returned phase/action split is directly testable.
+    ``project_store`` is only used for the M2 branch (brief avatar intent) and
+    may be None (callers that cannot resolve it just fall back to M1)."""
     gen_status = generation["status"]
     billing_state = generation.get("billing_state")
     resume_available = generation.get("resume_available") is True
@@ -318,11 +334,27 @@ def _status_workflow(
         )
         phase = "credit_resume_required"
     elif gen_status == "ready" and _can_release_manifest(generation, protocol_version=state.protocol_version):
-        action = _command_action(
-            "manifest.review", ["lecturecast", "manifest", "review", root, "--json"],
-            approval=True,
-        )
-        phase = "script_review_required"
+        # M1 released. If the brief asks for a photo avatar, the next step is the
+        # M2 presenter-plan create (needs a fresh user approval + capabilities).
+        # Otherwise this is the M1 manifest.review (own_voice path).
+        if (
+            state.protocol_version == "1.1"
+            and project_store is not None
+            and _d13_brief_avatar(project_store) == "photo"
+            and not _presenter_plan_charged(generation)
+        ):
+            action = _command_action(
+                "director.presenter.plan.create",
+                ["lecturecast", "director", "generation-presenter-plan", root, "--json"],
+                approval=True,
+            )
+            phase = "presenter_plan_create_required"
+        else:
+            action = _command_action(
+                "manifest.review", ["lecturecast", "manifest", "review", root, "--json"],
+                approval=True,
+            )
+            phase = "script_review_required"
     elif gen_status == "credit_returned":
         if state.protocol_version == "1.1":
             action = _command_action(
@@ -1168,7 +1200,7 @@ def status(
                 state=state,
                 generation=generation,
                 project=project.to_dict(),
-                workflow=_status_workflow(state, generation, root),
+                workflow=_status_workflow(state, generation, root, project_store),
             ),
             json_output=json_output,
             message=f"Generation 状态：{generation['status']}。",
@@ -1226,7 +1258,7 @@ def generation_resume(
                 state=state,
                 generation=generation,
                 project=project.to_dict(),
-                workflow=_status_workflow(state, generation, root),
+                workflow=_status_workflow(state, generation, root, project_store),
             ),
             json_output=json_output,
             message=f"Generation resume 完成：billing_state={generation.get('billing_state', 'N/A')}。",
@@ -1238,7 +1270,10 @@ def generation_resume(
         # §5.5e6 #121: if the v1.3 state carries a pre-signed recovery catalog,
         # present the matching directive first (fail-closed: an unverified or
         # non-matching catalog falls through to _resume_error_workflow).
-        recovery_workflow = _recovery_workflow(error, state.recovery_catalog, root)
+        recovery_workflow = _recovery_workflow(
+            error, state.recovery_catalog, root,
+            m2_context=_project_in_m2_context(directory),
+        )
         if recovery_workflow is not None:
             emit(
                 {"director": state.to_dict(), "error": error.to_dict(), "workflow": recovery_workflow},
@@ -1260,12 +1295,238 @@ def generation_resume(
         _unexpected(exc, json_output=json_output)
 
 
+@app.command("generation-presenter-plan")
+def generation_presenter_plan(
+    directory: Path = typer.Argument(Path(".")),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="M2 risk-confirmation credential: confirm you have reviewed the "
+        "HeyGen disclosure (heygen-transfer-2026-07-27). Billing is deducted "
+        "on create; absent --yes the command refuses.",
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Request and persist the paid M2 PresenterPlan (digital-human edition).
+
+    M2 is v1.1-only and only meaningful when the Creative Brief asks for a photo
+    avatar (avatar=photo). The command collects the independent risk-confirmation
+    credential (--yes), re-fetches/reuses the capabilities snapshot, creates the
+    plan (which bills presenter_plan credits), verifies + persists it read-only
+    (digest-bound to the released Manifest), and persists the provider recovery
+    catalog into v1.3 state for M2-context resume errors.
+    """
+    try:
+        state_store = DirectorStateStore(directory)
+        state = state_store.load()
+        require_project_host_workflow(
+            directory, expected_adapter=str(state.payload["adapter_kind"])
+        )
+        if state.protocol_version != "1.1":
+            raise LectureCastError(
+                code="manifest_incompatible",
+                message="generation-presenter-plan 是 v1.1 里程碑计费功能，v1.0 项目不支持。",
+                next_action="v1.0 项目请用 director status 查看状态。",
+            )
+        if state.generation_id is None:
+            raise LectureCastError(
+                code="session_not_found",
+                message="本地项目还没有 Manifest generation。",
+                next_action="先运行 director generate。",
+            )
+        project_store = ProjectStore(directory)
+        project = project_store.load()
+        # M2 preconditions: the Brief asked for a photo avatar (never trigger
+        # for the M1 own_voice path), and the manifest must already be released.
+        if _d13_brief_avatar(project_store) != "photo":
+            raise LectureCastError(
+                code="m2_not_ready",
+                message="Creative Brief 未指定 presenter.avatar=photo，M2 数字人不需要。",
+                next_action="该 project 走 M1 own_voice 路径；无需生成 PresenterPlan。",
+            )
+        # Idempotent re-run: a previously persisted plan short-circuits — no
+        # second create_and_charge (no double billing at the CLI layer). This
+        # precedes the manifest_ready gate because a persisted plan advances the
+        # project to presenter_plan_ready (which is not manifest_ready).
+        if project_store.presenter_plan_path.exists():
+            root = str(directory.expanduser().resolve())
+            reloaded = project_store.load()
+            generation = _m2_generation_view(
+                generation_id=state.generation_id,
+                updated_at=state.payload["updated_at"],
+                billing=_m2_charges_from_project(reloaded),
+                manifest_digest=reloaded.payload["production_manifest_digest"],
+            )
+            emit(
+                _result(
+                    state=state,
+                    generation=generation,
+                    project=reloaded.to_dict(),
+                    workflow=_status_workflow(state, generation, root, project_store),
+                ),
+                json_output=json_output,
+                message="PresenterPlan 已存在；未重复扣费。",
+            )
+            return
+        if project.payload["status"] != "manifest_ready":
+            raise LectureCastError(
+                code="manifest_incompatible",
+                message="M1 Manifest 尚未落盘，无法请求 M2 PresenterPlan。",
+                next_action="先运行 director status 保存已签名的 Manifest。",
+            )
+
+        # Capabilities: reuse the stored snapshot (with the B1 stale guard) or
+        # re-capture, mirroring `generate`. Only the v1.1 capture path is valid
+        # for M2 (the M2 gate validates ClientCapabilitiesV1_1).
+        adapter_kind = str(state.payload["adapter_kind"])
+        adapter_version = str(state.payload["adapter_version"])
+        capabilities = _stored_capabilities(
+            project_store,
+            adapter_kind=adapter_kind,
+            adapter_version=adapter_version,
+            protocol_version=state.protocol_version,
+        )
+        if capabilities is not None and state.protocol_version == "1.1":
+            if not _stored_heygen_still_live(capabilities, directory):
+                capabilities = None
+        if capabilities is None:
+            capabilities = capture_capabilities_v1_1(
+                adapter_kind=adapter_kind,
+                adapter_version=adapter_version,
+                project_root=directory,
+                repo_root=Path(__file__).resolve().parents[3],
+                adapter_probe=default_heygen_adapter_probe,
+                journal_probe=lambda: default_heygen_journal_probe(directory),
+            )
+            project_store.save_capabilities(
+                capabilities, expected_revision=project.revision
+            )
+        # §5.5e5d-d D13 payload-omission guard (fail-closed): never forward a
+        # snapshot that claims a third_party_processor but is not configured+live.
+        capabilities_payload = capabilities.model_dump()
+        if (
+            "third_party_processors" in capabilities_payload
+            and not _d13_heygen_configured(capabilities)
+        ):
+            raise LectureCastError(
+                code="manifest_incompatible",
+                message="本地能力快照声明了一个未配置的 third_party_processor（capture 不会产生此状态）。",
+                next_action="重新运行 lecturecast project capabilities 采集能力，再 director generation-presenter-plan。",
+            )
+        # M2 risk-confirmation credential (tech spec §2.2): the user must have
+        # reviewed the HeyGen disclosure. --yes is the explicit confirmation —
+        # absent it the command refuses before any network call.
+        if not yes:
+            raise LectureCastError(
+                code="approval_required",
+                message="M2 PresenterPlan 会产生扣费；需要先向用户展示 HeyGen 披露并取得确认。",
+                next_action="展示 heygen-transfer-2026-07-27 披露全文，明确通过后带 --yes 重试。",
+            )
+
+        result = _make_client(state.payload["server_url"]).create_presenter_plan(
+            state.generation_id,
+            capabilities=capabilities_payload,
+            approved=yes,
+            protocol_version=state.protocol_version,
+        )
+        plan = result["presenter_plan"]
+        billing = result.get("billing") or []
+        # Derive the billing snapshot from the server-sent charges (mirror of the
+        # server's aggregate_billing_state) so the v1.2/v1.3 state is consistent.
+        billing_state, resume_available = derive_billing_state(billing)
+        project = project_store.save_presenter_plan(
+            plan, expected_revision=project.revision
+        )
+        generation = _m2_generation_view(
+            generation_id=state.generation_id,
+            updated_at=plan["created_at"],
+            billing=billing,
+            manifest_digest=project.payload["production_manifest_digest"],
+        )
+        generation["billing_state"] = billing_state
+        generation["resume_available"] = resume_available
+        generation["recovery_catalog"] = result.get("recovery_catalog")
+        state = state_store.update(state, generation=generation)
+        root = str(directory.expanduser().resolve())
+        emit(
+            _result(
+                state=state,
+                generation=result,
+                project=project.to_dict(),
+                workflow=_status_workflow(state, generation, root, project_store),
+            ),
+            json_output=json_output,
+            message=f"PresenterPlan 已保存：{plan['presenter_plan_id']}。",
+        )
+    except LectureCastError as error:
+        fail(error, json_output=json_output)
+    except Exception as exc:
+        _unexpected(exc, json_output=json_output)
+
+
+def _m2_generation_view(
+    *, generation_id: str, updated_at: str, billing: list[dict[str, Any]],
+    manifest_digest: str | None,
+) -> dict[str, Any]:
+    """Build the ready generation view used for the post-M2 status projection
+    and the idempotent re-run. The manifest milestone is always charged (M1 was
+    released before M2); the presenter_plan milestone is charged iff the plan was
+    persisted (create succeeded). ``billing`` is the server-sent charge list on
+    the create path, or a synthetic pair derived from persisted project digests
+    on the idempotent re-run path."""
+    billing_state, resume_available = derive_billing_state(billing)
+    return {
+        "generation_id": generation_id,
+        "status": "ready",
+        "updated_at": updated_at,
+        "billing_state": billing_state,
+        "resume_available": resume_available,
+        "milestone_charges": billing,
+        "manifest_digest": manifest_digest,
+    }
+
+
+def _m2_charges_from_project(project) -> list[dict[str, Any]]:
+    """Synthesize the public charge projection from persisted project digests for
+    the idempotent re-run (the create response is no longer available). Both M1
+    and M2 are charged by construction: manifest_ready was required to enter M2,
+    and the persisted plan proves the M2 create succeeded."""
+    return [
+        {"milestone": "manifest", "artifact_type": "manifest", "status": "charged",
+         "artifact_digest": project.payload["production_manifest_digest"], "cost": 10,
+         "deducted_credits": 10, "last_error_code": None, "completed_at": None},
+        {"milestone": "presenter_plan", "artifact_type": "presenter_plan", "status": "charged",
+         "artifact_digest": project.payload["presenter_plan_digest"], "cost": 10,
+         "deducted_credits": 10, "last_error_code": None, "completed_at": None},
+    ]
+
+
+def _project_in_m2_context(directory: Path) -> bool:
+    """Whether the local project has entered the M2 presenter_plan phase — i.e.
+    a presenter plan was persisted (M2 create billed the presenter_plan credit).
+    Used to suppress the M1 insufficient_credits recovery directive on the
+    resume error path (§2.5: M2 阶段的额度不足不该给 M1 话术).
+
+    The signal is presenter-plan.json existence, not brief avatar: reaching M2
+    requires the manifest charge to have succeeded, so a resume-402 after the
+    plan was persisted can only be about the M2 presenter_plan charge. A
+    photo-avatar project still in M1 (no plan yet) must keep M1 话术 — it is
+    correct for its manifest charge."""
+    try:
+        return ProjectStore(directory).presenter_plan_path.exists()
+    except Exception:
+        # Never let the M2-context check break the error path — fail closed to
+        # the conservative choice (treat as M2 so M1 话术 is suppressed).
+        return True
+
+
 def _recovery_workflow(
     error: LectureCastError,
     catalog: dict[str, Any] | None,
     root: str,
     *,
     keyring: Any | None = None,
+    m2_context: bool = False,
 ) -> dict[str, Any] | None:
     """Present a recovery directive for a failure_kind if the catalog has one
     (tech spec §7.3/§7.4, Host Conformance Contract). Returns None when the
@@ -1274,7 +1535,16 @@ def _recovery_workflow(
 
     The catalog is verified HERE (fail-closed, §3 invariant 2): an unverified
     catalog never drives a directive. `keyring` is injectable for tests and
-    mirrors verify_recovery_catalog_signature's contract."""
+    mirrors verify_recovery_catalog_signature's contract.
+
+    `m2_context` (m2-6 §2.5): in the M2 presenter_plan phase, an
+    insufficient_credits resume-402 must NOT present the M1 base-catalog
+    directive (m1_insufficient_credits — that 话术 belongs to the M1 phase).
+    The provider catalog delivered with the M2 create response has no
+    m1_insufficient_credits key, so the lookup would naturally return None —
+    BUT a persisted BASE catalog (session/generation response) does carry the
+    m1 directive. Suppressing the mapping here closes that hole so M2 always
+    falls through to _resume_error_workflow's generic credit_top_up_required."""
     if catalog is None:
         return None
 
@@ -1285,6 +1555,10 @@ def _recovery_workflow(
 
     from ..recovery import failure_kind_for_error, recover_from_failure
 
+    if m2_context and error.code == "insufficient_credits":
+        # M2 phase insufficient_credits is not the M1 directive. Return None so
+        # the caller falls through to _resume_error_workflow (credit_top_up_required).
+        return None
     # Deterministic error→failure_kind: the explicit server-code mapping first
     # (insufficient_credits → m1_insufficient_credits), then a catalog-driven
     # pass-through — if the error code is itself a directive key in the verified
