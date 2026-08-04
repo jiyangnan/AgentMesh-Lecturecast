@@ -51,7 +51,8 @@
         "transient",
         "unexpected_charge_status",
         "resume_failed",
-        "m2_not_ready"
+        "m2_not_ready",
+        "m3_not_ready"
       ],
       "title": "Code",
       "type": "string"

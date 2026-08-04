@@ -674,3 +674,145 @@ class TestM2CreateCrossRepoContract:
         # which legitimately owns the m1 directive.
         assert "def build_provider_catalog" in server
         assert "def build_base_catalog" in server
+
+
+# === §6 m3: M3 orchestration-plan create path 跨仓契约 ======================
+#
+# m3-3/m3-4 让 server 的 M3 orchestration-plan gate + create-and-charge route 落地。
+# 契约防漂移：
+#   1. server M3 gate (`validate_orchestration_capabilities`) 是独立纯函数：只查
+#      orchestration_plan schema 版本 / own_voice→f5 / photo→m2_charged，绝不引用
+#      M1 的 renderer/tts 旁支或 M2 的 heygen 旁支（§0 Principle 6）。
+#   2. server orchestration route 是 POST + v1.1 envelope（feature-flag gate +
+#      raise_api_error_v1_1），client 的 v1.1 resume 视图能识别 M3 charge 行。
+#   3. orchestration milestone 走既有的 `lecturecast:orchestration:{gid}` 幂等键
+#      / `{gid}:orchestration` external_id 格式（§1.7 统一 shape）。
+
+SERVER_GENERATIONS_SRC = SERVER_ROOT / "app" / "services" / "generations.py"
+
+
+@skip_cross_repo
+class TestM3OrchestrationCrossRepoContract:
+    """§6 m3: M3 gate independent; orchestration route is POST + v1.1; billing shape aligned."""
+
+    def test_server_m3_gate_is_independent_pure_function(self):
+        # The M3 gate checks ONLY §2.6 items: orchestration_plan schema version,
+        # own_voice→f5, photo→m2_charged. A regression that added M1/M2 gates
+        # (renderer, output format, heygen/third_party_processors, consent,
+        # approval) would re-check upstream-locked concerns and break the M3
+        # path for a brief that M1/M2 already cleared. Bound the slice at EOF —
+        # the M3 gate is the last function in generations.py.
+        source = SERVER_GENERATIONS_SRC.read_text(encoding="utf-8")
+        gate = source.split("def validate_orchestration_capabilities", 1)[1]
+        body = gate.split("\ndef ", 1)[0]  # everything up to the next top-level def
+        assert "def validate_orchestration_capabilities" in source
+        # Strip the docstring: it legitimately *mentions* "renderer/voice" only
+        # to explain what the gate does NOT re-check. Assert on the code body so
+        # an explanatory mention cannot trip a field-absence check.
+        if '"""' in body:
+            _, _, body = body.partition('"""')
+            _, _, body = body.partition('"""')
+        # M1-only markers (must not appear in code).
+        assert "renderer" not in body, (
+            "M3 gate must not re-check M1 renderer requirements (§0 Principle 6)"
+        )
+        assert "output_format" not in body, (
+            "M3 gate must not re-check M1 output-format requirements (§0 Principle 6)"
+        )
+        # M2-only markers (must not appear in code).
+        assert "third_party_processors" not in body, (
+            "M3 gate must not re-check M2 HeyGen / third_party_processors (§2.6)"
+        )
+        assert "consent" not in body, (
+            "M3 gate must not re-check M2 approval/consent (§2.6)"
+        )
+        assert "heygen" not in body, (
+            "M3 gate must not reference the HeyGen provider (§2.6)"
+        )
+        # The gate's OWN assertions (must be present).
+        assert "type(m2_charged) is not bool" in body, (
+            "M3 gate lost the non-bool m2_charged fail-closed guard"
+        )
+        assert '"1.1" not in supported_artifact_versions.orchestration_plan' in body, (
+            "M3 gate lost the orchestration_plan schema-version check (①)"
+        )
+        assert 'voice_mode == "own_voice" and "f5" not in capabilities.tts_engines' in body, (
+            "M3 gate lost the own_voice→f5 check (②)"
+        )
+        assert "m3_not_ready" in body, (
+            "M3 gate must raise code=m3_not_ready (not a bare 409)"
+        )
+
+    def test_server_orchestration_route_is_post_v1_1(self):
+        # The M3 create-and-charge route must be POST + v1.1 error envelope
+        # (feature-flag gate + raise_api_error_v1_1), so an M3 409/402 is
+        # parseable by the client's v1.1 error handling (m3_not_ready etc.).
+        server = SERVER_DIRECTOR_PY.read_text(encoding="utf-8")
+        path_idx = server.find('"/director/generations/{generation_id}/orchestration-plan"')
+        assert path_idx != -1, "server orchestration-plan route not found in routes/director.py"
+        head = server[:path_idx]
+        decorator = re.search(r"@router\.\w+\(?", head[::-1][:80][::-1])
+        assert decorator and "post" in decorator.group(0), (
+            "server orchestration-plan route must be POST — it creates + charges"
+        )
+        # The route body (to the next @router decorator) must use the v1.1
+        # envelope and the feature-flag gate.
+        body = server[path_idx:]
+        next_route = body.find("\n@router.")
+        if next_route != -1:
+            body = body[:next_route]
+        assert "raise_api_error_v1_1" in body, (
+            "server orchestration route must use raise_api_error_v1_1 (M3 codes)"
+        )
+        assert "milestone_billing_enabled" in body, (
+            "server orchestration route lost the feature-flag gate"
+        )
+
+    def test_orchestration_billing_shape_matches_server_constants(self):
+        # M3 uses the unified §1.7 idempotency key / external_id shapes — the
+        # same non-manifest pattern M2 uses (lecturecast:{milestone}:{gid} /
+        # {gid}:{milestone}). A regression that gave orchestration a bespoke
+        # shape would break dedup against the server's charge rows.
+        server_billing = SERVER_MILESTONE_BILLING_PY.read_text(encoding="utf-8")
+        assert 'return f"lecturecast:{milestone}:{generation_id}"' in server_billing, (
+            "server idempotency_key_for must produce lecturecast:{milestone}:{gid} "
+            "for orchestration (§1.7)"
+        )
+        assert 'return f"{generation_id}:{milestone}"' in server_billing, (
+            "server external_id_for must produce {gid}:{milestone} for orchestration (§1.7)"
+        )
+        # The orchestration milestone must be reachable in MILESTONE_ORDER for resume.
+        server_ms = re.search(r'MILESTONE_ORDER[^=]*=\s*\(([^)]*)\)', server_billing)
+        assert server_ms and "orchestration" in [
+            x.strip().strip('"') for x in server_ms.group(1).split(",")
+        ], "server MILESTONE_ORDER missing orchestration (resume would skip it)"
+
+    def test_client_v1_1_envelope_vocabulary_has_m3_code(self):
+        # The M3 gate raises code=m3_not_ready over the v1.1 envelope. The
+        # client vendored bundle must accept that code or a M3 409 would blow up
+        # client-side envelope parsing. This is the byte-level check that the
+        # re-vendor in m3-5 actually took.
+        envelope = json.loads(
+            (CLIENT_V11_SCHEMAS / "error-envelope.schema.json").read_text()
+        )
+        codes = _enum_values(envelope)
+        assert "m3_not_ready" in codes, (
+            "client v1.1 error-envelope does not include m3_not_ready — re-vendor "
+            "from lecturecast-server protocol/v1.1 is required"
+        )
+
+
+def _enum_values(schema: object) -> set[str]:
+    """Collect all values named in any `enum` array in the schema (the error
+    codes are declared as a JSON enum in error-envelope.schema.json)."""
+    values: set[str] = set()
+    if isinstance(schema, dict):
+        for key, value in schema.items():
+            if key == "enum" and isinstance(value, list):
+                values.update(item for item in value if isinstance(item, str))
+            else:
+                values |= _enum_values(value)
+    elif isinstance(schema, list):
+        for item in schema:
+            values |= _enum_values(item)
+    return values
