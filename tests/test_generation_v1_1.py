@@ -940,3 +940,83 @@ def test_resume_m2_context_402_uses_generic_top_up(monkeypatch, tmp_path: Path):
     # The M2 context suppresses the m1 directive → generic top-up 话术.
     assert body["workflow"]["phase"] == "credit_top_up_required"
     assert body["workflow"]["next_action"]["id"] == "director.generation.resume"
+
+
+# ---- §2.6 m3-6d: M3-context recovery suppression ----------------------------
+#
+# M3 shares the M2 suppression signal (`_project_in_m2_context` now treats a
+# persisted orchestration-plan.json as an M3 context). In the M3 phase a
+# resume-402 (insufficient_credits) must NOT present the M1 base-catalog
+# directive — it falls through to the generic credit_top_up_required.
+
+
+def test_project_in_m3_context_true_when_orchestration_plan_persisted(tmp_path: Path):
+    """m3-6d: a project with a persisted orchestration-plan.json is in M3 context —
+    `_project_in_m2_context` must also fire on the orchestration-plan signal."""
+    import lecturecast.commands.director as d
+    from lecturecast.project import ProjectStore
+
+    store = ProjectStore(tmp_path)
+    store.init(name="M3ctx")
+    (store.directory / "orchestration-plan.json").write_text("{}", encoding="utf-8")
+
+    assert d._project_in_m2_context(tmp_path) is True
+
+
+def test_resume_m3_context_402_uses_generic_top_up(monkeypatch, tmp_path: Path):
+    """End-to-end: after an M3 create persisted the orchestration plan, a
+    resume-402 must emit the generic credit_top_up_required — NOT the M1
+    m1_insufficient_credits directive even when a base catalog is present."""
+    from typer.testing import CliRunner
+    from lecturecast.cli import app
+    from lecturecast.director import DirectorStateStore
+
+    monkeypatch.setattr("lecturecast.commands.director.require_commercial_access", lambda: None)
+    monkeypatch.setattr("lecturecast.commands.director.require_project_host_workflow", lambda *a, **kw: None)
+    monkeypatch.setenv("LECTURECAST_API_KEY", "test_key")
+
+    key_id = "recovery_m3_test_v1"
+    ring, private_key = _signed_catalog_keyring(key_id)
+    catalog = _signed_catalog_for("m1_insufficient_credits", key_id, private_key)
+
+    import lecturecast.commands.director as d
+    monkeypatch.setattr(
+        d, "_verify_catalog_signature",
+        lambda c, keyring=None: _verify_with(key_id, ring, c),
+    )
+
+    store = DirectorStateStore(tmp_path)
+    store.project.init(name="M3resume")
+    state = store.create(
+        server_url="https://api.test",
+        session={"session_id": "s1", "status": "confirmed", "brief_version": 1,
+                 "catalog_version": "cv", "updated_at": _NOW},
+        adapter_kind="codex", adapter_version="1.0.0", protocol_version="1.1",
+    )
+    state = store.update(state, generation_id="gen_1", generation_status="queued")
+    # Persist the orchestration plan (the M3 create signal) + a base catalog.
+    from lecturecast.project import ProjectStore
+    pstore = ProjectStore(tmp_path)
+    (pstore.directory / "orchestration-plan.json").write_text("{}", encoding="utf-8")
+    state = store.update(state, generation={
+        "generation_id": "gen_1", "status": "queued", "updated_at": _NOW,
+        "billing_state": "awaiting_credits", "resume_available": True,
+        "recovery_catalog": catalog,
+    })
+
+    class _ErrorCapture:
+        def request(self, *, method, url, headers, payload, timeout):
+            return 402, {
+                "detail": {"code": "insufficient_credits", "message": "余额不足。",
+                           "next_action": "充值后重试。", "retryable": False},
+            }
+
+    d._make_client = lambda _url: DirectorClient("https://api.test", transport=_ErrorCapture())
+
+    result = CliRunner().invoke(app, ["director", "generation-resume", str(tmp_path), "--json"])
+
+    assert result.exit_code == 1
+    body = json.loads(result.output)
+    # The M3 context suppresses the m1 directive → generic top-up 话术.
+    assert body["workflow"]["phase"] == "credit_top_up_required"
+    assert body["workflow"]["next_action"]["id"] == "director.generation.resume"

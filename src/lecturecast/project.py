@@ -15,8 +15,8 @@ from typing import Any, Iterator, Mapping
 from .config import PROJECT_DIRECTORY, PROJECT_SCHEMA_VERSION
 from .errors import LectureCastError
 from .file_lock import exclusive_file_lock
-from .manifest import verify_manifest, verify_presenter_plan_signature
-from .protocol import ClientCapabilities, CreativeBrief, PresenterPlanV1_1, ProductionManifest, canonical_digest, parse_client_capabilities, parse_creative_brief
+from .manifest import PublicKeyRing, verify_manifest, verify_orchestration_plan_signature, verify_presenter_plan_signature
+from .protocol import ClientCapabilities, CreativeBrief, OrchestrationPlanV1_1, PresenterPlanV1_1, ProductionManifest, canonical_digest, parse_client_capabilities, parse_creative_brief
 from .timing import narration_timing_issues
 
 
@@ -137,6 +137,7 @@ class ProjectStore:
         self.capabilities_path = self.directory / "client-capabilities.json"
         self.manifest_path = self.directory / "production-manifest.json"
         self.presenter_plan_path = self.directory / "presenter-plan.json"
+        self.orchestration_plan_path = self.directory / "orchestration-plan.json"
         self.manifest_approval_path = self.directory / "manifest-approval.json"
         self.overrides_path = self.directory / "local-overrides.json"
         self.assets_directory = self.directory / "assets"
@@ -174,6 +175,7 @@ class ProjectStore:
                 "capability_digest": None,
                 "production_manifest_digest": None,
                 "presenter_plan_digest": None,
+                "orchestration_plan_digest": None,
                 "created_at": now,
                 "updated_at": now,
             }
@@ -257,6 +259,17 @@ class ProjectStore:
                     code="manifest_incompatible",
                     message="PresenterPlan 原件已被修改。",
                     next_action="请恢复云端签发的原始 PresenterPlan。",
+                )
+        expected_orchestration_plan = state.payload.get("orchestration_plan_digest")
+        if expected_orchestration_plan is not None:
+            orchestration_plan = OrchestrationPlanV1_1.model_validate(
+                _read_object(self.orchestration_plan_path)
+            )
+            if canonical_digest(orchestration_plan) != expected_orchestration_plan:
+                raise LectureCastError(
+                    code="manifest_incompatible",
+                    message="OrchestrationPlan 原件已被修改。",
+                    next_action="请恢复云端签发的原始 OrchestrationPlan。",
                 )
 
     @staticmethod
@@ -354,7 +367,7 @@ class ProjectStore:
         plan: PresenterPlanV1_1 | dict[str, Any],
         *,
         expected_revision: int,
-        keyring: "PublicKeyRing | None" = None,
+        keyring: PublicKeyRing | None = None,
     ) -> ProjectState:
         """Persist a cloud-signed PresenterPlan (M2) with integrity checks.
         The plan must bind to the currently stored ProductionManifest digest AND
@@ -394,6 +407,63 @@ class ProjectStore:
                 state,
                 status="presenter_plan_ready",
                 presenter_plan_digest=canonical_digest(document),
+            )
+
+    def save_orchestration_plan(
+        self,
+        plan: OrchestrationPlanV1_1 | dict[str, Any],
+        *,
+        expected_revision: int,
+        keyring: PublicKeyRing | None = None,
+    ) -> ProjectState:
+        """Persist a cloud-signed OrchestrationPlan (M3) with integrity checks.
+        The plan must bind to the currently stored ProductionManifest digest AND
+        ClientCapabilities digest, and verify against the release keyring.
+        Written read-only (0o444), overwrite-protected, idempotent on same
+        bytes. `presenter_plan_digest` inside the plan may be None (none +
+        own_voice path has no M2) and is not asserted here."""
+        document = (
+            plan if isinstance(plan, OrchestrationPlanV1_1)
+            else OrchestrationPlanV1_1.model_validate(plan)
+        )
+        serialized = _json_bytes(document.model_dump())
+        with self._locked():
+            state = self._load_unlocked()
+            self._check_revision(state, expected_revision)
+            if self.orchestration_plan_path.exists():
+                if self.orchestration_plan_path.read_bytes() == serialized:
+                    return state
+                raise LectureCastError(
+                    code="generation_conflict",
+                    message="OrchestrationPlan 原件不可覆盖。",
+                    next_action="保留原件；如需重新生成请联系服务器确认。",
+                )
+            stored_manifest_digest = state.payload["production_manifest_digest"]
+            if (
+                stored_manifest_digest is None
+                or document.payload["production_manifest_digest"] != stored_manifest_digest
+            ):
+                raise LectureCastError(
+                    code="manifest_incompatible",
+                    message="OrchestrationPlan 没有绑定当前已释放的 ProductionManifest。",
+                    next_action="先确认 M1 Manifest 已保存并验证，再请求 OrchestrationPlan。",
+                )
+            stored_capability_digest = state.payload["capability_digest"]
+            if (
+                stored_capability_digest is None
+                or document.payload["capability_digest"] != stored_capability_digest
+            ):
+                raise LectureCastError(
+                    code="manifest_incompatible",
+                    message="OrchestrationPlan 没有绑定当前保存的 ClientCapabilities。",
+                    next_action="用当前 capability digest 重新请求 OrchestrationPlan。",
+                )
+            verify_orchestration_plan_signature(document, keyring=keyring)
+            atomic_write_json(self.orchestration_plan_path, document.model_dump(), mode=0o444)
+            return self._advance(
+                state,
+                status="orchestration_plan_ready",
+                orchestration_plan_digest=canonical_digest(document),
             )
 
     def save_overrides(
