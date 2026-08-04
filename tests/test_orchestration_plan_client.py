@@ -456,6 +456,31 @@ def test_status_workflow_pure_m1_project_never_offers_m3(
     assert wf["next_action"]["id"] == "manifest.review"
 
 
+def test_m2_charges_from_project_includes_orchestration_when_m3_done(
+    tmp_path: Path,
+) -> None:
+    """UAT Path D idempotent re-run regression: after M3 the project carries an
+    orchestration_plan_digest, so the M2 re-run projection (`_m2_charges_from_project`)
+    must append the orchestration charge. Without it `_orchestration_plan_charged`
+    is always False and the post-M2 workflow wrongly re-offers a completed M3
+    (`orchestration_plan_create_required`) instead of `script_review_required`."""
+    from lecturecast.commands.director import _m2_charges_from_project
+
+    store, state = _release_manifest_project(tmp_path)
+    key_id = "m3_key_v1"
+    ring, private_key = _keyring_for(key_id)
+    plan = _sign_plan(_plan_bound_to_fixture(key_id=key_id), private_key)
+    state = store.save_orchestration_plan(
+        plan, expected_revision=state.revision, keyring=ring,
+    )
+
+    charges = _m2_charges_from_project(store.load())
+    milestones = [c["milestone"] for c in charges]
+    assert "orchestration" in milestones
+    orchestration = next(c for c in charges if c["milestone"] == "orchestration")
+    assert orchestration["status"] == "charged"
+
+
 def test_status_workflow_awaiting_credits_still_beats_m3(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

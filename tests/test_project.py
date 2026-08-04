@@ -8,8 +8,10 @@ from pathlib import Path
 
 import pytest
 
+from lecturecast.capabilities import canonical_digest
 from lecturecast.errors import LectureCastError
 from lecturecast.project import ProjectStore, atomic_write_json
+from lecturecast.protocol import parse_client_capabilities
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
@@ -49,6 +51,48 @@ def test_project_persists_brief_manifest_and_resumes_across_processes(tmp_path: 
     resumed = json.loads(result.stdout)
 
     assert resumed == with_manifest.to_dict()
+
+
+def test_save_capabilities_rejects_digest_rewrite_after_manifest_bound(
+    tmp_path: Path,
+) -> None:
+    """§5.5e5c-d UAT Path D bug: once the Manifest is released it binds the
+    capability_digest, and the Manifest is immutable (0o444). A later
+    save_capabilities with a DIFFERENT digest (e.g. the B1 stale guard dropped a
+    configured-heygen snapshot and re-captured without the key) must fail-closed
+    instead of silently rewriting the project index and breaking the chain to the
+    released Manifest. Same digest is idempotent; different digest is rejected."""
+    store = ProjectStore(tmp_path)
+    state = store.init(name="Bound capabilities")
+    cap = _fixture("client-capabilities-v1.json")
+    state = store.save_capabilities(cap, expected_revision=state.revision)
+    state = store.save_manifest(
+        _fixture("production-manifest-v1.json"), expected_revision=state.revision
+    )
+
+    # Same bytes -> idempotent (allowed, matches manifest binding).
+    state = store.save_capabilities(cap, expected_revision=state.revision)
+    assert store.load().payload["capability_digest"] == canonical_digest(
+        parse_client_capabilities(cap)
+    )
+
+    # Different digest (host re-captured after key loss) -> reject, no rewrite.
+    changed = json.loads(json.dumps(cap))
+    changed["adapter"] = {"kind": "codex", "version": "1.1.0"}
+    with pytest.raises(LectureCastError, match="已绑定"):
+        store.save_capabilities(changed, expected_revision=state.revision)
+
+    # The project index still binds the ORIGINAL digest + manifest is untouched.
+    reloaded = store.load().payload
+    assert reloaded["capability_digest"] == canonical_digest(
+        parse_client_capabilities(cap)
+    )
+    assert reloaded["production_manifest_digest"] == canonical_digest(
+        _fixture("production-manifest-v1.json")
+    )
+    assert store.capabilities_path.read_bytes() == (
+        json.dumps(cap, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode()
 
 
 def test_manifest_is_idempotent_but_cannot_be_overwritten(tmp_path: Path) -> None:
