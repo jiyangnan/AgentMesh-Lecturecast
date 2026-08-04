@@ -801,6 +801,137 @@ class TestM3OrchestrationCrossRepoContract:
             "from lecturecast-server protocol/v1.1 is required"
         )
 
+    def test_client_orchestration_plan_path_matches_server_route(self):
+        # Client DirectorClient.create_orchestration_plan POSTs
+        # /director/generations/{id}/orchestration-plan — the exact path the
+        # server registers. A path/method drift would 404 the M3 create.
+        client = CLIENT_DIRECTOR_SRC.read_text(encoding="utf-8")
+        body = client.split("def create_orchestration_plan", 1)[1].split("def ", 1)[0]
+        assert re.search(
+            r'url=f".*?/director/generations/\{generation_id\}/orchestration-plan"', body
+        ), "client create_orchestration_plan URL not found in director.py"
+        assert re.search(r'method="POST"', body), (
+            "client create_orchestration_plan must POST the M3 create-and-charge route"
+        )
+        server = SERVER_DIRECTOR_PY.read_text(encoding="utf-8")
+        path_idx = server.find('"/director/generations/{generation_id}/orchestration-plan"')
+        assert path_idx != -1, (
+            "server orchestration-plan route not found in routes/director.py"
+        )
+        head = server[:path_idx]
+        decorator = re.search(r"@router\.\w+\(?", head[::-1][:80][::-1])
+        assert decorator and "post" in decorator.group(0), (
+            "server orchestration-plan route must be POST — the client POSTs it"
+        )
+
+    def test_client_orchestration_plan_has_no_approval(self):
+        # 裁决 B: M3 carries NO approval credential — neither the client method
+        # signature nor its HTTP payload may contain an approval field. A server
+        # CreateOrchestrationPlanIn that added `approval` would reject (and a
+        # client that sent one would leak a fake dependency).
+        client = CLIENT_DIRECTOR_SRC.read_text(encoding="utf-8")
+        body = client.split("def create_orchestration_plan", 1)[1].split("def ", 1)[0]
+        assert "approved" not in body, (
+            "client create_orchestration_plan must NOT carry an approval param (裁决 B)"
+        )
+        assert '"approval"' not in body, (
+            "client create_orchestration_plan payload must NOT include approval (裁决 B)"
+        )
+        server = (SERVER_ROOT / "app" / "schemas" / "presenter.py").read_text(
+            encoding="utf-8"
+        )
+        sbody = server.split("class CreateOrchestrationPlanIn", 1)[1].split("class ", 1)[0]
+        # Strip the docstring — it legitimately *mentions* "approval" only to
+        # explain why M3 has none (裁决 B). Assert on the field declarations.
+        if '"""' in sbody:
+            _, _, sbody = sbody.partition('"""')
+            _, _, sbody = sbody.partition('"""')
+        assert "approval" not in sbody, (
+            "server CreateOrchestrationPlanIn must NOT carry an approval field (裁决 B)"
+        )
+        assert "approved" not in sbody, (
+            "server CreateOrchestrationPlanIn must NOT carry an approved field (裁决 B)"
+        )
+        # The payload is exactly {capabilities}.
+        assert re.search(r'payload=\{"capabilities": capabilities\}', body), (
+            "client create_orchestration_plan payload must be exactly "
+            "{capabilities} (裁决 B)"
+        )
+
+    def test_server_orchestration_envelope_returns_base_catalog(self):
+        # M3 has NO provider dependency, so its create response must return the
+        # BASE recovery catalog (the provider increment is M2-only). A regression
+        # that attached a provider catalog to M3 would leak a directive into a
+        # context where the provider is not involved.
+        server = (SERVER_ROOT / "app" / "schemas" / "presenter.py").read_text(
+            encoding="utf-8"
+        )
+        sbody = server.split("class OrchestrationPlanOut", 1)[1].split("class ", 1)[0]
+        assert "recovery_catalog" in sbody, (
+            "server OrchestrationPlanOut must expose recovery_catalog"
+        )
+        # No provider-catalog field on the M3 envelope (presenter vs orchestration).
+        assert "provider_catalog" not in sbody, (
+            "server OrchestrationPlanOut must not carry a provider catalog (M2-only)"
+        )
+
+    def test_client_m3_context_recovery_suppression(self):
+        # M3's create response carries the BASE recovery catalog (m3-4:
+        # orchestration_plan.py get_base_catalog — M3 has no provider). The base
+        # catalog DOES carry the m1_insufficient_credits directive (it is the M1
+        # blocker catalog). So an M3-context resume-402 would naively present the
+        # M1 话术 — the client must suppress the m1 mapping in the M3 context
+        # exactly as it does in the M2 context (m3-6 §2.5). This contract pins
+        # BOTH sides so the mismatch cannot silently reappear:
+        #   server: M3 create returns the base catalog (m1 directive included),
+        #   client: _project_in_m2_context also treats orchestration-plan.json as
+        #           an entered plan phase, and _recovery_workflow suppresses the
+        #           m1 mapping there, falling through to credit_top_up_required.
+        server_plan = (SERVER_ROOT / "app" / "services" / "orchestration_plan.py").read_text(
+            encoding="utf-8"
+        )
+        # ① M3 create returns the BASE catalog — not a provider catalog.
+        assert "get_base_catalog()" in server_plan, (
+            "server M3 create must return the base recovery catalog (M3 has no "
+            "provider) — otherwise there is no m1 directive to suppress"
+        )
+        assert "get_provider_catalog()" not in server_plan, (
+            "server M3 create must NOT return the provider catalog (M2-only)"
+        )
+        # ② The base catalog legitimately owns the m1 directive (the suppression
+        #    is what keeps it out of M2/M3 contexts, not its absence).
+        server_catalog = SERVER_RECOVERY_CATALOG_PY.read_text(encoding="utf-8")
+        base_block = server_catalog.split("def _base_directives", 1)[1]
+        base_block = base_block.split("def ", 1)[0]
+        assert "m1_insufficient_credits" in base_block, (
+            "server base catalog must carry the m1_insufficient_credits directive — "
+            "the client suppression (not catalog omission) is the contract"
+        )
+        # ③ Client: orchestration-plan.json counts as an entered plan phase for
+        #    the M1-directive suppression (the context check lives in the CLI
+        #    layer, commands/director.py).
+        client = CLIENT_DIRECTOR_CMD.read_text(encoding="utf-8")
+        context_body = client.split("def _project_in_m2_context", 1)[1].split("def ", 1)[0]
+        assert "orchestration_plan_path.exists()" in context_body, (
+            "client _project_in_m2_context must treat orchestration-plan.json as an "
+            "entered plan phase (M3 context) — otherwise an M3 resume-402 leaks "
+            "the M1 话术"
+        )
+        assert "presenter_plan_path.exists()" in context_body, (
+            "client _project_in_m2_context lost the presenter-plan.json check"
+        )
+        # ④ Client: _recovery_workflow suppresses the m1 mapping in plan context.
+        recovery_body = client.split("def _recovery_workflow", 1)[1].split("def ", 1)[0]
+        assert 'if m2_context and error.code == "insufficient_credits":' in recovery_body, (
+            "client _recovery_workflow must suppress the insufficient_credits→"
+            "m1_insufficient_credits mapping in plan context"
+        )
+        # ⑤ Client: the suppression falls through to the generic top-up 话术.
+        assert "credit_top_up_required" in client, (
+            "client _resume_error_workflow must offer credit_top_up_required for the "
+            "M3-context 402 (the fall-through of the suppressed directive)"
+        )
+
 
 def _enum_values(schema: object) -> set[str]:
     """Collect all values named in any `enum` array in the schema (the error

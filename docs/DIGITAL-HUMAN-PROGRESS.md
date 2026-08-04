@@ -155,16 +155,35 @@ Codex 会话 ID（e5b0c3b，6 轮）: `019fa2e9-0a36-7f50-ab1b-0e223a366540`；e
 
 测试：client **1272 passed**（m2-6 新增 30：CLI 6 + client 15 + recovery 6 + contracts 3）+ ruff clean。
 
-## 下次会话接续点（交接）—— M2 主线 ✅ 完成 → 下一块 **M3 orchestration（OrchestrationPlan）**
+## M3 主线（OrchestrationPlan）全部完成（2026-08-04）
 
-**M3 定义（spec §1.2/§4）**：OrchestrationPlan = ffmpeg 滤镜模板 + timing 占位契约 + BGM + 倍速 +（若 own_voice）F5 Voice Orchestration。effective_avatar ∈ {photo, cartoon} 时随 M2 产生（首版 cartoon 隐藏）。digest 链：`payload=production_manifest_digest(=M1)+presenter_plan_digest(=M2 或 NULL)+capability+catalog`；`presenter_plan_digest=NULL` ⇔ 该 generation 不存在 M2 行。**只签算法/滤镜模板 ID/{DELAY} 占位契约/BGM 参数，不签绝对时间线**——measured timeline 由 client 产生，绑定 `orchestration_plan_digest`。idempotency_key = `"lecturecast:orchestration:{gid}"`，external_id = `"{gid}:orchestration"`。
+三仓 M3 里程碑交付链已闭环（spec §1.2 适用性矩阵无 M4，M3 为最后里程碑）。每条对应设计稿在 server/client `docs/`：
 
-**M3 gate（spec §2.6 调用合同）**：`validate_orchestration_capabilities` —— orchestration_plan schema version；`voice_mode=own_voice` → `f5` in tts_engines；photo 路径还要求 **M2 已 charged/releasable**。M3 create/resume service 在 **OrchestrationPlan 生成、签名、扣费前**调 gate；每次请求携带/刷新当前 capabilities。
+| 子步 | 内容 | 审阅 | commit |
+|------|------|------|--------|
+| m3-3 | `validate_orchestration_capabilities` gate（schema 版本；own_voice → `f5` in tts_engines；photo 路径要求 M2 已 charged/releasable）+ `OrchestrationPlanService.create_orchestration_plan`（gate → 幂等建 charge 行 → 派生 OrchestrationPlanV1_1 → 签名 → commit_ready_artifact，`presenter_plan_digest=NULL` ⇔ 无 M2 行）| Kimi LOCKABLE | server |
+| m3-4 | M3 同步扣费（复用 reclaim_for_sync_charge CAS）+ `POST /director/generations/{gid}/orchestration-plan` route + `OrchestrationPlanOut`（billing + **base** recovery_catalog，M3 无 provider 依赖）| Kimi LOCKABLE | server |
+| m3-5 | M3 awaiting_credits resume 回归（resume 协调器已通用，零产品代码改动）+ 跨仓契约 + 修 m3-3/4 的 P2 测试缺口（4 项）+ P3 清理（5 项）| Kimi LOCKABLE（769 passed）| server `bbb63fc` + `057ef3b`；client `c677baf`（re-vendor v1.1 error-envelope m3_not_ready + M3 contracts，1276 passed）|
+| m3-6 | client M3 create 消费：`DirectorClient.create_orchestration_plan`（HTTP，payload 仅 `{capabilities}`，**无 approval** 裁决 B）+ `ProjectStore.save_orchestration_plan`（digest 绑定 + 0o444 + 幂等）+ `verify_orchestration_plan_signature`（Ed25519 + created_at 窗口）+ `generation-orchestration-plan` CLI 命令（**无 --yes 参数**）/ `_status_workflow` M3 分支 / photo→M2-charged 前置（gate ③）+ **M3 上下文 recovery 抑制**（`_project_in_m2_context` 同查 orchestration-plan.json → 402 → 通用 `credit_top_up_required`）+ recovery_catalog 持久化 v1.3 state + 跨仓契约（含 `test_client_m3_context_recovery_suppression`）| Kimi LOCKABLE（1308 passed）| client 未 commit |
+
+**关键不变量（改动时不能放松）**：
+- **M3 无 approval（裁决 B）**：M3 = ffmpeg 滤镜 + BGM + 倍速 +（own_voice）F5 本地合成，无第三方媒体传输。create payload 只有 `{capabilities}`，CLI 无 `--yes`。跨仓契约锁死 server `CreateOrchestrationPlanIn` 声明也无 approval。
+- **digest 链**：OrchestrationPlan `production_manifest_digest` = M1.artifact_digest（DB 权威链根）；`capability_digest` 绑 v1.1 caps；`presenter_plan_digest=NULL` ⇔ 该 generation 无 M2 行（own_voice 合法）。client 落盘 0o444 + 验签 + digest-bind 拒篡改。
+- **M3 上下文 recovery 抑制**：M3 阶段 resume-402 `insufficient_credits` 不得给 m1 话术 → 通用 `credit_top_up_required`。信号 = orchestration-plan.json 存在（与 presenter-plan.json 并列，`_project_in_m2_context` 同时检查）。
+- **photo 路径前置**：M3 create 前 photo avatar 必须已有 M2 charged（`presenter-plan.json` 缺失 → `m3_not_ready`，fail-closed 先于任何网络调用）。
+- **幂等**：client 落盘 short-circuit（orchestration-plan.json 存在即不二次调用，无二次扣费）；server 幂等返回既有 plan。
+
+测试：client **1308 passed**（m3-6 新增 32：client 19 + CLI 7 + recovery 2 + contracts 4；含 Kimi P1 photo 正例测试 + P2 跨仓 recovery 抑制契约；`save_presenter_plan` 引入的 `PublicKeyRing` F821 一并修净）。
+
+## 下次会话接续点（交接）—— M3 主线 ✅ 实现完成 → 下一步 **UAT 验收**
+
+**当前状态**：M3 三仓主线全部实现 + 测试全绿（server 769 passed locked；client **1308 passed**）。client m3-6 Kimi 审阅（`bgwik7fx8`）已处理完毕：P1 photo 门禁修复 + 正例测试、P2 跨仓契约测试补齐、P3 doc/命名清理全部完成 → **LOCKABLE**，待 commit。
 
 **下一步动作**：
-1. server 调研：`validate_orchestration_capabilities` 现状（M2 gate 旁支）、OrchestrationPlan 派生所需（M1 artifact + M2 plan digest + capabilities）、M3 charge 行创建/扣费（复用 m2-3/m2-4 的 PresenterPlanService 模式）、M3 resume（m2-5 已证 resume 协调器通用）。
-2. 盲预测 → 设计稿（server docs/）→ RED-first 实现 + 测试 → Kimi/Codex 审 → lock → commit。
-3. 跨仓契约：M3 gate 独立（server `validate_orchestration_capabilities` 零引用旁支）、orchestration idempotency_key/external_id 格式、client M3 消费（m2-6 模式）。
+1. commit client m3-6（client 分支 `feat/digital-human-protocol-v1_1`）。
+2. **UAT 验收**（spec §1.2 矩阵覆盖：none+stock / none+own_voice / none+stock+bgm / photo 全链路）：端到端跑通 M1 →（photo）M2 → M3 的 create + 验签 + digest 链 + 幂等 + recovery 抑制。
+3. UAT 发现的问题 → 修 → 回归 → 收尾。
 
-**恢复操作**：`cd ~/AgentMesh-Lecturecast && git log --oneline -4`；`UV_CACHE_DIR=/tmp/lc-uv-cache uv run --project . pytest -c pyproject.toml -q` → 应 1272 passed。
+**恢复操作**：`cd ~/AgentMesh-Lecturecast && git log --oneline -4`；`.venv/bin/python -m pytest tests/ -q` → 应 1308 passed。m3-6 设计稿：`docs/m3-6-client-create-design.md`（LOCKABLE）。
+
 

@@ -18,7 +18,7 @@ from .config import (
 )
 from .errors import LectureCastError
 from .project import ProjectStore, atomic_write_json
-from .protocol import CreativeBrief, DecisionCardSet, ManifestGenerationOutV1_1, PresenterPlanV1_1, ProductionManifest
+from .protocol import CreativeBrief, DecisionCardSet, ManifestGenerationOutV1_1, OrchestrationPlanV1_1, PresenterPlanV1_1, ProductionManifest
 from .protocol.models import ProtocolValidationError
 from .protocol.models import documents_for_protocol_version
 
@@ -555,6 +555,53 @@ class DirectorClient:
         if status >= 400:
             raise self._error(status, document, protocol_version=protocol_version)
         return self._presenter_plan_out(document, protocol_version=protocol_version)
+
+    @classmethod
+    def _orchestration_plan_out(
+        cls, document: dict[str, Any], *, protocol_version: str = "1.0"
+    ) -> dict[str, Any]:
+        """Validate the M3 create-and-charge response envelope (OrchestrationPlanOut).
+        v1.1-only: requires the signed plan + a milestone billing projection.
+        Fail-closed — never return an envelope whose fields are unvalidated.
+        Mirrors `_presenter_plan_out`; M3 has no provider increment (base catalog)."""
+        try:
+            if not isinstance(document.get("orchestration_plan"), dict):
+                raise TypeError("orchestration_plan")
+            if not isinstance(document.get("billing"), list):
+                raise TypeError("billing")
+            if protocol_version == "1.1":
+                OrchestrationPlanV1_1.model_validate(document["orchestration_plan"])
+            recovery_catalog = document.get("recovery_catalog")
+            if recovery_catalog is not None and not isinstance(recovery_catalog, dict):
+                raise TypeError("recovery_catalog")
+        except (TypeError, ProtocolValidationError) as exc:
+            raise cls._invalid_response(type(exc).__name__) from None
+        return document
+
+    def create_orchestration_plan(
+        self,
+        generation_id: str,
+        *,
+        capabilities: dict[str, Any],
+        protocol_version: str = "1.0",
+    ) -> dict[str, Any]:
+        """POST /director/generations/{id}/orchestration-plan — M3 create-and-charge.
+        Carries the current capabilities snapshot (re-validated by the M3 gate).
+        No approval field: M3 is local ffmpeg/F5 orchestration with no third-party
+        media transfer (裁决 B), so there is no independent risk to confirm."""
+        status, document = self.transport.request(
+            method="POST",
+            url=f"{self.server_url}/director/generations/{generation_id}/orchestration-plan",
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Accept": "application/json",
+            },
+            payload={"capabilities": capabilities},
+            timeout=self.timeout,
+        )
+        if status >= 400:
+            raise self._error(status, document, protocol_version=protocol_version)
+        return self._orchestration_plan_out(document, protocol_version=protocol_version)
 
 
 @dataclass(frozen=True)
