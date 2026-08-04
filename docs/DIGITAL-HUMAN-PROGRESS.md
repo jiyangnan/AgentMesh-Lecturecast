@@ -131,3 +131,40 @@ Codex e5b0c3c 会话: `019fb840-a93b-73e1-b56c-a29b07a15e3d`（含 c1/c2/c3 全�
 
 Codex 会话 ID（e5b0c3b，6 轮）: `019fa2e9-0a36-7f50-ab1b-0e223a366540`；e5b0c3c 建议开新 session。
 
+---
+
+## M2 主线（PresenterPlan）全部完成（2026-08-04）
+
+三仓 M2 里程碑交付链已闭环，每条对应设计稿在 server/client `docs/`：
+
+| 子步 | 内容 | 审阅 | commit |
+|------|------|------|--------|
+| m2-1 | M1 worker 交付补写 manifest artifact 行（digest 链根；`_commit_manifest_artifact`，byte-consistency + billing flag 单次读 + 12 轮审计）| round-12 LOCKABLE（断网转 Kimi + 独立逐窗口）| `812d880`（server）|
+| m2-2 | `validate_presenter_capabilities` gate（五项 fail-closed：schema 版本/HeyGen configured/M2 approval/consent/§1.5 链）+ `M2Approval` schema + `m2_not_ready` 进 v1.1 词表 | Kimi round-1 LOCKABLE | `3322b62`（server）|
+| m2-3 | `PresenterPlanService.create_presenter_plan`（gate → 幂等建 charge 行 → 派生 PresenterPlanV1_1 → 签名 → commit_ready_artifact）| Kimi round-2 LOCKABLE | `5deabc5`（server）|
+| m2-4 | M2 同步扣费（reclaim_for_sync_charge CAS + 锁内 deduct/apply + 锁外映射）+ `POST /director/generations/{gid}/presenter-plan` route + `PresenterPlanOut`（billing + provider recovery_catalog）| Kimi round-1 LOCKABLE | 见 server |
+| m2-5 | M2 awaiting_credits resume 回归（resume 协调器已通用，无产品代码改动）+ 4 跨仓契约 + 修 m2-2 引入的 3 个 client 漂移（re-vendor + M1 gate slice 边界）| Kimi round-1 LOCKABLE | `d19b758`（client）|
+| m2-6 | client M2 create 消费：`DirectorClient.create_presenter_plan`（HTTP）+ `ProjectStore.save_presenter_plan` + `verify_presenter_plan_signature`（created_at 窗口）+ `generation-presenter-plan` CLI 命令（`--yes` 门禁/幂等/D13 payload omission guard）+ `_status_workflow` M2 分支 + **M2 上下文 recovery 抑制**（`_recovery_workflow` 加 `m2_context`，provider catalog 无 m1 directive → 402 → 通用 `credit_top_up_required`）+ 3 跨仓 M2 create 契约 | Kimi LOCK-review PASS（5 疑点全裁决非 blocker）| `86fec2b` + `b39d4cd`（client）|
+
+**关键不变量（改动时不能放松）**：
+- **M2 approval 凭证永不落库**：`{approved: bool, disclosure_version: "heygen-transfer-2026-07-27"}` 只随 request 上传，client 默认 `--yes` 才 approved=true（cost 门禁）。
+- **digest 链**：PresenterPlan `production_manifest_digest` = M1.artifact_digest（DB 权威链根）；`capability_digest` 绑 v1.1 caps；client 落盘 0o444 + 验签 + digest-bind 拒篡改。
+- **M2 上下文 recovery 抑制**：M2 阶段 resume-402 `insufficient_credits` 不得给 m1 话术 → 落到通用 `credit_top_up_required`。信号 = `presenter-plan.json` 存在（fail-closed 视为 M2）。
+- **provider catalog 不含 m1 directive**（跨仓契约锁死）：server `_provider_heygen_directives` 无 `m1_insufficient_credits`。
+- **幂等**：client 落盘 short-circuit（presenter-plan.json 存在即不二次调用，无二次扣费）；server 幂等返回既有 plan。
+
+测试：client **1272 passed**（m2-6 新增 30：CLI 6 + client 15 + recovery 6 + contracts 3）+ ruff clean。
+
+## 下次会话接续点（交接）—— M2 主线 ✅ 完成 → 下一块 **M3 orchestration（OrchestrationPlan）**
+
+**M3 定义（spec §1.2/§4）**：OrchestrationPlan = ffmpeg 滤镜模板 + timing 占位契约 + BGM + 倍速 +（若 own_voice）F5 Voice Orchestration。effective_avatar ∈ {photo, cartoon} 时随 M2 产生（首版 cartoon 隐藏）。digest 链：`payload=production_manifest_digest(=M1)+presenter_plan_digest(=M2 或 NULL)+capability+catalog`；`presenter_plan_digest=NULL` ⇔ 该 generation 不存在 M2 行。**只签算法/滤镜模板 ID/{DELAY} 占位契约/BGM 参数，不签绝对时间线**——measured timeline 由 client 产生，绑定 `orchestration_plan_digest`。idempotency_key = `"lecturecast:orchestration:{gid}"`，external_id = `"{gid}:orchestration"`。
+
+**M3 gate（spec §2.6 调用合同）**：`validate_orchestration_capabilities` —— orchestration_plan schema version；`voice_mode=own_voice` → `f5` in tts_engines；photo 路径还要求 **M2 已 charged/releasable**。M3 create/resume service 在 **OrchestrationPlan 生成、签名、扣费前**调 gate；每次请求携带/刷新当前 capabilities。
+
+**下一步动作**：
+1. server 调研：`validate_orchestration_capabilities` 现状（M2 gate 旁支）、OrchestrationPlan 派生所需（M1 artifact + M2 plan digest + capabilities）、M3 charge 行创建/扣费（复用 m2-3/m2-4 的 PresenterPlanService 模式）、M3 resume（m2-5 已证 resume 协调器通用）。
+2. 盲预测 → 设计稿（server docs/）→ RED-first 实现 + 测试 → Kimi/Codex 审 → lock → commit。
+3. 跨仓契约：M3 gate 独立（server `validate_orchestration_capabilities` 零引用旁支）、orchestration idempotency_key/external_id 格式、client M3 消费（m2-6 模式）。
+
+**恢复操作**：`cd ~/AgentMesh-Lecturecast && git log --oneline -4`；`UV_CACHE_DIR=/tmp/lc-uv-cache uv run --project . pytest -c pyproject.toml -q` → 应 1272 passed。
+
