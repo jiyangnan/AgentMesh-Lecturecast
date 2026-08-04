@@ -320,11 +320,46 @@ class ProjectStore:
             if isinstance(capabilities, ClientCapabilities)
             else parse_client_capabilities(capabilities)
         )
+        # UAT Path D regression (journal-forever-missing): the capability probe
+        # reports configured HeyGen when the journal is 'fresh' (no DB yet).
+        # If nothing ever initializes it, the NEXT command's B1 live re-probe
+        # sees configured caps + missing DB -> _journal_state Guard 3 ->
+        # 'missing_prior_use' -> probe False -> snapshot dropped -> re-capture
+        # without HeyGen -> digest-rewrite guard rejects (manifest bound) -> M2
+        # deadlocks. Persisting a configured-HeyGen doc must initialize the
+        # journal (init_database: create DB + durable sentinel, idempotent) so
+        # the next B1 sees 'current' and reuses the snapshot.
+        if document.model_dump().get("schema_version") == "1.1" and any(
+            isinstance(p, dict)
+            and p.get("provider") == "heygen"
+            and p.get("configured")
+            for p in (document.model_dump().get("third_party_processors") or [])
+        ):
+            from .heygen_journal import init_database
+
+            init_database(self.root)
         with self._locked():
             state = self._load_unlocked()
             self._check_revision(state, expected_revision)
+            # Once the Manifest is released it binds the capability_digest, and
+            # the Manifest is immutable (0o444). A re-capture with a DIFFERENT
+            # digest (e.g. the B1 stale guard dropped a configured-heygen
+            # snapshot and re-captured without the key) must fail-closed rather
+            # than silently rewriting the project index and breaking the chain
+            # to the released Manifest. Same digest is idempotent (allowed).
+            # Pre-manifest re-capture stays legal (capabilities -> brief ->
+            # generate legitimately re-captures with a new digest).
+            stored_digest = state.payload["capability_digest"]
+            new_digest = canonical_digest(document)
+            bound = state.payload["production_manifest_digest"]
+            if bound is not None and new_digest != stored_digest:
+                raise LectureCastError(
+                    code="generation_conflict",
+                    message="ClientCapabilities 已绑定已发布的 Manifest，digest 不可改写。",
+                    next_action="恢复与 Manifest 绑定的 capability 快照，或重新申请新的 Manifest。",
+                )
             atomic_write_json(self.capabilities_path, document.model_dump())
-            return self._advance(state, capability_digest=canonical_digest(document))
+            return self._advance(state, capability_digest=new_digest)
 
     def save_manifest(
         self,

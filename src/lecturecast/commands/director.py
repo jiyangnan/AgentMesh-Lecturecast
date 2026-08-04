@@ -1703,10 +1703,13 @@ def _m2_generation_view(
 
 def _m2_charges_from_project(project) -> list[dict[str, Any]]:
     """Synthesize the public charge projection from persisted project digests for
-    the idempotent re-run (the create response is no longer available). Both M1
-    and M2 are charged by construction: manifest_ready was required to enter M2,
-    and the persisted plan proves the M2 create succeeded."""
-    return [
+    the idempotent re-run (the create response is no longer available). M1 and M2
+    are charged by construction: manifest_ready was required to enter M2, and the
+    persisted plan proves the M2 create succeeded. When the project already
+    reached M3 (orchestration_plan_digest present), the orchestration charge is
+    appended so the post-M2 status projection never re-offers a completed M3
+    (mirrors `_m3_charges_from_project`)."""
+    charges = [
         {"milestone": "manifest", "artifact_type": "manifest", "status": "charged",
          "artifact_digest": project.payload["production_manifest_digest"], "cost": 10,
          "deducted_credits": 10, "last_error_code": None, "completed_at": None},
@@ -1714,6 +1717,13 @@ def _m2_charges_from_project(project) -> list[dict[str, Any]]:
          "artifact_digest": project.payload["presenter_plan_digest"], "cost": 10,
          "deducted_credits": 10, "last_error_code": None, "completed_at": None},
     ]
+    if project.payload.get("orchestration_plan_digest") is not None:
+        charges.append(
+            {"milestone": "orchestration", "artifact_type": "orchestration_plan", "status": "charged",
+             "artifact_digest": project.payload["orchestration_plan_digest"], "cost": 10,
+             "deducted_credits": 10, "last_error_code": None, "completed_at": None},
+        )
+    return charges
 
 
 def _m3_charges_from_project(project) -> list[dict[str, Any]]:

@@ -532,6 +532,45 @@ def test_m1_independent_of_heygen_config() -> None:
     assert payload["schema_version"] == "1.1"
 
 
+def test_saving_configured_heygen_caps_initializes_journal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """UAT Path D regression: M1 captures a configured-HeyGen capability on a
+    fresh project (journal probe True because no DB yet = 'fresh'). If nothing
+    initializes the journal, the NEXT command's B1 live re-probe sees
+    client-capabilities.json claiming configured HeyGen with no runtime/ DB ->
+    _journal_state Guard 3 -> 'missing_prior_use' -> probe False ->
+    heygen_processor None -> _stored_heygen_still_live False -> snapshot
+    dropped -> re-capture without HeyGen -> save_capabilities rejects the digest
+    rewrite (manifest bound) -> M2 permanently deadlocks. save_capabilities must
+    initialize the journal (init_database) the moment it persists a
+    configured-HeyGen doc, so B1 on the next command sees 'current' and reuses
+    the snapshot."""
+    from lecturecast.capabilities import default_heygen_journal_diagnostic
+    from lecturecast.commands.director import _stored_heygen_still_live
+    from lecturecast.project import ProjectStore
+
+    # Real Path D: HEYGEN_API_KEY lives in the process env (B1 reads os.environ).
+    monkeypatch.setenv(HEYGEN_API_KEY_ENV, "sk_live")
+    store = ProjectStore(tmp_path)
+    state = store.init(name="Path D")
+    caps = capture_capabilities_v1_1(
+        adapter_kind="codex", adapter_version="1.0.0", runner=_probe_runner,
+        env={HEYGEN_API_KEY_ENV: "sk_live"}, path_probe=Path,
+        adapter_probe=_TRUE, journal_probe=_TRUE,
+    )
+    assert caps.model_dump()["third_party_processors"][0]["configured"] is True
+
+    store.save_capabilities(caps, expected_revision=state.revision)
+
+    # The journal must now be initialized (DB present, head==schema) — NOT the
+    # prior-use-data-loss state a missing DB + configured caps would produce.
+    diag = default_heygen_journal_diagnostic(tmp_path)
+    assert diag["classification"] == "current", diag
+    # The B1 stale guard on the next command now reuses the snapshot.
+    assert _stored_heygen_still_live(caps, tmp_path) is True
+
+
 def test_stored_heygen_capability_invalidated_when_live_probe_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
