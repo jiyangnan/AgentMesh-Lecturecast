@@ -590,3 +590,87 @@ class TestM2ResumeCrossRepoContract:
         # The resume view carries milestone_charges (ManifestGenerationOutV1_1)
         # so a presenter_plan awaiting/charged row is visible to the client.
         assert "milestone_charges" in server
+
+
+# === §6 m2-6d: M2 create path 跨仓契约 =====================================
+#
+# m2-6 让 client 的 `director generation-presenter-plan` 消费 M2 create 路径。
+# 三个契约防漂移：
+#   1. client DirectorClient.create_presenter_plan 的 URL/方法 == server route
+#      (@router.post /director/generations/{generation_id}/presenter-plan)。
+#   2. client 的 M2 disclosure_version 常量 == server M2Approval schema 的字面量。
+#      server 用 Literal[...] 拒绝其它值；client 若改了版本，请求立即被拒。
+#   3. server provider catalog（M2 create 附带）不含 m1_insufficient_credits —
+#      M2 上下文的不够额度是 provider 余额问题，不该给 M1 话术（m2-6 §2.5）。
+
+SERVER_RECOVERY_CATALOG_PY = SERVER_ROOT / "app" / "recovery_catalog.py"
+CLIENT_DIRECTOR_SRC = CLIENT_ROOT / "src" / "lecturecast" / "director.py"
+
+
+@skip_cross_repo
+class TestM2CreateCrossRepoContract:
+    """§6 m2-6d: client presenter-plan create path == server route; M2 approval
+    disclosure pinned; provider catalog never carries the M1 话术."""
+
+    def test_client_presenter_plan_path_matches_server_route(self):
+        # Client DirectorClient.create_presenter_plan POSTs
+        # /director/generations/{id}/presenter-plan.
+        client = CLIENT_DIRECTOR_SRC.read_text(encoding="utf-8")
+        body = client.split("def create_presenter_plan", 1)[1].split("def ", 1)[0]
+        assert re.search(
+            r'url=f".*?/director/generations/\{generation_id\}/presenter-plan"', body
+        ), "client create_presenter_plan URL not found in director.py"
+        assert re.search(r'method="POST"', body), (
+            "client create_presenter_plan must POST the M2 create-and-charge route"
+        )
+        # Server registers the same path + method. The decorator is
+        # `@router.post(\n    "/director/generations/{generation_id}/presenter-plan"`.
+        server = SERVER_DIRECTOR_PY.read_text(encoding="utf-8")
+        path_idx = server.find('"/director/generations/{generation_id}/presenter-plan"')
+        assert path_idx != -1, (
+            "server presenter-plan route not found in routes/director.py"
+        )
+        head = server[:path_idx]
+        decorator = re.search(r"@router\.\w+\(?", head[::-1][:80][::-1])
+        assert decorator and "post" in decorator.group(0), (
+            "server presenter-plan route must be POST — the client POSTs it"
+        )
+
+    def test_m2_disclosure_version_matches_server(self):
+        # The client pins the disclosure the user saw; the server schema only
+        # accepts that exact literal (Literal["heygen-transfer-2026-07-27"]). A
+        # client that sends a stale/newer version gets a schema validation error.
+        client = CLIENT_DIRECTOR_SRC.read_text(encoding="utf-8")
+        cm = re.search(r'DISCLOSURE_VERSION\s*=\s*"([^"]+)"', client)
+        assert cm, "client DISCLOSURE_VERSION not found in director.py"
+        server = (SERVER_ROOT / "app" / "schemas" / "presenter.py").read_text(
+            encoding="utf-8"
+        )
+        sm = re.search(
+            r'disclosure_version:\s*Literal\["([^"]+)"\]', server
+        )
+        assert sm, "server M2Approval disclosure_version Literal not found"
+        assert cm.group(1) == sm.group(1), (
+            f"client DISCLOSURE_VERSION {cm.group(1)!r} != server Literal "
+            f"{sm.group(1)!r} — the server would reject the client's approval"
+        )
+
+    def test_server_provider_catalog_has_no_m1_directive(self):
+        # The provider (HeyGen) catalog ships with the M2 PresenterPlan. It must
+        # never carry the M1 insufficient_credits 话术: an M2-context resume-402
+        # is a provider-balance problem, not the M1 manifest charge. The client
+        # suppresses the M1 mapping in M2 context (m2-6 §2.5) — this contract
+        # pins the server side so the M1 directive cannot leak into the provider
+        # increment.
+        server = SERVER_RECOVERY_CATALOG_PY.read_text(encoding="utf-8")
+        provider_block = server.split("def _provider_heygen_directives", 1)[1]
+        provider_block = provider_block.split("def ", 1)[0]
+        assert "m1_insufficient_credits" not in provider_block, (
+            "server provider (HeyGen) catalog must NOT carry the m1_insufficient_credits "
+            "directive — M2-context 402 is a provider balance issue, not the M1 "
+            "manifest charge (m2-6 §2.5)"
+        )
+        # Sanity: the provider catalog is a distinct layer from the base catalog,
+        # which legitimately owns the m1 directive.
+        assert "def build_provider_catalog" in server
+        assert "def build_base_catalog" in server
