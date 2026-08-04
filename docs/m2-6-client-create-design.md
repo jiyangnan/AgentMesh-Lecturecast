@@ -1,6 +1,6 @@
 # m2-6 设计稿：client M2 create 命令消费
 
-> 状态：**LOCKED**（盲预测 + 现状差距 + 关键设计决策 + 测试计划 + Kimi 审阅 PASS）｜目标 spec：DIGITAL-HUMAN-TECH-SPEC.md v1.4 §2.2/§2.6/§5.3.9 ｜分支：feat/digital-human-edition
+> 状态：**LOCKED**（盲预测 + 现状差距 + 关键设计决策 + 测试计划 + Kimi 审阅 PASS）｜目标 spec：DIGITAL-HUMAN-TECH-SPEC.md v1.4 §2.2/§2.6/§5.3.9 ｜分支：feat/digital-human-protocol-v1_1
 > 流程：盲预测 → 设计稿 → RED-first 实现+测试 → Kimi 审阅 → lock → commit。
 
 ## 0. 盲预测（调研后、实现前的固定断言）
