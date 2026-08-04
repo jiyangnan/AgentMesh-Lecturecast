@@ -2,7 +2,7 @@
 
 > 目标 spec：DIGITAL-HUMAN-TECH-SPEC.md v1.4 §1.2 适用性矩阵 + §1.5 计费链 + §2.6 M3 边界。
 > 范围：端到端验证 client ↔ server 的 M1/M2/M3 create + 验签 + digest 链 + 幂等 + recovery 抑制。
-> 状态：**完成（2026-08-05 local-all-stack）**。路径 A/B/D PASS，路径 C N/A（卡片不可达，spec †），跨路径校验 §5 全过。环境：本地 core(127.0.0.1:9000) + server(127.0.0.1:9100, uvicorn v0.1.3) + client CLI 0.5.1，全部开启 v1.1 协议。注意：client 需额外设置 `LECTURECAST_CORE_URL`（默认打生产 core，导致 `invalid_key`）；M1 legacy 扣费完成后需 `python -m app.backfill_cli apply` 生成 milestone charge rows。
+> 状态：**完成（2026-08-05 local-all-stack）**。路径 A/B/C/D PASS，跨路径校验 §5 全过。环境：本地 core(127.0.0.1:9000) + server(127.0.0.1:9100, uvicorn v0.1.3) + client CLI 0.5.1，全部开启 v1.1 协议。注意：client 需额外设置 `LECTURECAST_CORE_URL`（默认打生产 core，导致 `invalid_key`）；M1 legacy 扣费完成后需 `python -m app.backfill_cli apply` 生成 milestone charge rows。路径 C（none+stock+bgm≠none）原为 N/A，2026-08-05 已实现放开（见 §3）。
 
 ## 0. 环境前置（任选一，UAT 前必须完成）
 
@@ -81,17 +81,20 @@
 
 ---
 
-## 3. 路径 C：none + stock + bgm≠none（仅配乐，†）→ M1 + M3，20 credits
+## 3. 路径 C：none + stock + bgm≠none（仅配乐）→ M1 + M3，20 credits
 
-**目的**：bgm≠none 触发 M3（不依赖 avatar）。注意 spec † 说明当前卡片设计下 bgm 仅 avatar≠none 可选，若 UAT 卡片无法构造此组合则标 **N/A（卡片不可达）** 并在记录中注明。
+**目的**：bgm≠none 触发 M3（不依赖 avatar）。2026-08-05 已实现：bgm 卡从卡片目录 group3（condition: presenter=photo）移至 group1 无条件，与 presenter/voice_mode 同屏；brief_compiler 对 avatar≠photo 不再硬编码 bgm="none"；PresenterBrief schema 移除 `avatar=none requires bgm=none`。
 
 | # | 命令 | 期望 |
 |---|---|---|
 | C1–C6 | 同路径 B，但 avatar=none / voice=stock / bgm 非 none | M1 10 + M3 10 = 20；orchestration-plan 落盘 |
 
 **断言点**：
-- [x] 若卡片能构造 bgm≠none：行为同路径 B（M1+M3，无 M2）— **N/A（实测确认）**：卡片目录 `v1_1.json` bgm 卡 `condition: presenter=photo`，且 server `brief_compiler._presenter_payload` 对 avatar≠photo 硬编码 `bgm="none"`（brief_compiler.py:178），故 `none + stock + bgm≠none` 组合当前版本无法构造（spec †）。该组合的 M3 触发分支（`_brief_m3_applicable` bgm 分支）已用直接回归测试锁定（`test_brief_m3_applicable_bgm_triggers_without_avatar` + 负例），未来卡片若放开即可达
-- [x] 若卡片不可达：记录 N/A，注明 spec †，**不算失败**
+- [x] 卡片目录 `v1_1.json` bgm 卡 `card_group: 1`、无 `condition`（`test_consent_and_mode_conditions` 锁定）
+- [x] decision engine 对 avatar=none 仍发 bgm 卡（`test_bgm_prompted_when_presenter_group1_bgm_unanswered`）
+- [x] brief_compiler 编译 `none+stock+bgm=light_tech` 成功（`test_none_stock_bgm_kept_without_avatar`），PresenterBrief schema 不阻挡
+- [x] client `_brief_m3_applicable` bgm 分支 → True（`test_brief_m3_applicable_bgm_triggers_without_avatar`）；bgm=none + avatar=none → False（负例）
+- [x] spec §1.2 矩阵 † 注释移除，拆卡/编译器伪代码同步更新
 
 ---
 
@@ -146,7 +149,7 @@
 - 环境就绪：openapi 含 M2/M3 路由 ✓；keyring 匹配 ✓；API key 余额 ≥30 credits ✓
 - 路径 A（none+stock+none）：PASS — 只 M1，10 credits；无 M2/M3 next_action；`generation-presenter-plan` 被 client 门禁拒绝
 - 路径 B（none+own_voice）：PASS — M1+M3 20 credits；M3 无 approval 参数；orchestration-plan.json 落盘且验签通过，`presenter_plan_digest=None` 合法；无 presenter-plan 文件
-- 路径 C（none+stock+bgm≠none）：N/A(卡片不可达, 实测确认) — spec †：卡片目录 bgm 卡 condition=presenter=photo + brief_compiler 对 avatar≠photo 硬编码 bgm="none"，none+stock+bgm≠none 当前版本无法构造；非代码缺陷。bgm→M3 触发分支已加直接回归测试锁定（未来卡片放开即可达）
+- 路径 C（none+stock+bgm≠none）：**PASS（已实现，2026-08-05）** — bgm 卡放开：card_group 3→1、移除 condition，与 presenter/voice_mode 同屏；brief_compiler avatar≠photo 不再硬编码 bgm="none"；PresenterBrief schema 移除 `avatar=none requires bgm=none`。回归锁定：`test_bgm_prompted_when_presenter_group1_bgm_unanswered` + `test_none_stock_bgm_kept_without_avatar` + `test_brief_m3_applicable_bgm_triggers_without_avatar`（此前 commit 已加）+ 负例。spec §1.2 矩阵 † 注释已移除
 - 路径 D（photo）：PASS — M1+M2+M3 30 credits；M2 带 `--yes` 才放行、不带被拒绝；presenter-plan + orchestration-plan 均落盘验签通过；orchestration-plan 的 `presenter_plan_digest` 非 None 且 == presenter-plan digest；M3 无 approval
 - 验签+digest 链：PASS — manifest/presenter/orchestration 三工件验签全过；digest 链（production_manifest_digest + presenter_plan_digest + capability_digest）逐环一致；篡改任一 payload 验签 fail-closed
 - 幂等：PASS — M2/M3 重跑均落盘已存在、不二次扣费；CLI 层幂等先于 manifest_ready gate
@@ -161,4 +164,3 @@
 
 - **F5 真实本地执行 / ffmpeg 渲染**：M3 只签算法/模板 ID/占位契约，执行引擎属后续里程碑，不在本次范围。
 - **cartoon avatar**：首版隐藏（provider 未选型），不在矩阵。
-- **bgm≠none 卡片不可达**：spec †，当前卡片 bgm 卡 condition=presenter=photo + brief_compiler 硬编码，无法构造 none+stock+bgm≠none；bgm→M3 触发分支已加回归测试锁定。

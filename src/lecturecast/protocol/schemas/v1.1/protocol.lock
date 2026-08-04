@@ -1,9 +1,9 @@
 {
-  "bundle_digest": "sha256:9661a86c08338ec98d43bb8f540950445effbe45c553d744eb78d130d1bface2",
+  "bundle_digest": "sha256:f20abcc690c0e3f8be06e5521871c8564485b118a9d7bd2931244b7a5a73dda2",
   "bundle_version": "1.1",
   "files": {
     "client-capabilities.schema.json": "sha256:6ebcb627dd3bded5ccc233a3fc3b42d100b4002e824a98dcc32912ecd6b59597",
-    "creative-brief.schema.json": "sha256:ead2e44571b0165c871cac1097a7096810a4dc723caaa370ea7540dfb4543c0f",
+    "creative-brief.schema.json": "sha256:ac99d26d08f36044f6cdde7353b5069c24f838561bf00fa0cb7d1e33b0ff4b97",
     "decision-card-set.schema.json": "sha256:4895b73a92367737676fbdfdf627b117c9d62132df96db3d10d5891f981a1613",
     "error-envelope.schema.json": "sha256:8997b5d6cbfbc0b54dc221b19eb67cefaad8cf60b333ebc6b759922e1dc31164",
     "manifest-generation-out.schema.json": "sha256:789f42a9e837ef722eaf9df0c76bedfa72a2755fd184b512d842117624a8d009",
