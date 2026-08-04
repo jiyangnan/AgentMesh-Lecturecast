@@ -362,7 +362,8 @@ V1_1_BUNDLE_DIR = (
 )
 # Audited bundle digest (matches lecturecast-server protocol/v1.1/protocol.lock).
 # Updated for m2-5 re-vendor: error-envelope.schema.json gained m2_not_ready.
-V1_1_AUDITED_BUNDLE_DIGEST = "sha256:8f8ddf672263c215ab20e400a650e8300063afbf4ecf0ca4a116661447a3546d"
+# Updated for m3-5 re-vendor: error-envelope.schema.json gained m3_not_ready.
+V1_1_AUDITED_BUNDLE_DIGEST = "sha256:9661a86c08338ec98d43bb8f540950445effbe45c553d744eb78d130d1bface2"
 
 
 def test_v1_1_bundle_lock_is_intact_and_audited() -> None:
