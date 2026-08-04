@@ -90,7 +90,7 @@
 | C1–C6 | 同路径 B，但 avatar=none / voice=stock / bgm 非 none | M1 10 + M3 10 = 20；orchestration-plan 落盘 |
 
 **断言点**：
-- [x] 若卡片能构造 bgm≠none：行为同路径 B（M1+M3，无 M2）— **N/A**：当前卡片 avatar 仅支持 none/photo，bgm 仅 avatar≠none 可选，无法构造 none+stock+bgm≠none（spec †）
+- [x] 若卡片能构造 bgm≠none：行为同路径 B（M1+M3，无 M2）— **N/A（实测确认）**：卡片目录 `v1_1.json` bgm 卡 `condition: presenter=photo`，且 server `brief_compiler._presenter_payload` 对 avatar≠photo 硬编码 `bgm="none"`（brief_compiler.py:178），故 `none + stock + bgm≠none` 组合当前版本无法构造（spec †）。该组合的 M3 触发分支（`_brief_m3_applicable` bgm 分支）已用直接回归测试锁定（`test_brief_m3_applicable_bgm_triggers_without_avatar` + 负例），未来卡片若放开即可达
 - [x] 若卡片不可达：记录 N/A，注明 spec †，**不算失败**
 
 ---
@@ -146,7 +146,7 @@
 - 环境就绪：openapi 含 M2/M3 路由 ✓；keyring 匹配 ✓；API key 余额 ≥30 credits ✓
 - 路径 A（none+stock+none）：PASS — 只 M1，10 credits；无 M2/M3 next_action；`generation-presenter-plan` 被 client 门禁拒绝
 - 路径 B（none+own_voice）：PASS — M1+M3 20 credits；M3 无 approval 参数；orchestration-plan.json 落盘且验签通过，`presenter_plan_digest=None` 合法；无 presenter-plan 文件
-- 路径 C（none+stock+bgm≠none）：N/A(卡片不可达) — spec †：当前卡片 avatar 仅支持 none/photo，bgm 仅 avatar≠none 可选，无法构造 none+stock+bgm≠none 组合；非代码缺陷
+- 路径 C（none+stock+bgm≠none）：N/A(卡片不可达, 实测确认) — spec †：卡片目录 bgm 卡 condition=presenter=photo + brief_compiler 对 avatar≠photo 硬编码 bgm="none"，none+stock+bgm≠none 当前版本无法构造；非代码缺陷。bgm→M3 触发分支已加直接回归测试锁定（未来卡片放开即可达）
 - 路径 D（photo）：PASS — M1+M2+M3 30 credits；M2 带 `--yes` 才放行、不带被拒绝；presenter-plan + orchestration-plan 均落盘验签通过；orchestration-plan 的 `presenter_plan_digest` 非 None 且 == presenter-plan digest；M3 无 approval
 - 验签+digest 链：PASS — manifest/presenter/orchestration 三工件验签全过；digest 链（production_manifest_digest + presenter_plan_digest + capability_digest）逐环一致；篡改任一 payload 验签 fail-closed
 - 幂等：PASS — M2/M3 重跑均落盘已存在、不二次扣费；CLI 层幂等先于 manifest_ready gate
@@ -161,4 +161,4 @@
 
 - **F5 真实本地执行 / ffmpeg 渲染**：M3 只签算法/模板 ID/占位契约，执行引擎属后续里程碑，不在本次范围。
 - **cartoon avatar**：首版隐藏（provider 未选型），不在矩阵。
-- **bgm≠none 卡片不可达**：spec †，卡片设计限制，非代码缺陷。
+- **bgm≠none 卡片不可达**：spec †，当前卡片 bgm 卡 condition=presenter=photo + brief_compiler 硬编码，无法构造 none+stock+bgm≠none；bgm→M3 触发分支已加回归测试锁定。
