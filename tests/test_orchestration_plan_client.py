@@ -481,6 +481,41 @@ def test_m2_charges_from_project_includes_orchestration_when_m3_done(
     assert orchestration["status"] == "charged"
 
 
+def test_brief_m3_applicable_bgm_triggers_without_avatar(
+    tmp_path: Path,
+) -> None:
+    """Path C applicability (tech spec §1.2): bgm≠none must trigger M3 even for
+    a pure-M1 brief (none avatar + stock voice). Guards `_brief_m3_applicable`
+    so the M3 branch stays reachable if a future card makes the combination
+    constructible. UAT note: the current card set cannot produce this brief —
+    brief_compiler hard-codes bgm="none" for avatar≠photo."""
+    from lecturecast.commands.director import _brief_m3_applicable
+    from lecturecast.project import ProjectStore
+
+    store = ProjectStore(tmp_path)
+    store.brief_path.parent.mkdir(parents=True, exist_ok=True)
+    store.brief_path.write_text(json.dumps({
+        "presenter": {"avatar": "none", "voice_mode": "stock", "bgm": "light_tech"},
+    }))
+    assert _brief_m3_applicable(store) is True
+
+
+def test_brief_m3_applicable_bgm_none_avatar_none_is_false(
+    tmp_path: Path,
+) -> None:
+    """Negative control: a pure-M1 brief (none avatar + stock voice + bgm=none)
+    must NOT trigger M3 — the workflow stays on manifest.review."""
+    from lecturecast.commands.director import _brief_m3_applicable
+    from lecturecast.project import ProjectStore
+
+    store = ProjectStore(tmp_path)
+    store.brief_path.parent.mkdir(parents=True, exist_ok=True)
+    store.brief_path.write_text(json.dumps({
+        "presenter": {"avatar": "none", "voice_mode": "stock", "bgm": "none"},
+    }))
+    assert _brief_m3_applicable(store) is False
+
+
 def test_status_workflow_awaiting_credits_still_beats_m3(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
