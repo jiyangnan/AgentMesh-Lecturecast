@@ -199,6 +199,11 @@
   .terminal-bar .lights{display:flex;gap:6px}
   .terminal-bar .lights span{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,0.1)}
   .terminal-bar .title{font-family:var(--mono);font-size:12px;color:var(--code-dim);margin-left:8px}
+  .terminal-bar .copy-btn{margin-left:auto;font-family:var(--sans);font-size:11px;color:var(--code-dim);letter-spacing:0.06em;text-transform:uppercase;background:transparent;border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:5px 10px;cursor:pointer;transition:color .15s ease,border-color .15s ease,background .15s ease}
+  .terminal-bar .copy-btn:hover{color:var(--code-fg);border-color:rgba(255,255,255,0.18)}
+  .terminal-bar .copy-btn:active{background:rgba(255,255,255,0.04)}
+  .terminal-bar .copy-btn.copied{color:var(--code-acc);border-color:color-mix(in oklab,var(--code-acc) 40%,transparent)}
+  .terminal-bar .copy-btn:focus-visible{outline:2px solid var(--code-acc);outline-offset:1px}
   pre.code{margin:0;padding:22px 24px 26px;font-family:var(--mono);font-size:13.5px;line-height:1.85;overflow-x:auto;-webkit-overflow-scrolling:touch}
   pre.code .c-prompt{color:var(--code-acc);user-select:none} pre.code .c-cmd{color:var(--code-fg)}
   pre.code .c-flag{color:var(--blue)} pre.code .c-str{color:var(--yellow)} pre.code .c-dim{color:var(--code-dim)}
@@ -313,8 +318,9 @@
       <div class="terminal-bar">
         <div class="lights"><span></span><span></span><span></span></div>
         <span class="title">~ run-this-locally</span>
+        <button type="button" class="copy-btn" id="copyCmds" aria-label="复制命令">copy-paste</button>
       </div>
-<pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
+<pre class="code" id="cmdBlock"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
 <span class="c-prompt">PS&gt;</span> <span class="c-cmd">irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex</span>
 <span class="c-dim"># 安装完成后，新建宿主 Agent 任务；由新加载的 Skill 返回准确命令</span>
 <span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --adapter codex --host-contract 1.0.0 --json</span> <span class="c-dim"># Codex 示例</span>
@@ -594,6 +600,57 @@
     const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 8);
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
+  })();
+
+  // install terminal: copy-to-clipboard
+  (function(){
+    const btn = document.getElementById('copyCmds');
+    const pre = document.getElementById('cmdBlock');
+    if (!btn || !pre) return;
+
+    // Build clean text (strip leading "$ " prompt; keep comment lines as-is).
+    function buildCopyText() {
+      const lines = pre.innerText.split('\n');
+      return lines
+        .map(l => l.replace(/^\s*(?:\$|PS>)\s?/, '').trimEnd())        .filter(l => l.length > 0)
+        .join('\n');
+    }
+
+    const ORIGINAL = btn.textContent;
+    let resetTimer = null;
+
+    function flash(label, isOk) {
+      if (resetTimer) clearTimeout(resetTimer);
+      btn.textContent = label;
+      btn.classList.toggle('copied', !!isOk);
+      resetTimer = setTimeout(() => {
+        btn.textContent = ORIGINAL;
+        btn.classList.remove('copied');
+      }, 1800);
+    }
+
+    async function doCopy() {
+      const text = buildCopyText();
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        flash('✓ copied', true);
+      } catch (e) {
+        flash('✗ failed', false);
+      }
+    }
+
+    btn.addEventListener('click', doCopy);
   })();
 </script>
 

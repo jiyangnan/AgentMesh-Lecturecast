@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -248,7 +249,9 @@ def test_current_site_publishes_real_dual_format_customer_case() -> None:
 def test_current_site_installs_then_onboards_before_conditional_login() -> None:
     for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
-        terminal = page.split('<pre class="code">', 1)[1].split("</pre>", 1)[0]
+        terminal = re.search(r'<pre class="code"(?:\s+[^>]*)?>', page, re.S)
+        assert terminal is not None, f"terminal block missing in {relative}"
+        terminal = page[terminal.end() :].split("</pre>", 1)[0]
 
         assert terminal.index("lecturecast onboard") < terminal.index(
             "lecturecast auth login"
