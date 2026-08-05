@@ -113,6 +113,22 @@ The signed Manifest remains read-only. The generated
 digest. If TTS differs from the planned timeline by more than 25%, rendering
 stops and asks for a corrected Manifest.
 
+### BGM 配乐（CreatorCut 菜单策略 → 本地现配乐）
+
+当项目根目录存在签名 `orchestration-plan.json`（客户端 `generation-orchestration-plan`
+命令验签落盘）且 `bgm_enabled=true` 时，step 6 会按 `bgm_genre`
+（`light_tech` / `bright_launch`，CreatorCut 配乐菜单）调用
+`templates/shared/gen_bgm.py`（`creatorcut_local_synth`，纯 stdlib 本地程序化合成，
+无下载/无 AI/无 API）现配乐，然后与旁白 noduck 混音：
+
+- **BGM 时长** = `render_total_frames / fps`（audio-timing.json，与成片容器严格对齐）。
+- **混音参数**（照 `lecturecast-server/docs/manifest-schema-v1.1.md`）：
+  `[0:a]anull[a0];[a0][1:a]amix=inputs=2:duration=first:normalize=0[amx];[amx]alimiter=limit=0.89[aout]`
+  —— noduck（不衰减旁白），limiter 0.89 防削波。
+- **降级**：无 orchestration-plan.json 或 `bgm_enabled=false` → 保持现状（无 BGM，
+  音频 `-c:a copy` 不重编码）。
+- 合成器确定性（seed 42），两档听感由云端 Director 只签 `genre`（不暴露合成配方）。
+
 ## 6. Compliance and delivery
 
 Before delivery, scan narration, scene text and subtitles for Xiaohongshu banned
