@@ -310,7 +310,7 @@
       <article class="route route-director" data-route="director" data-access="paid" data-media="local">
         <div class="route-top"><span class="route-label">Lecturecast Director</span><span class="route-status">有效月卡 · 10 credits / 次</span></div>
         <h3>云端导演，本地制片</h3>
-        <p>Agent 先验证通用 API Key、有效月卡和共享 credits，再完成原生选择卡与 Brief 审批。你明确批准 10 credits 后，Director 返回不可由宿主 Agent 改写的签名 ProductionManifest 和完整讲稿；你还要逐段审阅并批准讲稿，之后才会在本机执行 TTS 和渲染。</p>
+        <p>Agent 先校验通用 API Key、有效月卡与共享 credits，完成原生选择卡与 Brief 审批。用户确认扣减 10 credits 后，云端 Director 生成签名 ProductionManifest 与完整签名讲稿，二者对宿主 Agent 不可改写；完整签名讲稿逐段经人工审阅批准后，TTS 与渲染仅在本机执行。</p>
       </article>
     </div>
 
@@ -338,7 +338,7 @@
     </div>
     <div class="why-body">
       <p>让 AI 写个脚本不难，难的是后面——<span class="hi">配音、对轴、渲染、烧字幕、做封面、还要横竖两版各适配一次</span>。</p>
-      <p>Lecturecast 把可执行控制流交给你的 AI agent：Director 负责签名创作方案，本机负责 TTS、时间线和渲染。任何权限、素材、时长或 QA 检查失败都会停止交付，而不是给你一段看似完成的文字或残缺视频。</p>
+      <p>Lecturecast 把可执行控制流交给你的 AI agent：Director 负责签名创作方案，本机负责 TTS、时间线和渲染。任何权限、素材、时长或 QA 检查失败都会停止交付，而非交付看似完成的文字或残缺视频。</p>
     </div>
   </div>
 </section>
@@ -351,7 +351,7 @@
       <div class="feat">
         <span class="feat-num">i.</span>
         <h3>Director 生成签名讲稿</h3>
-        <p>你先在 Creative Brief 中确认方向与事实；批准 10 credits 后，Director 生成不可变的签名 ProductionManifest 与完整讲稿。宿主 Agent 不能擅自改写。</p>
+        <p>在 Creative Brief 中确认方向与事实；批准 10 credits 后，Director 生成不可变的签名 ProductionManifest 与完整讲稿，宿主 Agent 不能擅自改写。</p>
       </div>
       <div class="feat">
         <span class="feat-num">ii.</span>
@@ -503,7 +503,7 @@
         <div class="step-n">03</div>
         <div class="step-body">
           <h3>Director 定方案，本地完成出片</h3>
-          <p>通过 Director 选择和 Brief 审批后，明确确认消耗 10 credits 获取签名 ProductionManifest。Agent 展示不可变的完整签名讲稿并再次等待批准；只有批准后才在本机执行 TTS、横竖双版渲染、字幕与双封面，并在 QA 失败时停止交付。</p>
+          <p>通过 Director 选择和 Brief 审批后，消耗 10 credits 获取签名 ProductionManifest。Agent 展示不可变的完整签名讲稿并再次等待批准；批准后即在本机执行 TTS、横竖双版渲染、字幕与双封面，QA 失败时停止交付。</p>
         </div>
       </div>
     </div>
@@ -551,7 +551,7 @@
       </details>
       <details class="faq-item">
         <summary>视频是全自动生成的吗？有哪些人工门禁？</summary>
-        <div class="faq-answer">不是无人值守。你先批准 Creative Brief，再明确批准一次 10-credit Manifest 生成，最后逐段审阅并批准完整签名讲稿。签名内容生成后宿主 Agent 不得修改；不批准就停止，不会进入 TTS 或渲染。</div>
+        <div class="faq-answer">不是无人值守。交付需经三次人工批准：Creative Brief、10-credit Manifest 生成、完整签名讲稿逐段审阅。签名内容生成后宿主 Agent 不得修改；任一门禁未通过即停止，不进入 TTS 或渲染。</div>
       </details>
       <details class="faq-item">
         <summary>需要装什么？</summary>
