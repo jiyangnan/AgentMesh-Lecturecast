@@ -18,7 +18,7 @@ from .config import (
 )
 from .errors import LectureCastError
 from .project import ProjectStore, atomic_write_json
-from .protocol import CreativeBrief, DecisionCardSet, ManifestGenerationOutV1_1, ProductionManifest
+from .protocol import CreativeBrief, DecisionCardSet, ManifestGenerationOutV1_1, OrchestrationPlanV1_1, PresenterPlanV1_1, ProductionManifest
 from .protocol.models import ProtocolValidationError
 from .protocol.models import documents_for_protocol_version
 
@@ -30,6 +30,52 @@ _SOURCE_TYPES = {"topic", "script", "slides", "screen_recording", "mixed"}
 _LANGUAGE = re.compile(r"^[a-z]{2}(?:-[A-Z]{2})?$")
 DIRECTOR_ADAPTER_KINDS = frozenset({"codex", "claude-code", "openclaw", "text"})
 _ADAPTER_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$")
+
+# M2 risk-confirmation disclosure text version (tech spec §2.2). Pinned by the
+# client at create time so the server can verify the user saw the current text.
+DISCLOSURE_VERSION = "heygen-transfer-2026-07-27"
+
+# Billing-state derivation (mirror of server app/milestone_billing.py
+# aggregate_billing_state). The M2 create response (PresenterPlanOut) carries the
+# per-milestone charges but not the aggregated billing_state/resume_available
+# flags, so the CLI derives them from the charges to persist the v1.2/v1.3
+# billing snapshot. Kept in lockstep with the server; a cross-repo contract test
+# asserts the two agree on the status matrix.
+_BLOCKING_STATES = frozenset(
+    {"failed_precharge", "refund_pending", "refunded", "awaiting_user_action"}
+)
+_ALL_CHARGED_STATES = frozenset({"charged", "skipped"})
+
+
+def derive_billing_state(charge_rows: list[dict[str, Any]]) -> tuple[str, bool]:
+    """Aggregate per-milestone charge statuses → (billing_state, resume_available),
+    mirroring the server's locked projection. Each row is a public MilestoneChargeOut
+    dict; ``has_ready_artifact`` uses artifact_digest presence (the public projection
+    omits artifact_id, so digest presence is the strongest available signal)."""
+    if not charge_rows:
+        return ("in_progress", False)
+    statuses = [row.get("status") for row in charge_rows]
+    has_awaiting = any(s == "awaiting_credits" for s in statuses)
+    has_blocking = any(s in _BLOCKING_STATES for s in statuses)
+    if has_blocking:
+        state = "blocked"
+    elif has_awaiting:
+        state = "awaiting_credits"
+    elif all(s in _ALL_CHARGED_STATES for s in statuses) and any(s == "charged" for s in statuses):
+        state = "charged"
+    elif any(s == "charged" for s in statuses):
+        state = "partially_charged"
+    else:
+        state = "in_progress"
+    resume_available = (
+        has_awaiting
+        and not has_blocking
+        and any(
+            s == "awaiting_credits" and isinstance(row.get("artifact_digest"), str)
+            for s, row in zip(statuses, charge_rows)
+        )
+    )
+    return (state, resume_available)
 
 
 def normalize_adapter_identity(kind: str, version: str) -> tuple[str, str]:
@@ -455,6 +501,107 @@ class DirectorClient:
         ):
             raise self._invalid_response("delete_response")
         return document
+
+    @classmethod
+    def _presenter_plan_out(
+        cls, document: dict[str, Any], *, protocol_version: str = "1.0"
+    ) -> dict[str, Any]:
+        """Validate the M2 create-and-charge response envelope (PresenterPlanOut).
+        v1.1-only: requires the signed plan + a milestone billing projection.
+        Fail-closed — never return an envelope whose fields are unvalidated."""
+        try:
+            if not isinstance(document.get("presenter_plan"), dict):
+                raise TypeError("presenter_plan")
+            if not isinstance(document.get("billing"), list):
+                raise TypeError("billing")
+            if protocol_version == "1.1":
+                PresenterPlanV1_1.model_validate(document["presenter_plan"])
+            recovery_catalog = document.get("recovery_catalog")
+            if recovery_catalog is not None and not isinstance(recovery_catalog, dict):
+                raise TypeError("recovery_catalog")
+        except (TypeError, ProtocolValidationError) as exc:
+            raise cls._invalid_response(type(exc).__name__) from None
+        return document
+
+    def create_presenter_plan(
+        self,
+        generation_id: str,
+        *,
+        capabilities: dict[str, Any],
+        approved: bool,
+        protocol_version: str = "1.0",
+    ) -> dict[str, Any]:
+        """POST /director/generations/{id}/presenter-plan — M2 create-and-charge.
+        Carries the current capabilities snapshot (re-validated by the M2 gate)
+        plus the independent risk-confirmation credential `{approved,
+        disclosure_version}`. The disclosure text the user saw is pinned by
+        DISCLOSURE_VERSION; `approved` must be an explicit user confirmation."""
+        status, document = self.transport.request(
+            method="POST",
+            url=f"{self.server_url}/director/generations/{generation_id}/presenter-plan",
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Accept": "application/json",
+            },
+            payload={
+                "capabilities": capabilities,
+                "approval": {
+                    "approved": approved,
+                    "disclosure_version": DISCLOSURE_VERSION,
+                },
+            },
+            timeout=self.timeout,
+        )
+        if status >= 400:
+            raise self._error(status, document, protocol_version=protocol_version)
+        return self._presenter_plan_out(document, protocol_version=protocol_version)
+
+    @classmethod
+    def _orchestration_plan_out(
+        cls, document: dict[str, Any], *, protocol_version: str = "1.0"
+    ) -> dict[str, Any]:
+        """Validate the M3 create-and-charge response envelope (OrchestrationPlanOut).
+        v1.1-only: requires the signed plan + a milestone billing projection.
+        Fail-closed — never return an envelope whose fields are unvalidated.
+        Mirrors `_presenter_plan_out`; M3 has no provider increment (base catalog)."""
+        try:
+            if not isinstance(document.get("orchestration_plan"), dict):
+                raise TypeError("orchestration_plan")
+            if not isinstance(document.get("billing"), list):
+                raise TypeError("billing")
+            if protocol_version == "1.1":
+                OrchestrationPlanV1_1.model_validate(document["orchestration_plan"])
+            recovery_catalog = document.get("recovery_catalog")
+            if recovery_catalog is not None and not isinstance(recovery_catalog, dict):
+                raise TypeError("recovery_catalog")
+        except (TypeError, ProtocolValidationError) as exc:
+            raise cls._invalid_response(type(exc).__name__) from None
+        return document
+
+    def create_orchestration_plan(
+        self,
+        generation_id: str,
+        *,
+        capabilities: dict[str, Any],
+        protocol_version: str = "1.0",
+    ) -> dict[str, Any]:
+        """POST /director/generations/{id}/orchestration-plan — M3 create-and-charge.
+        Carries the current capabilities snapshot (re-validated by the M3 gate).
+        No approval field: M3 is local ffmpeg/F5 orchestration with no third-party
+        media transfer (裁决 B), so there is no independent risk to confirm."""
+        status, document = self.transport.request(
+            method="POST",
+            url=f"{self.server_url}/director/generations/{generation_id}/orchestration-plan",
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Accept": "application/json",
+            },
+            payload={"capabilities": capabilities},
+            timeout=self.timeout,
+        )
+        if status >= 400:
+            raise self._error(status, document, protocol_version=protocol_version)
+        return self._orchestration_plan_out(document, protocol_version=protocol_version)
 
 
 @dataclass(frozen=True)

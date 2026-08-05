@@ -1,11 +1,11 @@
 {
-  "bundle_digest": "sha256:960d98551a6696cfa7f4b750399e45209157be06fd51bc41acd7442d311339c6",
+  "bundle_digest": "sha256:f20abcc690c0e3f8be06e5521871c8564485b118a9d7bd2931244b7a5a73dda2",
   "bundle_version": "1.1",
   "files": {
     "client-capabilities.schema.json": "sha256:6ebcb627dd3bded5ccc233a3fc3b42d100b4002e824a98dcc32912ecd6b59597",
-    "creative-brief.schema.json": "sha256:ead2e44571b0165c871cac1097a7096810a4dc723caaa370ea7540dfb4543c0f",
+    "creative-brief.schema.json": "sha256:ac99d26d08f36044f6cdde7353b5069c24f838561bf00fa0cb7d1e33b0ff4b97",
     "decision-card-set.schema.json": "sha256:4895b73a92367737676fbdfdf627b117c9d62132df96db3d10d5891f981a1613",
-    "error-envelope.schema.json": "sha256:c4fbc33253d25f0a7a488648a277a0db9d1bb00883617c5050d6af94d84081e3",
+    "error-envelope.schema.json": "sha256:8997b5d6cbfbc0b54dc221b19eb67cefaad8cf60b333ebc6b759922e1dc31164",
     "manifest-generation-out.schema.json": "sha256:789f42a9e837ef722eaf9df0c76bedfa72a2755fd184b512d842117624a8d009",
     "orchestration-plan.schema.json": "sha256:32b302d0f5d1a282dbc4dfffd73b879d873e71fb41288073c73db50fb693cbe7",
     "presenter-plan.schema.json": "sha256:48c733eebdaec6116dcb7919c96a47f69b44644665aa5296c3f63ffc047f0bc9",

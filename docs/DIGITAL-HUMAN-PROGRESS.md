@@ -102,12 +102,12 @@ capability wiring + doctor/canary：把已锁的删除子系统（coordinator + 
 ### 恢复操作（下次会话）
 
 ```bash
-cd ~/AgentMesh-Lecturecast
+cd <repo-root>            # 进入本仓库根目录（clone 位置自定）
 git log --oneline -4   # 最近：6572abc c3 lock 裁定；6767d1f F5 域修正；eae5fbc round-13；25e22a4 round-12
 .venv/bin/python -m pytest -q   # 应 1169 passed（或 UV_CACHE_DIR=/tmp/lc-uv-cache uv run --project . pytest tests/ -c pyproject.toml -q）
 ```
 
-Codex e5b0c3c 会话: `019fb840-a93b-73e1-b56c-a29b07a15e3d`（含 c1/c2/c3 全部审阅历史，resume 即续）。发审命令：`cat prompt.txt | codex exec -C ~/AgentMesh-Lecturecast resume <session> - -c 'model_reasoning_effort="low"' --json`（**务必 effort=low**，medium 在新 session 会挂；`-C` 必须在 `resume` 之前）。注：c3 round-13 最终复审用 fresh `codex exec`（非 resume）+ rephrased prompt 绕 cyber 内容过滤——若 resume 触发过滤，改用 fresh exec + invariant-completeness 框架（非 security 措辞）。
+Codex e5b0c3c 会话: `019fb840-a93b-73e1-b56c-a29b07a15e3d`（含 c1/c2/c3 全部审阅历史，resume 即续）。发审命令（在仓库根目录执行）：`cat prompt.txt | codex exec -C <repo-root> resume <session> - -c 'model_reasoning_effort="low"' --json`（**务必 effort=low**，medium 在新 session 会挂；`-C` 必须在 `resume` 之前）。注：c3 round-13 最终复审用 fresh `codex exec`（非 resume）+ rephrased prompt 绕 cyber 内容过滤——若 resume 触发过滤，改用 fresh exec + invariant-completeness 框架（非 security 措辞）。
 
 ### 关键不变量（已落地的安全边界，改动时不能放松）
 
@@ -130,4 +130,60 @@ Codex e5b0c3c 会话: `019fb840-a93b-73e1-b56c-a29b07a15e3d`（含 c1/c2/c3 全�
 4. 锁定后进下一块
 
 Codex 会话 ID（e5b0c3b，6 轮）: `019fa2e9-0a36-7f50-ab1b-0e223a366540`；e5b0c3c 建议开新 session。
+
+---
+
+## M2 主线（PresenterPlan）全部完成（2026-08-04）
+
+三仓 M2 里程碑交付链已闭环，每条对应设计稿在 server/client `docs/`：
+
+| 子步 | 内容 | 审阅 | commit |
+|------|------|------|--------|
+| m2-1 | M1 worker 交付补写 manifest artifact 行（digest 链根；`_commit_manifest_artifact`，byte-consistency + billing flag 单次读 + 12 轮审计）| round-12 LOCKABLE（断网转 Kimi + 独立逐窗口）| `812d880`（server）|
+| m2-2 | `validate_presenter_capabilities` gate（五项 fail-closed：schema 版本/HeyGen configured/M2 approval/consent/§1.5 链）+ `M2Approval` schema + `m2_not_ready` 进 v1.1 词表 | Kimi round-1 LOCKABLE | `3322b62`（server）|
+| m2-3 | `PresenterPlanService.create_presenter_plan`（gate → 幂等建 charge 行 → 派生 PresenterPlanV1_1 → 签名 → commit_ready_artifact）| Kimi round-2 LOCKABLE | `5deabc5`（server）|
+| m2-4 | M2 同步扣费（reclaim_for_sync_charge CAS + 锁内 deduct/apply + 锁外映射）+ `POST /director/generations/{gid}/presenter-plan` route + `PresenterPlanOut`（billing + provider recovery_catalog）| Kimi round-1 LOCKABLE | 见 server |
+| m2-5 | M2 awaiting_credits resume 回归（resume 协调器已通用，无产品代码改动）+ 4 跨仓契约 + 修 m2-2 引入的 3 个 client 漂移（re-vendor + M1 gate slice 边界）| Kimi round-1 LOCKABLE | `d19b758`（client）|
+| m2-6 | client M2 create 消费：`DirectorClient.create_presenter_plan`（HTTP）+ `ProjectStore.save_presenter_plan` + `verify_presenter_plan_signature`（created_at 窗口）+ `generation-presenter-plan` CLI 命令（`--yes` 门禁/幂等/D13 payload omission guard）+ `_status_workflow` M2 分支 + **M2 上下文 recovery 抑制**（`_recovery_workflow` 加 `m2_context`，provider catalog 无 m1 directive → 402 → 通用 `credit_top_up_required`）+ 3 跨仓 M2 create 契约 | Kimi LOCK-review PASS（5 疑点全裁决非 blocker）| `86fec2b` + `b39d4cd`（client）|
+
+**关键不变量（改动时不能放松）**：
+- **M2 approval 凭证永不落库**：`{approved: bool, disclosure_version: "heygen-transfer-2026-07-27"}` 只随 request 上传，client 默认 `--yes` 才 approved=true（cost 门禁）。
+- **digest 链**：PresenterPlan `production_manifest_digest` = M1.artifact_digest（DB 权威链根）；`capability_digest` 绑 v1.1 caps；client 落盘 0o444 + 验签 + digest-bind 拒篡改。
+- **M2 上下文 recovery 抑制**：M2 阶段 resume-402 `insufficient_credits` 不得给 m1 话术 → 落到通用 `credit_top_up_required`。信号 = `presenter-plan.json` 存在（fail-closed 视为 M2）。
+- **provider catalog 不含 m1 directive**（跨仓契约锁死）：server `_provider_heygen_directives` 无 `m1_insufficient_credits`。
+- **幂等**：client 落盘 short-circuit（presenter-plan.json 存在即不二次调用，无二次扣费）；server 幂等返回既有 plan。
+
+测试：client **1272 passed**（m2-6 新增 30：CLI 6 + client 15 + recovery 6 + contracts 3）+ ruff clean。
+
+## M3 主线（OrchestrationPlan）全部完成（2026-08-04）
+
+三仓 M3 里程碑交付链已闭环（spec §1.2 适用性矩阵无 M4，M3 为最后里程碑）。每条对应设计稿在 server/client `docs/`：
+
+| 子步 | 内容 | 审阅 | commit |
+|------|------|------|--------|
+| m3-3 | `validate_orchestration_capabilities` gate（schema 版本；own_voice → `f5` in tts_engines；photo 路径要求 M2 已 charged/releasable）+ `OrchestrationPlanService.create_orchestration_plan`（gate → 幂等建 charge 行 → 派生 OrchestrationPlanV1_1 → 签名 → commit_ready_artifact，`presenter_plan_digest=NULL` ⇔ 无 M2 行）| Kimi LOCKABLE | server |
+| m3-4 | M3 同步扣费（复用 reclaim_for_sync_charge CAS）+ `POST /director/generations/{gid}/orchestration-plan` route + `OrchestrationPlanOut`（billing + **base** recovery_catalog，M3 无 provider 依赖）| Kimi LOCKABLE | server |
+| m3-5 | M3 awaiting_credits resume 回归（resume 协调器已通用，零产品代码改动）+ 跨仓契约 + 修 m3-3/4 的 P2 测试缺口（4 项）+ P3 清理（5 项）| Kimi LOCKABLE（769 passed）| server `bbb63fc` + `057ef3b`；client `c677baf`（re-vendor v1.1 error-envelope m3_not_ready + M3 contracts，1276 passed）|
+| m3-6 | client M3 create 消费：`DirectorClient.create_orchestration_plan`（HTTP，payload 仅 `{capabilities}`，**无 approval** 裁决 B）+ `ProjectStore.save_orchestration_plan`（digest 绑定 + 0o444 + 幂等）+ `verify_orchestration_plan_signature`（Ed25519 + created_at 窗口）+ `generation-orchestration-plan` CLI 命令（**无 --yes 参数**）/ `_status_workflow` M3 分支 / photo→M2-charged 前置（gate ③）+ **M3 上下文 recovery 抑制**（`_project_in_m2_context` 同查 orchestration-plan.json → 402 → 通用 `credit_top_up_required`）+ recovery_catalog 持久化 v1.3 state + 跨仓契约（含 `test_client_m3_context_recovery_suppression`）| Kimi LOCKABLE（1308 passed）| client 未 commit |
+
+**关键不变量（改动时不能放松）**：
+- **M3 无 approval（裁决 B）**：M3 = ffmpeg 滤镜 + BGM + 倍速 +（own_voice）F5 本地合成，无第三方媒体传输。create payload 只有 `{capabilities}`，CLI 无 `--yes`。跨仓契约锁死 server `CreateOrchestrationPlanIn` 声明也无 approval。
+- **digest 链**：OrchestrationPlan `production_manifest_digest` = M1.artifact_digest（DB 权威链根）；`capability_digest` 绑 v1.1 caps；`presenter_plan_digest=NULL` ⇔ 该 generation 无 M2 行（own_voice 合法）。client 落盘 0o444 + 验签 + digest-bind 拒篡改。
+- **M3 上下文 recovery 抑制**：M3 阶段 resume-402 `insufficient_credits` 不得给 m1 话术 → 通用 `credit_top_up_required`。信号 = orchestration-plan.json 存在（与 presenter-plan.json 并列，`_project_in_m2_context` 同时检查）。
+- **photo 路径前置**：M3 create 前 photo avatar 必须已有 M2 charged（`presenter-plan.json` 缺失 → `m3_not_ready`，fail-closed 先于任何网络调用）。
+- **幂等**：client 落盘 short-circuit（orchestration-plan.json 存在即不二次调用，无二次扣费）；server 幂等返回既有 plan。
+
+测试：client **1308 passed**（m3-6 新增 32：client 19 + CLI 7 + recovery 2 + contracts 4；含 Kimi P1 photo 正例测试 + P2 跨仓 recovery 抑制契约；`save_presenter_plan` 引入的 `PublicKeyRing` F821 一并修净）。
+
+## 下次会话接续点（交接）—— M3 主线 ✅ 实现完成 → 下一步 **UAT 验收**
+
+**当前状态**：M3 三仓主线全部实现 + 测试全绿（server 769 passed locked；client **1308 passed**）。client m3-6 Kimi 审阅（`bgwik7fx8`）已处理完毕：P1 photo 门禁修复 + 正例测试、P2 跨仓契约测试补齐、P3 doc/命名清理全部完成 → **LOCKABLE**，待 commit。
+
+**下一步动作**：
+1. commit client m3-6（client 分支 `feat/digital-human-protocol-v1_1`）。
+2. **UAT 验收**（spec §1.2 矩阵覆盖：none+stock / none+own_voice / none+stock+bgm / photo 全链路）：端到端跑通 M1 →（photo）M2 → M3 的 create + 验签 + digest 链 + 幂等 + recovery 抑制。
+3. UAT 发现的问题 → 修 → 回归 → 收尾。
+
+**恢复操作**：`cd <repo-root> && git log --oneline -4`（repo-root = 本仓库 clone 位置）；`.venv/bin/python -m pytest tests/ -q` → 应 1308 passed。m3-6 设计稿：`docs/m3-6-client-create-design.md`（LOCKABLE）。
+
 

@@ -771,3 +771,252 @@ def test_resume_v1_1_malformed_error_detail_fails_closed(tmp_path: Path, monkeyp
     assert "workflow" not in body
     reloaded = store.load()
     assert reloaded.revision == before_rev
+
+
+# ---- §2.6 m2-6d: M2-context recovery suppression ----------------------------
+#
+# In the M2 presenter_plan phase, a resume-402 (insufficient_credits) must NOT
+# present the M1 base-catalog directive (m1_insufficient_credits — that 话术
+# belongs to the M1 manifest phase). The provider catalog delivered with the
+# M2 create response has no m1 directive, so the lookup would naturally miss —
+# but a persisted BASE catalog would wrongly match. `_recovery_workflow` takes
+# m2_context and suppresses the m1 mapping, falling through to the generic
+# credit_top_up_required.
+
+def _insufficient_credits_error() -> LectureCastError:
+    return LectureCastError(
+        code="insufficient_credits",
+        message="余额不足。",
+        next_action="充值后重试。",
+        http_status=402,
+        retryable=False,
+    )
+
+
+def test_recovery_workflow_m2_context_suppresses_m1_directive(monkeypatch, tmp_path):
+    """m2-6d: with m2_context=True, a base catalog carrying the m1 directive must
+    NOT present it — the resume-402 falls through (None → generic 话术)."""
+    import lecturecast.commands.director as d
+
+    key_id = "recovery_test_v1"
+    ring, private_key = _signed_catalog_keyring(key_id)
+    catalog = _signed_catalog_for("m1_insufficient_credits", key_id, private_key)
+    monkeypatch.setattr(
+        d,
+        "_verify_catalog_signature",
+        lambda c, keyring=None: _verify_with(key_id, ring, c),
+    )
+
+    result = d._recovery_workflow(
+        _insufficient_credits_error(), catalog, str(tmp_path), m2_context=True,
+    )
+
+    assert result is None  # falls through to _resume_error_workflow → credit_top_up_required
+
+
+def test_recovery_workflow_m1_context_still_presents_directive(monkeypatch, tmp_path):
+    """m2-6d: WITHOUT m2_context (M1 phase), the same catalog + error must still
+    present the m1 directive — no regression to the M1 recovery path."""
+    import lecturecast.commands.director as d
+
+    key_id = "recovery_test_v1"
+    ring, private_key = _signed_catalog_keyring(key_id)
+    catalog = _signed_catalog_for("m1_insufficient_credits", key_id, private_key)
+    monkeypatch.setattr(
+        d,
+        "_verify_catalog_signature",
+        lambda c, keyring=None: _verify_with(key_id, ring, c),
+    )
+
+    result = d._recovery_workflow(
+        _insufficient_credits_error(), catalog, str(tmp_path), m2_context=False,
+    )
+
+    assert result is not None
+    assert result["phase"] == "main_blocker_recovery_required"
+    assert result["next_action"]["id"] == "director.recovery.decide"
+
+
+def test_recovery_workflow_m2_context_does_not_suppress_heygen_directive(monkeypatch, tmp_path):
+    """m2-6d: m2_context only suppresses the M1 insufficient_credits mapping —
+    a heygen_* directive (provider catalog) must still present normally."""
+    import lecturecast.commands.director as d
+
+    key_id = "recovery_test_v1"
+    ring, private_key = _signed_catalog_keyring(key_id)
+    catalog = _signed_catalog_for("heygen_key_invalid", key_id, private_key)
+    monkeypatch.setattr(
+        d,
+        "_verify_catalog_signature",
+        lambda c, keyring=None: _verify_with(key_id, ring, c),
+    )
+    error = LectureCastError(
+        code="heygen_key_invalid", message="HeyGen key 无效。",
+        next_action="更新 key。", http_status=502, retryable=False,
+    )
+
+    result = d._recovery_workflow(error, catalog, str(tmp_path), m2_context=True)
+
+    assert result is not None
+    assert result["next_action"]["id"] == "director.recovery.decide"
+
+
+def test_project_in_m2_context_true_when_plan_persisted(tmp_path: Path):
+    """m2-6d: a project with a persisted presenter-plan.json is in M2 context."""
+    import lecturecast.commands.director as d
+    from lecturecast.project import ProjectStore
+
+    store = ProjectStore(tmp_path)
+    store.init(name="M2ctx")
+    (store.directory / "presenter-plan.json").write_text("{}", encoding="utf-8")
+
+    assert d._project_in_m2_context(tmp_path) is True
+
+
+def test_project_in_m2_context_false_without_plan(tmp_path: Path):
+    """m2-6d: a project without a presenter plan is NOT in M2 context (keeps M1 话术)."""
+    import lecturecast.commands.director as d
+    from lecturecast.project import ProjectStore
+
+    ProjectStore(tmp_path).init(name="M1only")
+
+    assert d._project_in_m2_context(tmp_path) is False
+
+
+def test_resume_m2_context_402_uses_generic_top_up(monkeypatch, tmp_path: Path):
+    """End-to-end: after an M2 create persisted the plan, a resume-402 must emit
+    the generic credit_top_up_required — NOT the M1 m1_insufficient_credits
+    directive even when a base catalog is present."""
+    from typer.testing import CliRunner
+    from lecturecast.cli import app
+    from lecturecast.director import DirectorStateStore
+
+    monkeypatch.setattr("lecturecast.commands.director.require_commercial_access", lambda: None)
+    monkeypatch.setattr("lecturecast.commands.director.require_project_host_workflow", lambda *a, **kw: None)
+    monkeypatch.setenv("LECTURECAST_API_KEY", "test_key")
+
+    key_id = "recovery_test_v1"
+    ring, private_key = _signed_catalog_keyring(key_id)
+    catalog = _signed_catalog_for("m1_insufficient_credits", key_id, private_key)
+
+    import lecturecast.commands.director as d
+    monkeypatch.setattr(
+        d, "_verify_catalog_signature",
+        lambda c, keyring=None: _verify_with(key_id, ring, c),
+    )
+
+    store = DirectorStateStore(tmp_path)
+    store.project.init(name="M2resume")
+    state = store.create(
+        server_url="https://api.test",
+        session={"session_id": "s1", "status": "confirmed", "brief_version": 1,
+                 "catalog_version": "cv", "updated_at": _NOW},
+        adapter_kind="codex", adapter_version="1.0.0", protocol_version="1.1",
+    )
+    state = store.update(state, generation_id="gen_1", generation_status="queued")
+    # Persist the presenter plan (the M2 create signal) + a base catalog in state.
+    from lecturecast.project import ProjectStore
+    pstore = ProjectStore(tmp_path)
+    (pstore.directory / "presenter-plan.json").write_text("{}", encoding="utf-8")
+    state = store.update(state, generation={
+        "generation_id": "gen_1", "status": "queued", "updated_at": _NOW,
+        "billing_state": "awaiting_credits", "resume_available": True,
+        "recovery_catalog": catalog,
+    })
+
+    class _ErrorCapture:
+        def request(self, *, method, url, headers, payload, timeout):
+            return 402, {
+                "detail": {"code": "insufficient_credits", "message": "余额不足。",
+                           "next_action": "充值后重试。", "retryable": False},
+            }
+
+    d._make_client = lambda _url: DirectorClient("https://api.test", transport=_ErrorCapture())
+
+    result = CliRunner().invoke(app, ["director", "generation-resume", str(tmp_path), "--json"])
+
+    assert result.exit_code == 1
+    body = json.loads(result.output)
+    # The M2 context suppresses the m1 directive → generic top-up 话术.
+    assert body["workflow"]["phase"] == "credit_top_up_required"
+    assert body["workflow"]["next_action"]["id"] == "director.generation.resume"
+
+
+# ---- §2.6 m3-6d: M3-context recovery suppression ----------------------------
+#
+# M3 shares the M2 suppression signal (`_project_in_m2_context` now treats a
+# persisted orchestration-plan.json as an M3 context). In the M3 phase a
+# resume-402 (insufficient_credits) must NOT present the M1 base-catalog
+# directive — it falls through to the generic credit_top_up_required.
+
+
+def test_project_in_m3_context_true_when_orchestration_plan_persisted(tmp_path: Path):
+    """m3-6d: a project with a persisted orchestration-plan.json is in M3 context —
+    `_project_in_m2_context` must also fire on the orchestration-plan signal."""
+    import lecturecast.commands.director as d
+    from lecturecast.project import ProjectStore
+
+    store = ProjectStore(tmp_path)
+    store.init(name="M3ctx")
+    (store.directory / "orchestration-plan.json").write_text("{}", encoding="utf-8")
+
+    assert d._project_in_m2_context(tmp_path) is True
+
+
+def test_resume_m3_context_402_uses_generic_top_up(monkeypatch, tmp_path: Path):
+    """End-to-end: after an M3 create persisted the orchestration plan, a
+    resume-402 must emit the generic credit_top_up_required — NOT the M1
+    m1_insufficient_credits directive even when a base catalog is present."""
+    from typer.testing import CliRunner
+    from lecturecast.cli import app
+    from lecturecast.director import DirectorStateStore
+
+    monkeypatch.setattr("lecturecast.commands.director.require_commercial_access", lambda: None)
+    monkeypatch.setattr("lecturecast.commands.director.require_project_host_workflow", lambda *a, **kw: None)
+    monkeypatch.setenv("LECTURECAST_API_KEY", "test_key")
+
+    key_id = "recovery_m3_test_v1"
+    ring, private_key = _signed_catalog_keyring(key_id)
+    catalog = _signed_catalog_for("m1_insufficient_credits", key_id, private_key)
+
+    import lecturecast.commands.director as d
+    monkeypatch.setattr(
+        d, "_verify_catalog_signature",
+        lambda c, keyring=None: _verify_with(key_id, ring, c),
+    )
+
+    store = DirectorStateStore(tmp_path)
+    store.project.init(name="M3resume")
+    state = store.create(
+        server_url="https://api.test",
+        session={"session_id": "s1", "status": "confirmed", "brief_version": 1,
+                 "catalog_version": "cv", "updated_at": _NOW},
+        adapter_kind="codex", adapter_version="1.0.0", protocol_version="1.1",
+    )
+    state = store.update(state, generation_id="gen_1", generation_status="queued")
+    # Persist the orchestration plan (the M3 create signal) + a base catalog.
+    from lecturecast.project import ProjectStore
+    pstore = ProjectStore(tmp_path)
+    (pstore.directory / "orchestration-plan.json").write_text("{}", encoding="utf-8")
+    state = store.update(state, generation={
+        "generation_id": "gen_1", "status": "queued", "updated_at": _NOW,
+        "billing_state": "awaiting_credits", "resume_available": True,
+        "recovery_catalog": catalog,
+    })
+
+    class _ErrorCapture:
+        def request(self, *, method, url, headers, payload, timeout):
+            return 402, {
+                "detail": {"code": "insufficient_credits", "message": "余额不足。",
+                           "next_action": "充值后重试。", "retryable": False},
+            }
+
+    d._make_client = lambda _url: DirectorClient("https://api.test", transport=_ErrorCapture())
+
+    result = CliRunner().invoke(app, ["director", "generation-resume", str(tmp_path), "--json"])
+
+    assert result.exit_code == 1
+    body = json.loads(result.output)
+    # The M3 context suppresses the m1 directive → generic top-up 话术.
+    assert body["workflow"]["phase"] == "credit_top_up_required"
+    assert body["workflow"]["next_action"]["id"] == "director.generation.resume"

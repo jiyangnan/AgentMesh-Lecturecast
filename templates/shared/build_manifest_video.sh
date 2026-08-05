@@ -63,13 +63,50 @@ VIDEO_LANDSCAPE="$("$PYTHON_BIN" "$SCRIPT_DIR/manifest_output_name.py" "$MANIFES
 COVER_VERTICAL="$("$PYTHON_BIN" "$SCRIPT_DIR/manifest_output_name.py" "$MANIFEST" cover 3:4)"
 COVER_LANDSCAPE="$("$PYTHON_BIN" "$SCRIPT_DIR/manifest_output_name.py" "$MANIFEST" cover 16:9)"
 
-echo "[6/8] 本地烧录字幕"
+echo "[6/8] 本地烧录字幕（+ BGM 混音）"
+BGM_GENRE=""
+if [ -f "$PROJECT_ROOT/orchestration-plan.json" ]; then
+  BGM_ENABLED="$("$PYTHON_BIN" -c "import json; d=json.load(open('$PROJECT_ROOT/orchestration-plan.json')); print('true' if d.get('bgm_enabled') else 'false')")"
+  if [ "$BGM_ENABLED" = "true" ]; then
+    BGM_GENRE="$("$PYTHON_BIN" -c "import json; d=json.load(open('$PROJECT_ROOT/orchestration-plan.json')); print(d.get('bgm_genre','none'))")"
+  fi
+fi
+BGM_WAV=""
+if [ -n "$BGM_GENRE" ] && [ "$BGM_GENRE" != "none" ]; then
+  # 成片容器时长 = 实测渲染总帧 / fps（audio-timing.json，权威驱动渲染）
+  DUR_FINAL="$("$PYTHON_BIN" -c "import json; d=json.load(open('$TIMING')); print('%.2f' % (d['render_total_frames']/d['fps']))")"
+  echo "  -- BGM $BGM_GENRE (creatorcut_local_synth, ${DUR_FINAL}s)"
+  "$PYTHON_BIN" "$SCRIPT_DIR/gen_bgm.py" --genre "$BGM_GENRE" --dur "$DUR_FINAL" --out "$BUILD_DIR/bgm_${BGM_GENRE}.wav"
+  BGM_WAV="$BUILD_DIR/bgm_${BGM_GENRE}.wav"
+fi
+# 一条 ffmpeg 完成烧字幕 + 可选 BGM 混音。BGM 作第 2 路输入，与旁白
+# noduck 混音（amix normalize=0 不衰减），混音参数照 manifest-schema-v1.1.md：
+# limiter 0.89 防削波。无 BGM 时退化为纯烧字幕（音频 copy 不重编码）。
+mux() {
+  local raw="$1" ass="$2" out="$3"
+  local vf=()
+  if [ -n "$ass" ]; then
+    vf=(-vf "ass=$ass")
+  fi
+  # macOS 默认 bash 3.2 + set -u 下空数组展开会 unbound variable，
+  # 故用 ${vf[@]+"${vf[@]}"}（同 make_digital_human_ep.sh 的 EXTRA_IN 模式）。
+  if [ -n "$BGM_WAV" ]; then
+    ffmpeg -y -i "$raw" -i "$BGM_WAV" -filter_complex "[0:a]anull[a0];[a0][1:a]amix=inputs=2:duration=first:normalize=0[amx];[amx]alimiter=limit=0.89[aout]" -map 0:v -map "[aout]" "${vf[@]+"${vf[@]}"}" -c:v libx264 -preset medium -crf 19 -pix_fmt yuv420p -c:a aac "$out"
+  else
+    ffmpeg -y -i "$raw" "${vf[@]+"${vf[@]}"}" -c:v libx264 -preset medium -crf 19 -pix_fmt yuv420p -c:a copy "$out"
+  fi
+}
 if "$PYTHON_BIN" -c "import json,sys; raise SystemExit(0 if json.load(open(sys.argv[1]))['subtitles']['burn_in'] else 1)" "$MANIFEST"; then
-  (cd "$BUILD_DIR" && ffmpeg -y -i video-vertical-raw.mp4 -vf "ass=subtitle_vertical.ass" -c:v libx264 -preset medium -crf 19 -pix_fmt yuv420p -c:a copy "$OUTPUT_DIR/$VIDEO_VERTICAL")
-  (cd "$BUILD_DIR" && ffmpeg -y -i video-landscape-raw.mp4 -vf "ass=subtitle_landscape.ass" -c:v libx264 -preset medium -crf 19 -pix_fmt yuv420p -c:a copy "$OUTPUT_DIR/$VIDEO_LANDSCAPE")
+  (cd "$BUILD_DIR" && mux video-vertical-raw.mp4 subtitle_vertical.ass "$OUTPUT_DIR/$VIDEO_VERTICAL")
+  (cd "$BUILD_DIR" && mux video-landscape-raw.mp4 subtitle_landscape.ass "$OUTPUT_DIR/$VIDEO_LANDSCAPE")
 else
-  cp "$BUILD_DIR/video-vertical-raw.mp4" "$OUTPUT_DIR/$VIDEO_VERTICAL"
-  cp "$BUILD_DIR/video-landscape-raw.mp4" "$OUTPUT_DIR/$VIDEO_LANDSCAPE"
+  if [ -n "$BGM_WAV" ]; then
+    (cd "$BUILD_DIR" && mux video-vertical-raw.mp4 "" "$OUTPUT_DIR/$VIDEO_VERTICAL")
+    (cd "$BUILD_DIR" && mux video-landscape-raw.mp4 "" "$OUTPUT_DIR/$VIDEO_LANDSCAPE")
+  else
+    cp "$BUILD_DIR/video-vertical-raw.mp4" "$OUTPUT_DIR/$VIDEO_VERTICAL"
+    cp "$BUILD_DIR/video-landscape-raw.mp4" "$OUTPUT_DIR/$VIDEO_LANDSCAPE"
+  fi
 fi
 
 echo "[7/8] 渲染双封面"

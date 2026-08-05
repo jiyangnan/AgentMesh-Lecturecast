@@ -139,7 +139,7 @@ error→failure_kind 映射是"每次调用时的确定性映射"，**不持久�
 
 ### §4.1 vendor v1.1 bundle
 
-- `cd AgentMesh-Lecturecast && .venv/bin/python scripts/update_protocol.py --source /Users/ferdinandji/lecturecast-server/protocol/v1.1 --schema-dir src/lecturecast/protocol/schemas/v1.1 --lock src/lecturecast/protocol/schemas/v1.1/protocol.lock`
+- `cd <repo-root> && .venv/bin/python scripts/update_protocol.py --source <lecturecast-server-root>/protocol/v1.1 --schema-dir src/lecturecast/protocol/schemas/v1.1 --lock src/lecturecast/protocol/schemas/v1.1/protocol.lock`
 - 预期：v1.1 lock 8→9 文件（+recovery-directive-catalog.schema.json）；manifest-generation-out 6d93b77d→789f42a9；lock digest 更新。
 - **v1.0 不重 vendor**（server v1.0 未动）。
 
