@@ -223,7 +223,7 @@
     },
     "PresenterBrief": {
       "additionalProperties": false,
-      "description": "Digital-human choices carried in CreativeBriefV1_1. `avatar` and\n`voice_mode` are decoupled (any combination); presenter_mode / bgm / consent\nare conditionally constrained. First release is photo-only (cartoon deferred\nper tech spec §1.2.2).",
+      "description": "Digital-human choices carried in CreativeBriefV1_1. `avatar` and\n`voice_mode` are decoupled (any combination); presenter_mode / bgm / consent\nare conditionally constrained. bgm is decoupled from avatar: a non-animated\nbrief may still carry music (spec §1.2 none+stock+bgm≠none → M1+M3). First\nrelease is photo-only (cartoon deferred per tech spec §1.2.2).",
       "properties": {
         "avatar": {
           "default": "none",

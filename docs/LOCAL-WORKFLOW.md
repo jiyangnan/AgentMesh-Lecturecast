@@ -68,11 +68,11 @@ official install does not depend on an unrelated system or project venv.
 
 ## 4. Install the bundled Remotion project once
 
-The public installer lives at `~/.lecturecast/app` on macOS. Copy the template
+The public installer lives under `$LECTURECAST_DIR` (default `~/.lecturecast/app`, overridable via the `LECTURECAST_DIR` env var) on macOS. Copy the template
 into the episode only when the episode does not already contain it:
 
 ```bash
-cp -R ~/.lecturecast/app/templates/remotion/. ./my-video/remotion/
+cp -R "$LECTURECAST_DIR/templates/remotion/." ./my-video/remotion/
 cd ./my-video/remotion
 npm install --no-fund --no-audit
 npx remotion browser ensure
@@ -87,13 +87,13 @@ Use npm, not bun. Do not edit the installed template in place.
 macOS:
 
 ```bash
-bash ~/.lecturecast/app/templates/shared/build_manifest_video.sh ./my-video
+bash "$LECTURECAST_DIR/templates/shared/build_manifest_video.sh" ./my-video
 ```
 
 Windows PowerShell:
 
 ```powershell
-& "$HOME\.lecturecast\app\templates\shared\build_manifest_video.ps1" `
+& "$env:LECTURECAST_DIR\templates\shared\build_manifest_video.ps1" `
   -ProjectRoot .\my-video
 ```
 
@@ -112,6 +112,23 @@ The signed Manifest remains read-only. The generated
 `.lecturecast/build/audio-timing.json` is a local execution artifact bound to its
 digest. If TTS differs from the planned timeline by more than 25%, rendering
 stops and asks for a corrected Manifest.
+
+### BGM 配乐（CreatorCut 菜单策略 → 本地现配乐）
+
+当项目根目录存在签名 `orchestration-plan.json`（客户端 `generation-orchestration-plan`
+命令验签落盘）且 `bgm_enabled=true` 时，step 6 会按 `bgm_genre`
+（`light_tech` / `bright_launch`，CreatorCut 配乐菜单）调用
+`templates/shared/gen_bgm.py`（`creatorcut_local_synth`，纯 stdlib 本地程序化合成，
+无下载/无 AI/无 API）现配乐，然后与旁白 noduck 混音：
+
+- **BGM 时长** = `render_total_frames / fps`（audio-timing.json，与成片容器严格对齐）。
+- **混音参数**（照 `lecturecast-server/docs/manifest-schema-v1.1.md`）：
+  `[0:a]anull[a0];[a0][1:a]amix=inputs=2:duration=first:normalize=0[amx];[amx]alimiter=limit=0.89[aout]`
+  —— noduck（不衰减旁白），limiter 0.89 防削波。
+- **降级**：无 orchestration-plan.json 或 `bgm_enabled=false` → 保持现状（无 BGM，
+  音频 `-c:a copy` 不重编码）。
+- 合成器确定性（seed 42），两档听感由云端 Director 只签 `genre`（不暴露合成配方）。
+- **canonical 唯一实现**：`templates/shared/gen_bgm.py` 是全链路唯一合成器（产品执行引擎与数字人 harness 共用同一份，harness 内为同 md5 副本）。改 BGM 只改 canonical 并同步 harness 副本，禁止另起 numpy/soundfile 版本（双份漂移源头，2026-08-05 已统一）。
 
 ## 6. Compliance and delivery
 

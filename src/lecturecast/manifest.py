@@ -281,6 +281,180 @@ def verify_recovery_catalog_signature(
     )
 
 
+def verify_presenter_plan_signature(
+    plan: "PresenterPlanV1_1 | dict[str, Any]",
+    *,
+    keyring: PublicKeyRing | None = None,
+) -> VerificationResult:
+    """Verify the Ed25519 signature on a PresenterPlan (tech spec §5.3.9).
+    Mirrors verify_manifest() including the created_at time-window check — the
+    plan schema carries created_at/content_expires_at (unlike the recovery
+    catalog). Failures raise LectureCastError (missing crypto →
+    client_upgrade_required; everything else → manifest_signature_invalid) so an
+    unverified plan never drives the local HeyGen execution (fail-closed)."""
+    try:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    except ImportError:
+        raise LectureCastError(
+            code="client_upgrade_required",
+            message="当前安装缺少签名验证依赖。",
+            next_action="重新运行官方安装器；不要跳过签名验证。",
+        ) from None
+    from .protocol import PresenterPlanV1_1, ProtocolValidationError
+
+    try:
+        document = (
+            plan
+            if isinstance(plan, PresenterPlanV1_1)
+            else PresenterPlanV1_1.model_validate(plan)
+        )
+    except ProtocolValidationError:
+        # A schema-invalid plan must fail closed as signature-invalid so the
+        # caller never persists or acts on an unvalidated plan.
+        raise LectureCastError(
+            code="manifest_signature_invalid",
+            message="PresenterPlan 内容无效，无法验签。",
+            next_action="重新获取该计划；不要根据未验签内容继续。",
+        ) from None
+    payload = document.model_dump()
+    signature = payload["signature"]
+    try:
+        trusted_keyring = keyring or PublicKeyRing.load()
+    except (OSError, ValueError, json.JSONDecodeError):
+        raise LectureCastError(
+            code="manifest_signature_invalid",
+            message="客户端签名信任根无效或尚未发布。",
+            next_action="请安装包含正式 LectureCast public keyring 的可信客户端版本。",
+        ) from None
+    key = trusted_keyring.get(signature["key_id"])
+    if key is None or key.status not in {"current", "previous"}:
+        raise LectureCastError(
+            code="manifest_signature_invalid",
+            message="PresenterPlan 使用了未知或已撤销的签名 Key。",
+            next_action="升级客户端并重新获取该计划；不要绕过签名验证。",
+        )
+    if signature["algorithm"] != key.algorithm or key.algorithm != "Ed25519":
+        raise LectureCastError(
+            code="manifest_signature_invalid",
+            message="PresenterPlan 签名算法与 Key 不匹配。",
+            next_action="重新获取该计划；不要手工修改 signature 元数据。",
+        )
+    created_at = _parse_time(payload["created_at"])
+    if not (_parse_time(key.not_before) <= created_at <= _parse_time(key.not_after)):
+        raise LectureCastError(
+            code="manifest_signature_invalid",
+            message="PresenterPlan 的签发时间不在该 Key 的有效窗口内。",
+            next_action="升级客户端并重新请求生成。",
+        )
+    try:
+        public_bytes = base64.b64decode(key.public_key, validate=True)
+        signature_bytes = base64.b64decode(signature["value"], validate=True)
+        Ed25519PublicKey.from_public_bytes(public_bytes).verify(
+            signature_bytes,
+            manifest_signing_bytes(document),
+        )
+    except (InvalidSignature, ValueError, binascii.Error):
+        raise LectureCastError(
+            code="manifest_signature_invalid",
+            message="PresenterPlan 签名验证失败，内容可能已被修改。",
+            next_action="恢复服务器签发的原计划；不要根据未验签内容继续。",
+        ) from None
+    return VerificationResult(
+        valid=True,
+        key_id=key.key_id,
+        key_status=key.status,
+        manifest_digest=canonical_digest(document),
+    )
+
+
+def verify_orchestration_plan_signature(
+    plan: "OrchestrationPlanV1_1 | dict[str, Any]",
+    *,
+    keyring: PublicKeyRing | None = None,
+) -> VerificationResult:
+    """Verify the Ed25519 signature on an OrchestrationPlan (tech spec §5.3.9).
+    Mirrors verify_presenter_plan_signature() including the created_at time-window
+    check — the plan schema carries created_at/content_expires_at. Failures raise
+    LectureCastError (missing crypto → client_upgrade_required; everything else →
+    manifest_signature_invalid) so an unverified plan never drives the local
+    ffmpeg/F5 orchestration (fail-closed)."""
+    try:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    except ImportError:
+        raise LectureCastError(
+            code="client_upgrade_required",
+            message="当前安装缺少签名验证依赖。",
+            next_action="重新运行官方安装器；不要跳过签名验证。",
+        ) from None
+    from .protocol import OrchestrationPlanV1_1, ProtocolValidationError
+
+    try:
+        document = (
+            plan
+            if isinstance(plan, OrchestrationPlanV1_1)
+            else OrchestrationPlanV1_1.model_validate(plan)
+        )
+    except ProtocolValidationError:
+        # A schema-invalid plan must fail closed as signature-invalid so the
+        # caller never persists or acts on an unvalidated plan.
+        raise LectureCastError(
+            code="manifest_signature_invalid",
+            message="OrchestrationPlan 内容无效，无法验签。",
+            next_action="重新获取该计划；不要根据未验签内容继续。",
+        ) from None
+    payload = document.model_dump()
+    signature = payload["signature"]
+    try:
+        trusted_keyring = keyring or PublicKeyRing.load()
+    except (OSError, ValueError, json.JSONDecodeError):
+        raise LectureCastError(
+            code="manifest_signature_invalid",
+            message="客户端签名信任根无效或尚未发布。",
+            next_action="请安装包含正式 LectureCast public keyring 的可信客户端版本。",
+        ) from None
+    key = trusted_keyring.get(signature["key_id"])
+    if key is None or key.status not in {"current", "previous"}:
+        raise LectureCastError(
+            code="manifest_signature_invalid",
+            message="OrchestrationPlan 使用了未知或已撤销的签名 Key。",
+            next_action="升级客户端并重新获取该计划；不要绕过签名验证。",
+        )
+    if signature["algorithm"] != key.algorithm or key.algorithm != "Ed25519":
+        raise LectureCastError(
+            code="manifest_signature_invalid",
+            message="OrchestrationPlan 签名算法与 Key 不匹配。",
+            next_action="重新获取该计划；不要手工修改 signature 元数据。",
+        )
+    created_at = _parse_time(payload["created_at"])
+    if not (_parse_time(key.not_before) <= created_at <= _parse_time(key.not_after)):
+        raise LectureCastError(
+            code="manifest_signature_invalid",
+            message="OrchestrationPlan 的签发时间不在该 Key 的有效窗口内。",
+            next_action="升级客户端并重新请求生成。",
+        )
+    try:
+        public_bytes = base64.b64decode(key.public_key, validate=True)
+        signature_bytes = base64.b64decode(signature["value"], validate=True)
+        Ed25519PublicKey.from_public_bytes(public_bytes).verify(
+            signature_bytes,
+            manifest_signing_bytes(document),
+        )
+    except (InvalidSignature, ValueError, binascii.Error):
+        raise LectureCastError(
+            code="manifest_signature_invalid",
+            message="OrchestrationPlan 签名验证失败，内容可能已被修改。",
+            next_action="恢复服务器签发的原计划；不要根据未验签内容继续。",
+        ) from None
+    return VerificationResult(
+        valid=True,
+        key_id=key.key_id,
+        key_status=key.status,
+        manifest_digest=canonical_digest(document),
+    )
+
+
 def inspect_manifest(manifest: ProductionManifest | dict[str, Any]) -> dict[str, Any]:
     document = (
         manifest if isinstance(manifest, ProductionManifest) else ProductionManifest.model_validate(manifest)

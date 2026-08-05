@@ -361,8 +361,11 @@ V1_1_BUNDLE_DIR = (
     / "src" / "lecturecast" / "protocol" / "schemas" / "v1.1"
 )
 # Audited bundle digest (matches lecturecast-server protocol/v1.1/protocol.lock).
-# Updated for e6 re-vendor: recovery-directive-catalog.schema.json added.
-V1_1_AUDITED_BUNDLE_DIGEST = "sha256:960d98551a6696cfa7f4b750399e45209157be06fd51bc41acd7442d311339c6"
+# Updated for m2-5 re-vendor: error-envelope.schema.json gained m2_not_ready.
+# Updated for m3-5 re-vendor: error-envelope.schema.json gained m3_not_ready.
+# Updated for bgm-decouple re-vendor: creative-brief.schema.json bgm now allowed
+# with avatar=none (spec §1.2 none+stock+bgm≠none → M1+M3).
+V1_1_AUDITED_BUNDLE_DIGEST = "sha256:f20abcc690c0e3f8be06e5521871c8564485b118a9d7bd2931244b7a5a73dda2"
 
 
 def test_v1_1_bundle_lock_is_intact_and_audited() -> None:
