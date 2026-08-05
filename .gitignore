@@ -8,6 +8,27 @@ dist/
 .ruff_cache/
 .DS_Store
 
+# ── Internal R&D docs guard ─────────────────────────────────────────────
+# docs/ 是公开产品契约文档（只允许 LECTURECAST-SYSTEM-BOUNDARY / LOCAL-* /
+# NARRATION-TIMING-CONTRACT / SIGNING-KEYRING / SUPPORTED-PLATFORMS 6 份）。
+# 研发过程文档（设计稿/盲预测/审阅/进度/复盘/UAT/经验清单）只准进私有仓
+# lecturecast-server/docs/internal/。以下命名模式一律 ignore，防误提交。
+*-design.md
+*-DESIGN.md
+DIGITAL-HUMAN-*
+uat-*
+*-RETRO*
+*-retro*
+COMMERCIAL-WORKFLOW-*
+# 目录级守卫：任何内部研发目录（含子路径）一律 ignore
+docs/internal/
+docs/design/
+docs/rfc/
+docs/notes/
+docs/scratch/
+docs/archive/
+docs/retro/
+
 # Local-workflow runtime artifacts (templates/remotion is committed source only)
 templates/remotion/node_modules/
 templates/remotion/out/
