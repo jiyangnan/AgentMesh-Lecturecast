@@ -68,11 +68,11 @@ official install does not depend on an unrelated system or project venv.
 
 ## 4. Install the bundled Remotion project once
 
-The public installer lives at `~/.lecturecast/app` on macOS. Copy the template
+The public installer lives under `$LECTURECAST_DIR` (default `~/.lecturecast/app`, overridable via the `LECTURECAST_DIR` env var) on macOS. Copy the template
 into the episode only when the episode does not already contain it:
 
 ```bash
-cp -R ~/.lecturecast/app/templates/remotion/. ./my-video/remotion/
+cp -R "$LECTURECAST_DIR/templates/remotion/." ./my-video/remotion/
 cd ./my-video/remotion
 npm install --no-fund --no-audit
 npx remotion browser ensure
@@ -87,13 +87,13 @@ Use npm, not bun. Do not edit the installed template in place.
 macOS:
 
 ```bash
-bash ~/.lecturecast/app/templates/shared/build_manifest_video.sh ./my-video
+bash "$LECTURECAST_DIR/templates/shared/build_manifest_video.sh" ./my-video
 ```
 
 Windows PowerShell:
 
 ```powershell
-& "$HOME\.lecturecast\app\templates\shared\build_manifest_video.ps1" `
+& "$env:LECTURECAST_DIR\templates\shared\build_manifest_video.ps1" `
   -ProjectRoot .\my-video
 ```
 
@@ -128,7 +128,7 @@ stops and asks for a corrected Manifest.
 - **降级**：无 orchestration-plan.json 或 `bgm_enabled=false` → 保持现状（无 BGM，
   音频 `-c:a copy` 不重编码）。
 - 合成器确定性（seed 42），两档听感由云端 Director 只签 `genre`（不暴露合成配方）。
-- **canonical 唯一实现**：`templates/shared/gen_bgm.py` 是全链路唯一合成器（产品执行引擎 + 数字人 harness `~/heygen-presenter/scripts/gen_bgm.py` 均使用它，后者为同 md5 副本）。改 BGM 只改 canonical 并同步 harness 副本，禁止另起 numpy/soundfile 版本（双份漂移源头，2026-08-05 已统一）。
+- **canonical 唯一实现**：`templates/shared/gen_bgm.py` 是全链路唯一合成器（产品执行引擎与数字人 harness 共用同一份，harness 内为同 md5 副本）。改 BGM 只改 canonical 并同步 harness 副本，禁止另起 numpy/soundfile 版本（双份漂移源头，2026-08-05 已统一）。
 
 ## 6. Compliance and delivery
 

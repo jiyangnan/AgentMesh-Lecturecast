@@ -102,12 +102,12 @@ capability wiring + doctor/canary：把已锁的删除子系统（coordinator + 
 ### 恢复操作（下次会话）
 
 ```bash
-cd ~/AgentMesh-Lecturecast
+cd <repo-root>            # 进入本仓库根目录（clone 位置自定）
 git log --oneline -4   # 最近：6572abc c3 lock 裁定；6767d1f F5 域修正；eae5fbc round-13；25e22a4 round-12
 .venv/bin/python -m pytest -q   # 应 1169 passed（或 UV_CACHE_DIR=/tmp/lc-uv-cache uv run --project . pytest tests/ -c pyproject.toml -q）
 ```
 
-Codex e5b0c3c 会话: `019fb840-a93b-73e1-b56c-a29b07a15e3d`（含 c1/c2/c3 全部审阅历史，resume 即续）。发审命令：`cat prompt.txt | codex exec -C ~/AgentMesh-Lecturecast resume <session> - -c 'model_reasoning_effort="low"' --json`（**务必 effort=low**，medium 在新 session 会挂；`-C` 必须在 `resume` 之前）。注：c3 round-13 最终复审用 fresh `codex exec`（非 resume）+ rephrased prompt 绕 cyber 内容过滤——若 resume 触发过滤，改用 fresh exec + invariant-completeness 框架（非 security 措辞）。
+Codex e5b0c3c 会话: `019fb840-a93b-73e1-b56c-a29b07a15e3d`（含 c1/c2/c3 全部审阅历史，resume 即续）。发审命令（在仓库根目录执行）：`cat prompt.txt | codex exec -C <repo-root> resume <session> - -c 'model_reasoning_effort="low"' --json`（**务必 effort=low**，medium 在新 session 会挂；`-C` 必须在 `resume` 之前）。注：c3 round-13 最终复审用 fresh `codex exec`（非 resume）+ rephrased prompt 绕 cyber 内容过滤——若 resume 触发过滤，改用 fresh exec + invariant-completeness 框架（非 security 措辞）。
 
 ### 关键不变量（已落地的安全边界，改动时不能放松）
 
@@ -184,6 +184,6 @@ Codex 会话 ID（e5b0c3b，6 轮）: `019fa2e9-0a36-7f50-ab1b-0e223a366540`；e
 2. **UAT 验收**（spec §1.2 矩阵覆盖：none+stock / none+own_voice / none+stock+bgm / photo 全链路）：端到端跑通 M1 →（photo）M2 → M3 的 create + 验签 + digest 链 + 幂等 + recovery 抑制。
 3. UAT 发现的问题 → 修 → 回归 → 收尾。
 
-**恢复操作**：`cd ~/AgentMesh-Lecturecast && git log --oneline -4`；`.venv/bin/python -m pytest tests/ -q` → 应 1308 passed。m3-6 设计稿：`docs/m3-6-client-create-design.md`（LOCKABLE）。
+**恢复操作**：`cd <repo-root> && git log --oneline -4`（repo-root = 本仓库 clone 位置）；`.venv/bin/python -m pytest tests/ -q` → 应 1308 passed。m3-6 设计稿：`docs/m3-6-client-create-design.md`（LOCKABLE）。
 
 
