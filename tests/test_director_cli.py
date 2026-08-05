@@ -86,12 +86,17 @@ class FakeDirectorClient:
         self.fail_first_generation = fail_first_generation
         self.final_generation_status = final_generation_status
         self.generation_failures = 0
+        self.create_calls: list[dict[str, Any]] = []
 
-    def create_session(self, source: dict[str, Any]) -> dict[str, Any]:
+    def create_session(
+        self, source: dict[str, Any], *, protocol_version: str = "1.0"
+    ) -> dict[str, Any]:
         assert set(source) == {"source_type", "title", "summary", "language"}
+        self.create_calls.append({"protocol_version": protocol_version})
         return dict(self.current)
 
-    def get_session(self, session_id: str) -> dict[str, Any]:
+    def get_session(self, session_id: str, *, protocol_version: str = "1.0") -> dict[str, Any]:
+        del protocol_version
         assert session_id == "dir_demo_001"
         return dict(self.current)
 
@@ -103,8 +108,9 @@ class FakeDirectorClient:
         option_id: str,
         catalog_version: str,
         custom_text: str | None = None,
+        protocol_version: str = "1.0",
     ) -> dict[str, Any]:
-        del custom_text
+        del custom_text, protocol_version
         assert session_id == "dir_demo_001"
         question = next(
             item for item in self.card["questions"] if item["question_id"] == question_id
@@ -120,8 +126,10 @@ class FakeDirectorClient:
         return dict(self.current)
 
     def confirm_brief(
-        self, session_id: str, *, expected_brief_version: int
+        self, session_id: str, *, expected_brief_version: int,
+        protocol_version: str = "1.0",
     ) -> dict[str, Any]:
+        del protocol_version
         assert session_id == "dir_demo_001"
         assert expected_brief_version == 0
         self.current = _session(
@@ -139,7 +147,9 @@ class FakeDirectorClient:
         generation_id: str,
         expected_brief_version: int,
         capabilities: dict[str, Any],
+        protocol_version: str = "1.0",
     ) -> dict[str, Any]:
+        del protocol_version
         assert session_id == "dir_demo_001"
         assert expected_brief_version == 1
         assert capabilities["adapter"]["kind"] in {
@@ -166,7 +176,8 @@ class FakeDirectorClient:
             "deducted_credits": 10,
         }
 
-    def get_generation(self, generation_id: str) -> dict[str, Any]:
+    def get_generation(self, generation_id: str, *, protocol_version: str = "1.0") -> dict[str, Any]:
+        del protocol_version
         assert generation_id == "generation_demo_001"
         return {
             "generation_id": generation_id,

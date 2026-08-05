@@ -1,0 +1,613 @@
+{
+  "$defs": {
+    "AudienceBrief": {
+      "additionalProperties": false,
+      "properties": {
+        "assumed_knowledge": {
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 12,
+          "title": "Assumed Knowledge",
+          "type": "array"
+        },
+        "description": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "option_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Option Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "option_id",
+        "description",
+        "assumed_knowledge"
+      ],
+      "title": "AudienceBrief",
+      "type": "object"
+    },
+    "Constraint": {
+      "additionalProperties": false,
+      "properties": {
+        "constraint_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Constraint Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "privacy",
+            "compliance",
+            "content",
+            "brand",
+            "accessibility",
+            "other"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "constraint_id",
+        "kind",
+        "value"
+      ],
+      "title": "Constraint",
+      "type": "object"
+    },
+    "HookBrief": {
+      "additionalProperties": false,
+      "properties": {
+        "option_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Option Id",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "option_id",
+        "text"
+      ],
+      "title": "HookBrief",
+      "type": "object"
+    },
+    "LearningGoalBrief": {
+      "additionalProperties": false,
+      "properties": {
+        "option_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Option Id",
+          "type": "string"
+        },
+        "statement": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Statement",
+          "type": "string"
+        },
+        "success_criteria": {
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Success Criteria",
+          "type": "array"
+        }
+      },
+      "required": [
+        "option_id",
+        "statement",
+        "success_criteria"
+      ],
+      "title": "LearningGoalBrief",
+      "type": "object"
+    },
+    "NarrativeBrief": {
+      "additionalProperties": false,
+      "properties": {
+        "chapter_count": {
+          "maximum": 12,
+          "minimum": 2,
+          "title": "Chapter Count",
+          "type": "integer"
+        },
+        "include_demo": {
+          "title": "Include Demo",
+          "type": "boolean"
+        },
+        "option_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Option Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "option_id",
+        "chapter_count",
+        "include_demo"
+      ],
+      "title": "NarrativeBrief",
+      "type": "object"
+    },
+    "OutputRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "aspect_ratio": {
+          "enum": [
+            "16:9",
+            "9:16",
+            "3:4"
+          ],
+          "title": "Aspect Ratio",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "video",
+            "cover"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "output_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Output Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "output_id",
+        "kind",
+        "aspect_ratio"
+      ],
+      "title": "OutputRequest",
+      "type": "object"
+    },
+    "PaceBrief": {
+      "additionalProperties": false,
+      "properties": {
+        "option_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Option Id",
+          "type": "string"
+        },
+        "words_per_minute": {
+          "maximum": 360,
+          "minimum": 100,
+          "title": "Words Per Minute",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "option_id",
+        "words_per_minute"
+      ],
+      "title": "PaceBrief",
+      "type": "object"
+    },
+    "PresenterBrief": {
+      "additionalProperties": false,
+      "description": "Digital-human choices carried in CreativeBriefV1_1. `avatar` and\n`voice_mode` are decoupled (any combination); presenter_mode / bgm / consent\nare conditionally constrained. First release is photo-only (cartoon deferred\nper tech spec §1.2.2).",
+      "properties": {
+        "avatar": {
+          "default": "none",
+          "enum": [
+            "none",
+            "photo"
+          ],
+          "title": "Avatar",
+          "type": "string"
+        },
+        "bgm": {
+          "default": "none",
+          "enum": [
+            "none",
+            "light_tech",
+            "bright_launch"
+          ],
+          "title": "Bgm",
+          "type": "string"
+        },
+        "presenter_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "three_segment",
+                "full_pip"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Presenter Mode"
+        },
+        "third_party_processing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThirdPartyProcessingBrief"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "voice_mode": {
+          "default": "stock",
+          "enum": [
+            "stock",
+            "own_voice"
+          ],
+          "title": "Voice Mode",
+          "type": "string"
+        }
+      },
+      "title": "PresenterBrief",
+      "type": "object"
+    },
+    "SeriesProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "episode_label": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Episode Label"
+        },
+        "name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "series_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Series Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "series_id",
+        "name"
+      ],
+      "title": "SeriesProfile",
+      "type": "object"
+    },
+    "SourceBrief": {
+      "additionalProperties": false,
+      "properties": {
+        "language": {
+          "maxLength": 12,
+          "pattern": "^[a-z]{2}(?:-[A-Z]{2})?$",
+          "title": "Language",
+          "type": "string"
+        },
+        "source_type": {
+          "enum": [
+            "topic",
+            "script",
+            "slides",
+            "screen_recording",
+            "mixed"
+          ],
+          "title": "Source Type",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_type",
+        "title",
+        "summary",
+        "language"
+      ],
+      "title": "SourceBrief",
+      "type": "object"
+    },
+    "ThirdPartyProcessingBrief": {
+      "additionalProperties": false,
+      "description": "HeyGen BYO consent state carried in the v1.1 Brief. There is deliberately\nNO `verified` field — preflight results are local advisory and never enter\nthe Brief (doing so would either stale-lock the digest or force a re-confirm\non every preflight run). See tech spec §2.2 / §3.6.",
+      "properties": {
+        "consent_status": {
+          "enum": [
+            "granted",
+            "declined",
+            "not_applicable"
+          ],
+          "title": "Consent Status",
+          "type": "string"
+        },
+        "consented_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Consented At"
+        },
+        "credential_mode": {
+          "const": "byo_local",
+          "title": "Credential Mode",
+          "type": "string"
+        },
+        "disclosure_version": {
+          "const": "heygen-transfer-2026-07-27",
+          "title": "Disclosure Version",
+          "type": "string"
+        },
+        "provider": {
+          "const": "heygen",
+          "title": "Provider",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "credential_mode",
+        "consent_status",
+        "disclosure_version"
+      ],
+      "title": "ThirdPartyProcessingBrief",
+      "type": "object"
+    },
+    "VisualBrief": {
+      "additionalProperties": false,
+      "properties": {
+        "motion_intensity": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Motion Intensity",
+          "type": "string"
+        },
+        "option_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Option Id",
+          "type": "string"
+        },
+        "palette": {
+          "items": {
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 2,
+          "title": "Palette",
+          "type": "array"
+        }
+      },
+      "required": [
+        "option_id",
+        "palette",
+        "motion_intensity"
+      ],
+      "title": "VisualBrief",
+      "type": "object"
+    },
+    "VoiceBrief": {
+      "additionalProperties": false,
+      "properties": {
+        "language": {
+          "maxLength": 12,
+          "pattern": "^[a-z]{2}(?:-[A-Z]{2})?$",
+          "title": "Language",
+          "type": "string"
+        },
+        "option_id": {
+          "maxLength": 96,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+          "title": "Option Id",
+          "type": "string"
+        },
+        "tone": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Tone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "option_id",
+        "language",
+        "tone"
+      ],
+      "title": "VoiceBrief",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "v1.1 digital-human Brief. Inherits all v1.0 fields unchanged; narrows\n`schema_version` to \"1.1\" and adds required `presenter`. The v1.0\nCreativeBrief (schema_version Literal[\"1.0\"]) stays frozen (byte/digest\nstable). The discriminated-union TypeAdapter wiring lands in §5.3 when the\nv1.1 Director path routes by schema_version (tech spec §2.6).",
+  "properties": {
+    "audience": {
+      "$ref": "#/$defs/AudienceBrief"
+    },
+    "brief_id": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Brief Id",
+      "type": "string"
+    },
+    "brief_version": {
+      "minimum": 1,
+      "title": "Brief Version",
+      "type": "integer"
+    },
+    "catalog_version": {
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(?:\\.[0-9]+)?$",
+      "title": "Catalog Version",
+      "type": "string"
+    },
+    "confirmed_at": {
+      "format": "date-time",
+      "title": "Confirmed At",
+      "type": "string"
+    },
+    "constraints": {
+      "items": {
+        "$ref": "#/$defs/Constraint"
+      },
+      "maxItems": 24,
+      "title": "Constraints",
+      "type": "array"
+    },
+    "depth": {
+      "enum": [
+        "overview",
+        "foundational",
+        "practical",
+        "advanced"
+      ],
+      "title": "Depth",
+      "type": "string"
+    },
+    "goal": {
+      "$ref": "#/$defs/LearningGoalBrief"
+    },
+    "hook": {
+      "$ref": "#/$defs/HookBrief"
+    },
+    "narrative": {
+      "$ref": "#/$defs/NarrativeBrief"
+    },
+    "outputs": {
+      "items": {
+        "$ref": "#/$defs/OutputRequest"
+      },
+      "maxItems": 6,
+      "minItems": 1,
+      "title": "Outputs",
+      "type": "array"
+    },
+    "pace": {
+      "$ref": "#/$defs/PaceBrief"
+    },
+    "presenter": {
+      "$ref": "#/$defs/PresenterBrief"
+    },
+    "schema_version": {
+      "const": "1.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "series": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SeriesProfile"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "session_id": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "title": "Session Id",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/SourceBrief"
+    },
+    "visual": {
+      "$ref": "#/$defs/VisualBrief"
+    },
+    "voice": {
+      "$ref": "#/$defs/VoiceBrief"
+    }
+  },
+  "required": [
+    "schema_version",
+    "brief_id",
+    "session_id",
+    "catalog_version",
+    "brief_version",
+    "source",
+    "audience",
+    "goal",
+    "depth",
+    "narrative",
+    "visual",
+    "pace",
+    "voice",
+    "hook",
+    "outputs",
+    "constraints",
+    "confirmed_at",
+    "presenter"
+  ],
+  "title": "CreativeBriefV1_1",
+  "type": "object"
+}

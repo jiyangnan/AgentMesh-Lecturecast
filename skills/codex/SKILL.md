@@ -19,7 +19,7 @@ run `lecturecast agent status <project-path> --adapter codex --host-contract
 1.0.0 --json` to recover the one next action. Replace documented placeholders
 only with values obtained from the human or local project. Never invent an
 alternative sequence or call a template script directly. Decision-card answers,
-Brief approval, the 10-credit generation, full-script approval and local render
+Brief approval, per-milestone credit approval, full-script approval and local render
 still require their explicit human checkpoints.
 
 If LectureCast was installed or upgraded after this Codex task started, this task

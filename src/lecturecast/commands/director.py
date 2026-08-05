@@ -6,7 +6,13 @@ from typing import Any
 
 import typer
 
-from ..capabilities import capture_capabilities
+from ..capabilities import (
+    capture_capabilities,
+    capture_capabilities_v1_1,
+    default_heygen_adapter_probe,
+    default_heygen_journal_probe,
+    heygen_processor,
+)
 from ..commercial import require_commercial_access
 from ..director import (
     DIRECTOR_ADAPTER_KINDS,
@@ -17,6 +23,7 @@ from ..director import (
     normalize_adapter_identity,
     resolve_server_url,
 )
+from ..config import MANIFEST_CREDIT_COST, resolve_protocol_version
 from ..errors import LectureCastError
 from ..host_agent import (
     HOST_ADAPTER_VERSION,
@@ -25,14 +32,22 @@ from ..host_agent import (
     require_host_adapter,
     require_project_host_workflow,
 )
+from ..manifest import verify_recovery_catalog_signature as _verify_catalog_signature
 from ..project import ProjectStore
-from ..protocol import ClientCapabilities, canonical_digest
+from ..protocol import ClientCapabilities, canonical_digest, parse_client_capabilities
 from .output import emit, fail
 
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 brief_app = typer.Typer(no_args_is_help=True, add_completion=False)
 app.add_typer(brief_app, name="brief", help="Show or confirm the server-backed Creative Brief.")
+
+digital_human_app = typer.Typer(no_args_is_help=True, add_completion=False)
+app.add_typer(
+    digital_human_app,
+    name="digital-human",
+    help="Client-local digital-human capability decisions (D13).",
+)
 
 
 def _make_client(server_url: str) -> DirectorClient:
@@ -116,6 +131,74 @@ def _command_action(
     return action
 
 
+def _validated_estimate(
+    session: dict[str, Any] | None, *, protocol_version: str = "1.0",
+    brief: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Validate and return the session's pricing_estimate for v1.1 sessions.
+    Returns None for v1.0 (no estimate expected). Raises LectureCastError on
+    malformed/missing v1.1 estimate (no silent fallback). Also verifies
+    card-level estimate matches session-level estimate."""
+    if protocol_version != "1.1" or not session:
+        return None
+    estimate = session.get("pricing_estimate")
+    if not estimate:
+        raise LectureCastError(
+            code="manifest_incompatible",
+            message="v1.1 session 缺少 pricing_estimate。",
+            next_action="重新运行 director next 刷新 session 后重试。",
+        )
+    # Card-level estimate must match session-level estimate (if both present).
+    # If the session has a card_set, the card MUST carry the same estimate.
+    card_set = session.get("decision_card_set")
+    if isinstance(card_set, dict):
+        card_estimate = card_set.get("pricing_estimate")
+        if card_estimate is None:
+            raise LectureCastError(
+                code="manifest_incompatible",
+                message="v1.1 card 缺少 pricing_estimate（与 session 顶层不一致）。",
+                next_action="重新运行 director next 刷新 session 后重试。",
+            )
+        if card_estimate != estimate:
+            raise LectureCastError(
+                code="manifest_incompatible",
+                message="card pricing_estimate 与 session 顶层 pricing_estimate 不一致。",
+                next_action="重新运行 director next 刷新 session 后重试。",
+            )
+    from ..pricing import PricingEstimateError, validate_pricing_estimate
+
+    try:
+        return validate_pricing_estimate(
+            estimate, protocol_version="1.1", brief=brief,
+        )
+    except PricingEstimateError as exc:
+        raise LectureCastError(
+            code="manifest_incompatible",
+            message=f"server 定价预估无效：{exc}",
+            next_action="重新运行 director next 刷新 session 后重试。",
+        ) from None
+
+
+def _pricing_credit_cost(
+    session: dict[str, Any] | None, *, protocol_version: str = "1.0",
+) -> int:
+    """Get the validated next milestone credit cost from the server-authoritative
+    pricing_estimate. V1.0 → legacy MANIFEST_CREDIT_COST. V1.1 → validated
+    estimate; missing/malformed raises (no silent fallback to 10)."""
+    from ..pricing import PricingEstimateError, next_milestone_cost_or_fail
+
+    try:
+        return next_milestone_cost_or_fail(session, protocol_version=protocol_version)
+    except PricingEstimateError as exc:
+        if protocol_version == "1.1":
+            raise LectureCastError(
+                code="manifest_incompatible",
+                message=f"server 定价预估无效：{exc}",
+                next_action="重新运行 director next 刷新 session 后重试。",
+            ) from None
+        return MANIFEST_CREDIT_COST
+
+
 def _session_workflow(
     directory: Path,
     state: DirectorState,
@@ -155,22 +238,124 @@ def _session_workflow(
             "director.generate",
             ["lecturecast", "director", "generate", root, "--json"],
             approval=True,
-            credit_cost=10,
+            credit_cost=_pricing_credit_cost(session, protocol_version=state.protocol_version),
         )
         phase = "credit_approval_required"
     else:
         action = {"id": "workflow.stop", "kind": "stop", "mutates": False}
         phase = "stopped"
-    return {
+    workflow: dict[str, Any] = {
         "phase": phase,
         "policy": "execute_only_returned_next_action",
         "next_action": action,
     }
+    # Project the server-authoritative pricing estimate (validated) for user
+    # disclosure. maximum_total is NOT a start gate — it's advisory.
+    estimate = _validated_estimate(
+        session, protocol_version=state.protocol_version,
+        brief=session.get("brief"),
+    )
+    if estimate:
+        # A confirmed session must have a FINAL estimate (bound to the Brief via
+        # brief_digest + estimate_digest). Provisional is insufficient for
+        # credit approval.
+        if session.get("status") == "confirmed" and estimate.get("estimate_status") != "final":
+            raise LectureCastError(
+                code="manifest_incompatible",
+                message="confirmed session 必须有 final pricing_estimate（已绑定 Brief digest）。",
+                next_action="重新运行 director next 刷新 session 后重试。",
+            )
+        workflow["pricing_estimate"] = {
+            k: estimate.get(k)
+            for k in (
+                "estimate_status", "minimum_total", "maximum_total",
+                "next_milestone_cost", "applicable_milestones",
+                "per_milestone", "charge_model", "pricing_version",
+            )
+        }
+    return workflow
+
+
+def _can_release_manifest(generation: dict[str, Any], *, protocol_version: str) -> bool:
+    """Whether it is safe to save the Manifest locally.
+    - v1.0: status=ready (legacy compatibility).
+    - v1.1: status=ready AND manifest milestone exists AND status==charged
+      AND its artifact_digest matches generation.manifest_digest.
+    """
+    if generation.get("status") != "ready":
+        return False
+    if protocol_version != "1.1":
+        return True  # v1.0 legacy
+    charges = generation.get("milestone_charges") or []
+    manifest_charge = next(
+        (c for c in charges if c.get("milestone") == "manifest"), None,
+    )
+    if manifest_charge is None or manifest_charge.get("status") != "charged":
+        return False
+    artifact_digest = manifest_charge.get("artifact_digest")
+    expected_digest = generation.get("manifest_digest")
+    return (
+        isinstance(expected_digest, str)
+        and isinstance(artifact_digest, str)
+        and artifact_digest == expected_digest
+    )
+
+
+def _status_workflow(
+    state: DirectorState, generation: dict[str, Any], root: str,
+) -> dict[str, Any]:
+    """Build the workflow for a generation status response. Extracted so the
+    v1.1/v1.0 credit_returned phase/action split is directly testable."""
+    gen_status = generation["status"]
+    billing_state = generation.get("billing_state")
+    resume_available = generation.get("resume_available") is True
+    # Priority: billing_state (v1.1) > legacy gen_status.
+    if billing_state == "awaiting_credits" and resume_available:
+        action = _command_action(
+            "director.generation.resume",
+            ["lecturecast", "director", "generation-resume", root, "--json"],
+            approval=True,
+        )
+        phase = "credit_resume_required"
+    elif gen_status == "ready" and _can_release_manifest(generation, protocol_version=state.protocol_version):
+        action = _command_action(
+            "manifest.review", ["lecturecast", "manifest", "review", root, "--json"],
+            approval=True,
+        )
+        phase = "script_review_required"
+    elif gen_status == "credit_returned":
+        if state.protocol_version == "1.1":
+            action = _command_action(
+                "director.next", ["lecturecast", "director", "next", root, "--json"],
+            )
+            phase = "estimate_refresh_required"
+        else:
+            action = _command_action(
+                "director.generate",
+                ["lecturecast", "director", "generate", root, "--json"],
+                approval=True, credit_cost=MANIFEST_CREDIT_COST,
+            )
+            phase = "credit_approval_required"
+    else:
+        action = _command_action(
+            "director.status", ["lecturecast", "director", "status", root, "--json"],
+        )
+        phase = f"generation_{gen_status}"
+    return {"phase": phase, "policy": "execute_only_returned_next_action", "next_action": action}
 
 
 def _state_workflow(directory: Path, state: DirectorState) -> dict[str, Any]:
     root = str(directory.expanduser().resolve())
-    if state.generation_id is not None:
+    # Priority: cached billing snapshot > generation recovery > session workflow.
+    # Billing snapshot is advisory-only → always directs to director.status for
+    # a fresh server response before the status workflow can offer resume.
+    if state.billing_state == "awaiting_credits" and state.resume_available:
+        action = _command_action(
+            "director.status",
+            ["lecturecast", "director", "status", root, "--json"],
+        )
+        phase = "billing_refresh_required"
+    elif state.generation_id is not None:
         action = _command_action(
             "director.status",
             ["lecturecast", "director", "status", root, "--json"],
@@ -189,13 +374,22 @@ def _state_workflow(directory: Path, state: DirectorState) -> dict[str, Any]:
         )
         phase = "brief_review_required"
     elif state.payload["session_status"] == "confirmed":
-        action = _command_action(
-            "director.generate",
-            ["lecturecast", "director", "generate", root, "--json"],
-            approval=True,
-            credit_cost=10,
-        )
-        phase = "credit_approval_required"
+        if state.protocol_version == "1.1":
+            # v1.1 confirmed: no session context here → refresh first to get
+            # the server-authoritative estimate before approving generation.
+            action = _command_action(
+                "director.next",
+                ["lecturecast", "director", "next", root, "--json"],
+            )
+            phase = "estimate_refresh_required"
+        else:
+            action = _command_action(
+                "director.generate",
+                ["lecturecast", "director", "generate", root, "--json"],
+                approval=True,
+                credit_cost=MANIFEST_CREDIT_COST,
+            )
+            phase = "credit_approval_required"
     else:
         action = {"id": "workflow.stop", "kind": "stop", "mutates": False}
         phase = "stopped"
@@ -251,12 +445,16 @@ def start(
             )
         adapter, adapter_version = _adapter(adapter, adapter_version)
         server_url = resolve_server_url(server)
-        session = _make_client(server_url).create_session(load_source_file(source))
+        protocol_version = resolve_protocol_version()
+        session = _make_client(server_url).create_session(
+            load_source_file(source), protocol_version=protocol_version,
+        )
         state = state_store.create(
             server_url=server_url,
             session=session,
             adapter_kind=adapter,
             adapter_version=adapter_version,
+            protocol_version=protocol_version,
         )
         emit(
             _result(
@@ -285,7 +483,9 @@ def next_step(
         require_project_host_workflow(
             directory, expected_adapter=str(state.payload["adapter_kind"])
         )
-        session = _make_client(state.payload["server_url"]).get_session(state.session_id)
+        session = _make_client(state.payload["server_url"]).get_session(
+            state.session_id, protocol_version=state.protocol_version,
+        )
         state = store.update(state, session=session)
         emit(
             _result(
@@ -375,6 +575,7 @@ def answer(
             option_id=option_id,
             catalog_version=catalog_version or str(state.payload["catalog_version"]),
             custom_text=_read_custom_text(custom_text_file),
+            protocol_version=state.protocol_version,
         )
         state = store.update(state, session=session)
         emit(
@@ -385,6 +586,81 @@ def answer(
             ),
             json_output=json_output,
             message=f"已提交 {question_id}={option_id}。",
+        )
+    except LectureCastError as error:
+        fail(error, json_output=json_output)
+    except Exception as exc:
+        _unexpected(exc, json_output=json_output)
+
+
+@digital_human_app.command("decide")
+def digital_human_decide(
+    directory: Path = typer.Argument(Path(".")),
+    choice: str = typer.Option(..., "--choice"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """§5.5e5d-d D13: route the user's digital-human downgrade decision.
+
+    Client-local — does NOT hit the server. Option A (configure) routes to the
+    read-only ``lecturecast doctor`` (HeyGen setup diagnosis); option B
+    (downgrade) routes back to ``director generate --accept-digital-human-downgrade``
+    (paid; the create_generation payload still omits third_party_processors).
+    """
+    try:
+        # type-stability discipline: choice must be a str AND whitelisted.
+        # A non-str or out-of-set value → LectureCastError (exit 2), never a
+        # bare crash (exit 1) and never a silent fallthrough.
+        if type(choice) is not str or choice not in {"configure", "downgrade"}:
+            raise LectureCastError(
+                code="invalid_choice",
+                message="choice 必须是 configure 或 downgrade。",
+                next_action="重新提交 D13 卡片选择（configure / downgrade）。",
+            )
+        store = DirectorStateStore(directory)
+        state = store.load()
+        root = str(directory.expanduser().resolve())
+        if choice == "configure":
+            # doctor is read-only (no project/server mutation) → mutates=False,
+            # no approval. Built as a raw dict because _command_action's
+            # mutate-heuristic would wrongly mark doctor mutates=True.
+            action: dict[str, Any] = {
+                "id": "lecturecast.doctor",
+                "kind": "command",
+                "argv": ["lecturecast", "doctor", "--project-root", root, "--json"],
+                "mutates": False,
+                "requires_user_approval": False,
+            }
+            phase = "digital_human_configure_required"
+            message = (
+                "请按 doctor 报告配置 HeyGen（设置 HEYGEN_API_KEY、确保 adapter 可导入、"
+                "journal 就绪），再重新采集能力并运行 director generate。"
+            )
+        else:  # downgrade
+            action = _command_action(
+                "director.generate",
+                [
+                    "lecturecast",
+                    "director",
+                    "generate",
+                    root,
+                    "--accept-digital-human-downgrade",
+                    "--json",
+                ],
+                approval=True,
+            )
+            phase = "credit_approval_required"
+            message = "已记录降级裁定：将以下发 M1 基础视频（不含数字人）。"
+        emit(
+            _result(
+                state=state,
+                workflow={
+                    "phase": phase,
+                    "policy": "execute_only_returned_next_action",
+                    "next_action": action,
+                },
+            ),
+            json_output=json_output,
+            message=message,
         )
     except LectureCastError as error:
         fail(error, json_output=json_output)
@@ -404,7 +680,9 @@ def show_brief(
         require_project_host_workflow(
             directory, expected_adapter=str(state.payload["adapter_kind"])
         )
-        session = _make_client(state.payload["server_url"]).get_session(state.session_id)
+        session = _make_client(state.payload["server_url"]).get_session(
+            state.session_id, protocol_version=state.protocol_version,
+        )
         state = store.update(state, session=session)
         if session.get("brief") is None:
             raise LectureCastError(
@@ -459,11 +737,14 @@ def confirm_brief(
         )
         client = _make_client(state.payload["server_url"])
         if expected_brief_version is None:
-            current = client.get_session(state.session_id)
+            current = client.get_session(
+                state.session_id, protocol_version=state.protocol_version,
+            )
             expected_brief_version = int(current["brief_version"])
         session = client.confirm_brief(
             state.session_id,
             expected_brief_version=expected_brief_version,
+            protocol_version=state.protocol_version,
         )
         brief = session.get("brief")
         if not isinstance(brief, dict):
@@ -482,25 +763,10 @@ def confirm_brief(
                 state=state,
                 session=session,
                 project=project.to_dict(),
-                workflow={
-                    "phase": "credit_approval_required",
-                    "policy": "execute_only_returned_next_action",
-                    "next_action": _command_action(
-                        "director.generate",
-                        [
-                            "lecturecast",
-                            "director",
-                            "generate",
-                            str(directory.expanduser().resolve()),
-                            "--json",
-                        ],
-                        approval=True,
-                        credit_cost=10,
-                    ),
-                },
+                workflow=_session_workflow(directory, state, session),
             ),
             json_output=json_output,
-            message="Creative Brief 已确认并保存；本步骤没有扣 credit。",
+            message="Creative Brief 已确认并保存；本步骤没有扣 credit。"
         )
     except LectureCastError as error:
         fail(error, json_output=json_output)
@@ -513,13 +779,16 @@ def _stored_capabilities(
     *,
     adapter_kind: str,
     adapter_version: str,
+    protocol_version: str = "1.0",
 ) -> ClientCapabilities | None:
     project = store.load()
     if project.payload["capability_digest"] is None:
         return None
     try:
-        document = ClientCapabilities.model_validate_json(
-            store.capabilities_path.read_text(encoding="utf-8")
+        import json as _json
+
+        document = parse_client_capabilities(
+            _json.loads(store.capabilities_path.read_text(encoding="utf-8"))
         )
     except Exception as exc:
         raise LectureCastError(
@@ -537,13 +806,158 @@ def _stored_capabilities(
     saved_adapter = document.model_dump()["adapter"]
     if saved_adapter != {"kind": adapter_kind, "version": adapter_version}:
         return None
+    # The stored capability must match the session's pinned protocol version;
+    # otherwise re-capture under the pinned version.
+    if document.model_dump().get("schema_version") != protocol_version:
+        return None
     return document
+
+
+def _stored_heygen_still_live(
+    document: ClientCapabilities, directory: Path
+) -> bool:
+    """§5.5e5c round-2 (Codex round-1 B1): a stored capability snapshot
+    reflects host state AT capture time. The M2 gate bills real PresenterPlan
+    credits on third_party_processors[heygen].configured, so before Director
+    reuses a stored snapshot it must confirm the live probes still agree. If
+    the key was removed, an adapter method disappeared, or the journal was
+    deleted / corrupted / downgraded since capture, the stored configured=true
+    is now a false claim -> return False so the caller drops the snapshot and
+    re-captures (which omits HeyGen).
+
+    No HeyGen claim in the stored document -> nothing to invalidate -> True.
+    Only the v1.1 path stores third_party_processors, so this is a no-op for
+    v1.0 snapshots.
+
+    Round-4 R3-4: top-level fail-closed backstop — the predicate never raises.
+    If liveness cannot be established (probe raises unexpectedly), treat the
+    snapshot as stale so the caller drops it and re-captures (omitting HeyGen)
+    rather than billing on a snapshot whose live state is unknown."""
+    try:
+        payload = document.model_dump()
+        heygen_configured = any(
+            isinstance(processor, dict)
+            and processor.get("provider") == "heygen"
+            and processor.get("configured")
+            for processor in (payload.get("third_party_processors") or [])
+        )
+        if not heygen_configured:
+            return True
+        live = heygen_processor(
+            adapter_probe=default_heygen_adapter_probe,
+            journal_probe=lambda: default_heygen_journal_probe(directory),
+        )
+        return live is not None
+    except Exception:
+        return False
+
+
+def _d13_brief_avatar(project_store: ProjectStore) -> str | None:
+    """§5.5e5d-d D13 intent signal: ``brief.presenter.avatar``.
+
+    The Brief is M0 (confirmed before generate) and persisted at
+    ``project_store.brief_path``. ``avatar == "photo"`` = user wants the HeyGen
+    digital human; ``avatar == "none"`` = M1-only (never triggers D13). The
+    intent lives in the Brief — NOT presenter_plan (which is M2/server-side).
+
+    Fail-closed: returns None on absent/malformed brief or non-str avatar —
+    None != "photo", so a missing/unreadable brief never triggers the card and
+    the M1 path proceeds normally. The broad ``except Exception`` is intentional:
+    D13 must NEVER abort the operator's billing flow because the brief file is
+    unexpectedly unreadable; it silently falls back to "no photo intent".
+    """
+    try:
+        brief = project_store.load_brief_dict()
+        if not isinstance(brief, dict):
+            return None
+        presenter = brief.get("presenter")
+        if not isinstance(presenter, dict):
+            return None
+        avatar = presenter.get("avatar")
+        if type(avatar) is not str:
+            return None
+        return avatar
+    except Exception:
+        return None
+
+
+def _d13_heygen_configured(capabilities: ClientCapabilities) -> bool:
+    """§5.5e5d-d D13 capability signal: is HeyGen configured+live right now?
+
+    Mirrors the canonical predicate in ``_stored_heygen_still_live`` (@755-760,
+    locked e5c round-4) — same expression, same source: ``third_party_processors``
+    presence + ``provider == "heygen"`` + ``configured`` truthy. Keep the two in
+    sync if the HeyGen capability shape ever changes. ``capture_capabilities_v1_1``
+    sets ``third_party_processors = [processor]`` ONLY when processor is not None
+    (env HEYGEN_API_KEY + adapter probe + journal probe all pass), so key
+    presence is the configured+live truth — the B1 stale-snapshot guard (@820)
+    has already dropped + recaptured if live state diverged from the snapshot.
+    """
+    payload = capabilities.model_dump()
+    return any(
+        isinstance(processor, dict)
+        and processor.get("provider") == "heygen"
+        and processor.get("configured")
+        for processor in (payload.get("third_party_processors") or [])
+    )
+
+
+def _d13_decision_action(root: str) -> dict[str, Any]:
+    """§5.5e5d-d D13 interactive downgrade card (next_action).
+
+    Client-local ``host_choice``: the server never learns about the local
+    capability gap (§0 Principle 6: advisory never uploaded), so this card is
+    NOT driven by ``session.decision_card_set`` — question/options are inline.
+    The host fills ``<option_id>`` (configure|downgrade) into ``argv_template``
+    and runs ``director digital-human decide``, which routes option A to the
+    read-only doctor (HeyGen setup diagnosis) and option B back to
+    ``director generate --accept-digital-human-downgrade`` (paid; payload still
+    omits ``third_party_processors`` — configured source-of-truth is untouched).
+    """
+    return {
+        "id": "director.digital_human.decide",
+        "kind": "host_choice",
+        "question_id": "digital_human_downgrade",
+        "question_label": (
+            "检测到 Creative Brief 指定 presenter.avatar=photo（要数字人），"
+            "但本机尚未配置 HeyGen（缺 HEYGEN_API_KEY / adapter / journal）。请裁定："
+        ),
+        "options": [
+            {
+                "id": "configure",
+                "label": "配置 HEYGEN_API_KEY 并重新采集（配置成功后可出数字人）",
+            },
+            {
+                "id": "downgrade",
+                "label": "降级为 M1 基础视频（本次不出数字人，仅口播；M2/M3 不触发）",
+            },
+        ],
+        "argv_template": [
+            "lecturecast",
+            "director",
+            "digital-human",
+            "decide",
+            root,
+            "--choice",
+            "<option_id>",
+            "--json",
+        ],
+        "mutates": True,
+        "requires_user_approval": True,
+    }
 
 
 @app.command("generate")
 def generate(
     directory: Path = typer.Argument(Path(".")),
     generation_id: str | None = typer.Option(None, "--generation-id"),
+    accept_digital_human_downgrade: bool = typer.Option(
+        False,
+        "--accept-digital-human-downgrade",
+        help="§5.5e5d-d D13: user consented to the M1 downgrade (option B). "
+        "Skips the interactive card; create_generation proceeds and the payload "
+        "still omits third_party_processors (no false configured=true).",
+    ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Reserve one stable generation ID, then request the paid Manifest once."""
@@ -581,24 +995,106 @@ def generate(
             project_store,
             adapter_kind=adapter_kind,
             adapter_version=adapter_version,
+            protocol_version=state.protocol_version,
         )
+        if capabilities is not None and state.protocol_version == "1.1":
+            # §5.5e5c round-2 (B1): the stored snapshot only proves digest /
+            # adapter / schema consistency — it does NOT re-probe HeyGen. Drop
+            # it if the live host can no longer serve what the snapshot claims,
+            # so a stale configured=true cannot bill an unexecutable capability.
+            if not _stored_heygen_still_live(capabilities, directory):
+                capabilities = None
         if capabilities is None:
-            capabilities = capture_capabilities(
-                adapter_kind=adapter_kind,
-                adapter_version=adapter_version,
-                project_root=directory,
-                repo_root=Path(__file__).resolve().parents[3],
-            )
+            if state.protocol_version == "1.1":
+                # §5.5e5c: pass real adapter + journal probes so the HeyGen
+                # capability is reported when the shipped stack is actually
+                # importable + the journal is not in a refuse-downgrade state.
+                # The key is still gated inside heygen_processor (env HEYGEN_API_KEY).
+                capabilities = capture_capabilities_v1_1(
+                    adapter_kind=adapter_kind,
+                    adapter_version=adapter_version,
+                    project_root=directory,
+                    repo_root=Path(__file__).resolve().parents[3],
+                    adapter_probe=default_heygen_adapter_probe,
+                    journal_probe=lambda: default_heygen_journal_probe(directory),
+                )
+            else:
+                capabilities = capture_capabilities(
+                    adapter_kind=adapter_kind,
+                    adapter_version=adapter_version,
+                    project_root=directory,
+                    repo_root=Path(__file__).resolve().parents[3],
+                )
             project = project_store.load()
             project_store.save_capabilities(
                 capabilities, expected_revision=project.revision
             )
 
+        # §5.5e5d-d D13: lazy interactive downgrade card. Fire ONLY when all four
+        # hold: (1) v1.1 session (v1.0 has no HeyGen concept); (2) user wants the
+        # digital human (brief.presenter.avatar == "photo"); (3) HeyGen is not
+        # configured+live right now (after the B1 stale-snapshot guard above);
+        # (4) user has NOT already consented to the M1 downgrade. Any path that
+        # fails one of these (M1 avatar=none, already-configured, v1.0, or
+        # post-consent option B) proceeds to create_generation unchanged. The
+        # card is client-local — the server is NOT informed of the capability
+        # gap (§0 Principle 6); create_generation's payload still omits
+        # third_party_processors either way (configured source-of-truth =
+        # capture_capabilities_v1_1, untouched by D13).
+        if (
+            state.protocol_version == "1.1"
+            and not accept_digital_human_downgrade
+            and _d13_brief_avatar(project_store) == "photo"
+            and not _d13_heygen_configured(capabilities)
+        ):
+            emit(
+                _result(
+                    state=state,
+                    workflow={
+                        "phase": "digital_human_decision_required",
+                        "policy": "execute_only_returned_next_action",
+                        "next_action": _d13_decision_action(
+                            str(directory.expanduser().resolve())
+                        ),
+                    },
+                ),
+                json_output=json_output,
+                message=(
+                    "检测到 avatar=photo 但本机未配置 HeyGen —— 已拦截 "
+                    "create_generation，需用户裁定（配置 / 降级 M1）。"
+                ),
+            )
+            return
+
+        # §5.5e5d-d D13 payload-omission guard (fail-closed, defense-in-depth).
+        # create_generation's payload must not carry a third_party_processors
+        # entry that is not configured+live (§0.3 / §0 Principle 6: advisory is
+        # never uploaded as a configured capability). capture_capabilities_v1_1
+        # already omits the key when unconfigured (heygen_processor returns None
+        # or configured=True — never configured=False), and the stored snapshot
+        # is digest-bound (hand-tampering breaks _verify_documents). This guard
+        # enforces the contract AT THE UPLOAD BOUNDARY too, so it holds
+        # regardless of the stored doc's shape. It NEVER adds the key (no
+        # force-include, no new truthy source — §2.4); it refuses to forward an
+        # inconsistent doc that capture cannot produce (a present-but-not-
+        # configured entry = local corruption; recapture to fix).
+        capabilities_payload = capabilities.model_dump()
+        if (
+            state.protocol_version == "1.1"
+            and "third_party_processors" in capabilities_payload
+            and not _d13_heygen_configured(capabilities)
+        ):
+            raise LectureCastError(
+                code="manifest_incompatible",
+                message="本地能力快照声明了一个未配置的 third_party_processor（capture 不会产生此状态）。",
+                next_action="重新运行 lecturecast project capabilities 采集能力，再 director generate。",
+            )
         generation = _make_client(state.payload["server_url"]).create_generation(
             state.session_id,
             generation_id=selected_id,
             expected_brief_version=int(state.payload["brief_version"]),
-            capabilities=capabilities.model_dump(),
+            capabilities=capabilities_payload,
+            protocol_version=state.protocol_version,
         )
         state = state_store.update(state, generation=generation)
         emit(
@@ -648,12 +1144,12 @@ def status(
                 next_action="先运行 director generate。",
             )
         generation = _make_client(state.payload["server_url"]).get_generation(
-            state.generation_id
+            state.generation_id, protocol_version=state.protocol_version,
         )
         state = state_store.update(state, generation=generation)
         project_store = ProjectStore(directory)
         project = project_store.load()
-        if generation["status"] == "ready":
+        if _can_release_manifest(generation, protocol_version=state.protocol_version):
             manifest = generation.get("manifest")
             if not isinstance(manifest, dict):
                 raise LectureCastError(
@@ -666,59 +1162,13 @@ def status(
             )
         if generation["status"] == "credit_returned":
             state = state_store.release_refunded_generation(state)
-        next_action = (
-            _command_action(
-                "manifest.review",
-                [
-                    "lecturecast",
-                    "manifest",
-                    "review",
-                    str(directory.expanduser().resolve()),
-                    "--json",
-                ],
-                approval=True,
-            )
-            if generation["status"] == "ready"
-            else _command_action(
-                "director.generate",
-                [
-                    "lecturecast",
-                    "director",
-                    "generate",
-                    str(directory.expanduser().resolve()),
-                    "--json",
-                ],
-                approval=True,
-                credit_cost=10,
-            )
-            if generation["status"] == "credit_returned"
-            else _command_action(
-                "director.status",
-                [
-                    "lecturecast",
-                    "director",
-                    "status",
-                    str(directory.expanduser().resolve()),
-                    "--json",
-                ],
-            )
-        )
+        root = str(directory.expanduser().resolve())
         emit(
             _result(
                 state=state,
                 generation=generation,
                 project=project.to_dict(),
-                workflow={
-                    "phase": (
-                        "script_review_required"
-                        if generation["status"] == "ready"
-                        else "credit_approval_required"
-                        if generation["status"] == "credit_returned"
-                        else f"generation_{generation['status']}"
-                    ),
-                    "policy": "execute_only_returned_next_action",
-                    "next_action": next_action,
-                },
+                workflow=_status_workflow(state, generation, root),
             ),
             json_output=json_output,
             message=f"Generation 状态：{generation['status']}。",
@@ -727,6 +1177,211 @@ def status(
         fail(error, json_output=json_output)
     except Exception as exc:
         _unexpected(exc, json_output=json_output)
+
+
+@app.command("generation-resume")
+def generation_resume(
+    directory: Path = typer.Argument(Path(".")),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Re-attempt billing for an awaiting_credits generation after the user tops up."""
+    try:
+        state_store = DirectorStateStore(directory)
+        state = state_store.load()
+        require_project_host_workflow(
+            directory, expected_adapter=str(state.payload["adapter_kind"])
+        )
+        if state.protocol_version != "1.1":
+            raise LectureCastError(
+                code="manifest_incompatible",
+                message="generation-resume 是 v1.1 里程碑计费功能，v1.0 项目不支持。",
+                next_action="v1.0 项目请用 director status 查看状态。",
+            )
+        if state.generation_id is None:
+            raise LectureCastError(
+                code="session_not_found",
+                message="本地项目还没有 Manifest generation。",
+                next_action="先运行 director generate。",
+            )
+        generation = _make_client(state.payload["server_url"]).resume_generation(
+            state.generation_id, protocol_version=state.protocol_version,
+        )
+        state = state_store.update(state, generation=generation)
+        project_store = ProjectStore(directory)
+        project = project_store.load()
+        if _can_release_manifest(generation, protocol_version=state.protocol_version):
+            manifest = generation.get("manifest")
+            if not isinstance(manifest, dict):
+                raise LectureCastError(
+                    code="manifest_incompatible",
+                    message="ready generation 没有有效 Manifest。",
+                    next_action="保留 generation_id 并联系支持；不要重复扣 credit。",
+                )
+            project = project_store.save_manifest(
+                manifest, expected_revision=project.revision
+            )
+        root = str(directory.expanduser().resolve())
+        emit(
+            _result(
+                state=state,
+                generation=generation,
+                project=project.to_dict(),
+                workflow=_status_workflow(state, generation, root),
+            ),
+            json_output=json_output,
+            message=f"Generation resume 完成：billing_state={generation.get('billing_state', 'N/A')}。",
+        )
+    except LectureCastError as error:
+        # Build a command-specific workflow for resume errors (don't use the
+        # generic fail() — the user needs structured next_action guidance).
+        root = str(directory.expanduser().resolve())
+        # §5.5e6 #121: if the v1.3 state carries a pre-signed recovery catalog,
+        # present the matching directive first (fail-closed: an unverified or
+        # non-matching catalog falls through to _resume_error_workflow).
+        recovery_workflow = _recovery_workflow(error, state.recovery_catalog, root)
+        if recovery_workflow is not None:
+            emit(
+                {"director": state.to_dict(), "error": error.to_dict(), "workflow": recovery_workflow},
+                json_output=json_output,
+                message=error.message,
+            )
+            raise typer.Exit(code=1)
+        workflow = _resume_error_workflow(error, root)
+        if workflow is not None:
+            emit(
+                {"director": state.to_dict(), "error": error.to_dict(), "workflow": workflow},
+                json_output=json_output,
+                message=error.message,
+            )
+            raise typer.Exit(code=1)
+        else:
+            fail(error, json_output=json_output)
+    except Exception as exc:
+        _unexpected(exc, json_output=json_output)
+
+
+def _recovery_workflow(
+    error: LectureCastError,
+    catalog: dict[str, Any] | None,
+    root: str,
+    *,
+    keyring: Any | None = None,
+) -> dict[str, Any] | None:
+    """Present a recovery directive for a failure_kind if the catalog has one
+    (tech spec §7.3/§7.4, Host Conformance Contract). Returns None when the
+    catalog is missing / unverified / has no matching directive — the caller
+    falls back to _resume_error_workflow / generic fail.
+
+    The catalog is verified HERE (fail-closed, §3 invariant 2): an unverified
+    catalog never drives a directive. `keyring` is injectable for tests and
+    mirrors verify_recovery_catalog_signature's contract."""
+    if catalog is None:
+        return None
+
+    try:
+        _verify_catalog_signature(catalog, keyring=keyring)
+    except LectureCastError:
+        return None  # unverified → never present directive 话术
+
+    from ..recovery import failure_kind_for_error, recover_from_failure
+
+    # Deterministic error→failure_kind: the explicit server-code mapping first
+    # (insufficient_credits → m1_insufficient_credits), then a catalog-driven
+    # pass-through — if the error code is itself a directive key in the verified
+    # catalog (local adapter failures like local_renderer_missing / heygen_*),
+    # look it up directly. Non-matching codes resolve to None and fall through
+    # (never hard-code a new failure_kind, §3 invariant 5 / §7.5).
+    failure_kind = failure_kind_for_error(error) or error.code
+    directive = recover_from_failure(failure_kind, catalog)
+    if directive is None:
+        return None
+    is_main_blocker = directive["is_main_blocker"]
+    if is_main_blocker:
+        phase = "main_blocker_recovery_required"
+    else:
+        phase = "recovery_directive_required"
+    return {
+        "phase": phase,
+        "policy": "execute_only_returned_next_action",
+        "next_action": {
+            "id": "director.recovery.decide",
+            "kind": "host_choice",
+            "question_id": f"recovery_{directive['failure_kind']}",
+            "question_label": directive["user_message"],
+            "options": [
+                {
+                    "id": opt["option_id"],
+                    "label": opt["label"] + ("（推荐）" if opt["recommended"] else ""),
+                }
+                for opt in directive["options"]
+            ],
+            "argv_template": [
+                "lecturecast", "director", "recovery", "decide",
+                root, "--choice", "<option_id>", "--json",
+            ],
+            "mutates": True,
+            "requires_user_approval": True,
+            "steer_back_line": directive["steer_back_line"],
+            "do_not": directive.get("do_not") or [],
+        },
+    }
+
+
+def _resume_error_workflow(error: LectureCastError, root: str) -> dict[str, Any] | None:
+    """Build a command-specific workflow for generation-resume errors.
+    Returns None if the error has no structured workflow (use generic fail())."""
+    code = error.code
+    http_status = error.http_status
+    # Malformed v1.1 envelope → fail-closed, no structured workflow.
+    if code == "manifest_incompatible":
+        return None
+    if code == "insufficient_credits" and http_status == 402:
+        return {
+            "phase": "credit_top_up_required",
+            "policy": "execute_only_returned_next_action",
+            "next_action": _command_action(
+                "director.generation.resume",
+                ["lecturecast", "director", "generation-resume", root, "--json"],
+                approval=True,
+            ),
+        }
+    if code == "generation_in_progress" and http_status == 409:
+        return {
+            "phase": "billing_refresh_required",
+            "policy": "execute_only_returned_next_action",
+            "next_action": _command_action(
+                "director.status",
+                ["lecturecast", "director", "status", root, "--json"],
+            ),
+        }
+    if http_status is not None and http_status == 409:
+        return {
+            "phase": "generation_blocked",
+            "policy": "execute_only_returned_next_action",
+            "next_action": {"id": "workflow.stop", "kind": "stop", "mutates": False},
+        }
+    if http_status is not None and http_status == 404:
+        return {
+            "phase": "generation_unavailable",
+            "policy": "execute_only_returned_next_action",
+            "next_action": {"id": "workflow.stop", "kind": "stop", "mutates": False},
+        }
+    if http_status is not None and http_status >= 500:
+        if error.retryable:
+            return {
+                "phase": "generation_recovery_required",
+                "policy": "execute_only_returned_next_action",
+                "next_action": _command_action(
+                    "director.status",
+                    ["lecturecast", "director", "status", root, "--json"],
+                ),
+            }
+        return {
+            "phase": "generation_blocked",
+            "policy": "execute_only_returned_next_action",
+            "next_action": {"id": "workflow.stop", "kind": "stop", "mutates": False},
+        }
+    return None  # generic fail()
 
 
 @app.command("delete")

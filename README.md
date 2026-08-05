@@ -31,7 +31,7 @@ on your machine:
 - **ffmpeg** burns subtitles and stitches audio + video.
 
 **Core loop**: commercial onboarding → Director choices → Brief approval →
-explicit 10-credit approval → signed ProductionManifest → complete signed-script
+per-milestone credit approval (server pricing_estimate) → signed ProductionManifest → complete signed-script
 approval → local voice/scenes/rendering → finished mp4s and covers.
 
 The Director receives only a bounded source summary, stable choice IDs, the Brief
@@ -129,7 +129,7 @@ is separate from ProductionManifest schema version `1.0`.
 The API key is never written to the project. The production Director URL is built
 in; `LECTURECAST_DIRECTOR_URL` is a staging/development override. `director
 resume` is local and deducts no credit. One confirmed ProductionManifest
-generation deducts 10 credits; run `director generate` only after approving the
+bills per milestone (charge-on-success-before-release); run `director generate` only after approving the
 Brief and that deduction.
 
 The real work happens when your AI agent follows the local workflow. In your agent chat:
@@ -140,7 +140,7 @@ The agent reads [AGENTS.md](AGENTS.md) / [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WOR
 
 ```
 topic
-  ▼ commercial onboarding (active monthly pass + ≥10 credits)
+  ▼ commercial onboarding (active monthly pass)
   ▼ Director choices + signed ProductionManifest
   ▼ complete signed script review  (your approval gate)
   ▼ per-section local TTS + measured execution timeline
