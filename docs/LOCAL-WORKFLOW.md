@@ -128,6 +128,7 @@ stops and asks for a corrected Manifest.
 - **降级**：无 orchestration-plan.json 或 `bgm_enabled=false` → 保持现状（无 BGM，
   音频 `-c:a copy` 不重编码）。
 - 合成器确定性（seed 42），两档听感由云端 Director 只签 `genre`（不暴露合成配方）。
+- **canonical 唯一实现**：`templates/shared/gen_bgm.py` 是全链路唯一合成器（产品执行引擎 + 数字人 harness `~/heygen-presenter/scripts/gen_bgm.py` 均使用它，后者为同 md5 副本）。改 BGM 只改 canonical 并同步 harness 副本，禁止另起 numpy/soundfile 版本（双份漂移源头，2026-08-05 已统一）。
 
 ## 6. Compliance and delivery
 
