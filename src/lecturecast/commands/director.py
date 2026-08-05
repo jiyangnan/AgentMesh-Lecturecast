@@ -281,7 +281,11 @@ def _can_release_manifest(generation: dict[str, Any], *, protocol_version: str) 
     """Whether it is safe to save the Manifest locally.
     - v1.0: status=ready (legacy compatibility).
     - v1.1: status=ready AND manifest milestone exists AND status==charged
-      AND its artifact_digest matches generation.manifest_digest.
+      AND its artifact_digest matches generation.manifest_digest. When no
+      manifest milestone charge row exists, fall back to the legacy single-charge
+      M1 flow (server 裁决 A: the worker never creates an M1 charge row — M1
+      stays on `generation.deducted_credits`). Only an already-paid ready
+      generation with a delivered manifest_digest satisfies the fallback.
     """
     if generation.get("status") != "ready":
         return False
@@ -291,14 +295,23 @@ def _can_release_manifest(generation: dict[str, Any], *, protocol_version: str) 
     manifest_charge = next(
         (c for c in charges if c.get("milestone") == "manifest"), None,
     )
-    if manifest_charge is None or manifest_charge.get("status") != "charged":
-        return False
-    artifact_digest = manifest_charge.get("artifact_digest")
-    expected_digest = generation.get("manifest_digest")
-    return (
-        isinstance(expected_digest, str)
-        and isinstance(artifact_digest, str)
-        and artifact_digest == expected_digest
+    if manifest_charge is not None:
+        if manifest_charge.get("status") != "charged":
+            return False
+        artifact_digest = manifest_charge.get("artifact_digest")
+        expected_digest = generation.get("manifest_digest")
+        return (
+            isinstance(expected_digest, str)
+            and isinstance(artifact_digest, str)
+            and artifact_digest == expected_digest
+        )
+    # No manifest milestone charge row: legacy single-charge M1 (裁决 A). A
+    # ready generation that was actually charged and delivered a manifest digest
+    # is released; the downstream save_manifest re-verifies the Ed25519
+    # signature, so an over-broad gate cannot fabricate a manifest.
+    deducted = generation.get("deducted_credits")
+    return isinstance(deducted, int) and deducted > 0 and isinstance(
+        generation.get("manifest_digest"), str
     )
 
 

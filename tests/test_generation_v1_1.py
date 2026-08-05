@@ -314,6 +314,30 @@ def test_can_release_manifest_v1_1_requires_charged_milestone():
     ) is True
     # ready but no milestone_charges → False
     assert _can_release_manifest({"status": "ready"}, protocol_version="1.1") is False
+    # legacy single-charge M1 fallback (裁决 A: no manifest charge row; the
+    # worker keeps M1 on generation.deducted_credits): ready + charged +
+    # delivered manifest_digest → True.
+    assert _can_release_manifest(
+        {"status": "ready", "deducted_credits": 10, "manifest_digest": "sha256:abc"},
+        protocol_version="1.1",
+    ) is True
+    # fallback fails when the generation was not charged (0 credits)
+    assert _can_release_manifest(
+        {"status": "ready", "deducted_credits": 0, "manifest_digest": "sha256:abc"},
+        protocol_version="1.1",
+    ) is False
+    # fallback fails when the manifest digest is absent
+    assert _can_release_manifest(
+        {"status": "ready", "deducted_credits": 10}, protocol_version="1.1",
+    ) is False
+    # the milestone-charge path still takes precedence over the fallback:
+    # an explicit uncharged manifest milestone is NOT released even though the
+    # generation reports deducted credits.
+    assert _can_release_manifest(
+        {"status": "ready", "deducted_credits": 10, "manifest_digest": "sha256:abc",
+         "milestone_charges": [{"milestone": "manifest", "status": "charge_pending", "artifact_digest": "sha256:abc"}]},
+        protocol_version="1.1",
+    ) is False
     # digest mismatch → False
     assert _can_release_manifest(
         {"status": "ready", "manifest_digest": "sha256:x", "milestone_charges": [{"milestone": "manifest", "status": "charged", "artifact_digest": "sha256:y"}]},
