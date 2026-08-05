@@ -97,21 +97,67 @@ Assert-LastExit "vertical cover name"
 $CoverLandscape = (& $PythonBin (Join-Path $ScriptDir "manifest_output_name.py") $Manifest cover "16:9").Trim()
 Assert-LastExit "landscape cover name"
 
-Write-Host "[6/8] Burn subtitles locally"
+Write-Host "[6/8] Burn subtitles locally (+ BGM mix)"
+$BgmGenre = ""
+$OrchestrationPlan = Join-Path $ProjectRoot "orchestration-plan.json"
+if (Test-Path -LiteralPath $OrchestrationPlan) {
+    # Set-StrictMode 下访问缺失 JSON 属性会抛错；用 PSObject.Properties 探测，
+    # 与 sh 版 d.get() 宽容降级语义一致（字段缺失 → 无 BGM）。
+    $OrchData = Get-Content -LiteralPath $OrchestrationPlan -Raw | ConvertFrom-Json
+    $EnabledProp = $OrchData.PSObject.Properties['bgm_enabled']
+    $GenreProp = $OrchData.PSObject.Properties['bgm_genre']
+    if ($EnabledProp -and $EnabledProp.Value -and $GenreProp) { $BgmGenre = [string]$GenreProp.Value }
+}
+$BgmWav = ""
+if ($BgmGenre -and $BgmGenre -ne "none") {
+    $TimingData = Get-Content -LiteralPath $Timing -Raw | ConvertFrom-Json
+    $DurFinal = [math]::Round([double]$TimingData.render_total_frames / [double]$TimingData.fps, 2)
+    Write-Host "  -- BGM $BgmGenre (creatorcut_local_synth, ${DurFinal}s)"
+    & $PythonBin (Join-Path $ScriptDir "gen_bgm.py") --genre $BgmGenre --dur $DurFinal --out (Join-Path $BuildDir "bgm_$BgmGenre.wav")
+    Assert-LastExit "bgm synth"
+    $BgmWav = Join-Path $BuildDir "bgm_$BgmGenre.wav"
+}
+function Invoke-Mux {
+    param([string]$Raw, [string]$Ass, [string]$Out)
+    $vfilter = @()
+    if ($Ass) { $vfilter = @("-vf", "ass=$Ass") }
+    $ffmpegArgs = @("-y", "-i", $Raw)
+    if ($BgmWav) {
+        $ffmpegArgs += @("-i", $BgmWav, "-filter_complex", "[0:a]anull[a0];[a0][1:a]amix=inputs=2:duration=first:normalize=0[amx];[amx]alimiter=limit=0.89[aout]", "-map", "0:v", "-map", "[aout]")
+        $ffmpegArgs += $vfilter
+        $ffmpegArgs += @("-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", "-c:a", "aac", $Out)
+    } else {
+        $ffmpegArgs += $vfilter
+        $ffmpegArgs += @("-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", "-c:a", "copy", $Out)
+    }
+    & ffmpeg @ffmpegArgs
+}
 $ManifestData = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json
 if ($ManifestData.subtitles.burn_in) {
     Push-Location $BuildDir
     try {
-        & ffmpeg -y -i video-vertical-raw.mp4 -vf "ass=subtitle_vertical.ass" -c:v libx264 -preset medium -crf 19 -pix_fmt yuv420p -c:a copy (Join-Path $OutputDir $VideoVertical)
+        Invoke-Mux "video-vertical-raw.mp4" "subtitle_vertical.ass" (Join-Path $OutputDir $VideoVertical)
         Assert-LastExit "vertical subtitle burn"
-        & ffmpeg -y -i video-landscape-raw.mp4 -vf "ass=subtitle_landscape.ass" -c:v libx264 -preset medium -crf 19 -pix_fmt yuv420p -c:a copy (Join-Path $OutputDir $VideoLandscape)
+        Invoke-Mux "video-landscape-raw.mp4" "subtitle_landscape.ass" (Join-Path $OutputDir $VideoLandscape)
         Assert-LastExit "landscape subtitle burn"
     } finally {
         Pop-Location
     }
 } else {
-    Copy-Item -LiteralPath (Join-Path $BuildDir "video-vertical-raw.mp4") -Destination (Join-Path $OutputDir $VideoVertical) -Force
-    Copy-Item -LiteralPath (Join-Path $BuildDir "video-landscape-raw.mp4") -Destination (Join-Path $OutputDir $VideoLandscape) -Force
+    if ($BgmWav) {
+        Push-Location $BuildDir
+        try {
+            Invoke-Mux "video-vertical-raw.mp4" "" (Join-Path $OutputDir $VideoVertical)
+            Assert-LastExit "vertical subtitle burn"
+            Invoke-Mux "video-landscape-raw.mp4" "" (Join-Path $OutputDir $VideoLandscape)
+            Assert-LastExit "landscape subtitle burn"
+        } finally {
+            Pop-Location
+        }
+    } else {
+        Copy-Item -LiteralPath (Join-Path $BuildDir "video-vertical-raw.mp4") -Destination (Join-Path $OutputDir $VideoVertical) -Force
+        Copy-Item -LiteralPath (Join-Path $BuildDir "video-landscape-raw.mp4") -Destination (Join-Path $OutputDir $VideoLandscape) -Force
+    }
 }
 
 Write-Host "[7/8] Render both covers"
