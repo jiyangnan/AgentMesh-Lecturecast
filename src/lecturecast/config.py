@@ -15,7 +15,7 @@ KEYRING_SERVICE = "agentmesh-lecturecast"
 KEYRING_USERNAME = "api-key"
 PROJECT_DIRECTORY = ".lecturecast"
 PROJECT_SCHEMA_VERSION = "1.0"
-CLIENT_VERSION = "0.5.1"
+CLIENT_VERSION = "0.6.0"
 
 # Director protocol version negotiation (§5.5a). Default stays "1.0" until the
 # server's milestone-billing flags, Core actions, and client canary are all
