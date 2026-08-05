@@ -14,6 +14,7 @@ class LectureCastError(Exception):
         next_action: str,
         retryable: bool = False,
         cause: str | None = None,
+        http_status: int | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -21,6 +22,7 @@ class LectureCastError(Exception):
         self.next_action = next_action
         self.retryable = retryable
         self.cause = cause
+        self.http_status = http_status
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {

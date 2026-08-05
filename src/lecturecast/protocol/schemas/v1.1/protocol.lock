@@ -1,0 +1,16 @@
+{
+  "bundle_digest": "sha256:960d98551a6696cfa7f4b750399e45209157be06fd51bc41acd7442d311339c6",
+  "bundle_version": "1.1",
+  "files": {
+    "client-capabilities.schema.json": "sha256:6ebcb627dd3bded5ccc233a3fc3b42d100b4002e824a98dcc32912ecd6b59597",
+    "creative-brief.schema.json": "sha256:ead2e44571b0165c871cac1097a7096810a4dc723caaa370ea7540dfb4543c0f",
+    "decision-card-set.schema.json": "sha256:4895b73a92367737676fbdfdf627b117c9d62132df96db3d10d5891f981a1613",
+    "error-envelope.schema.json": "sha256:c4fbc33253d25f0a7a488648a277a0db9d1bb00883617c5050d6af94d84081e3",
+    "manifest-generation-out.schema.json": "sha256:789f42a9e837ef722eaf9df0c76bedfa72a2755fd184b512d842117624a8d009",
+    "orchestration-plan.schema.json": "sha256:32b302d0f5d1a282dbc4dfffd73b879d873e71fb41288073c73db50fb693cbe7",
+    "presenter-plan.schema.json": "sha256:48c733eebdaec6116dcb7919c96a47f69b44644665aa5296c3f63ffc047f0bc9",
+    "production-manifest.schema.json": "sha256:3d6c780abae769cc2579bc3889ec0a5c0bd62247c855239a5ef6e1e532bf7ee0",
+    "recovery-directive-catalog.schema.json": "sha256:240feda2890cb7ddc242736e80cc4e68df2cbfcd54b3cdb77b3d741f3aa99c93"
+  },
+  "generated_by": "lecturecast-server"
+}

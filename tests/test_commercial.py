@@ -117,35 +117,11 @@ def test_active_monthly_pass_is_usable_even_when_legacy_subscription_is_free() -
             True,
             "inactive",
         ),
-        (
-            {
-                "balance": 0,
-                "tier": "free",
-                "source": "monthly_pass",
-                "expires_at": "2026-08-21T00:00:00Z",
-            },
-            "insufficient_credits",
-            False,
-            "active",
-        ),
-        (
-            {
-                "balance": 9,
-                "tier": "free",
-                "source": "monthly_pass",
-                "expires_at": "2026-08-21T00:00:00Z",
-            },
-            "insufficient_credits",
-            False,
-            "active",
-        ),
     ],
     ids=[
         "free",
         "signup-trial",
         "expired-pass",
-        "zero-credit-paid-pass",
-        "insufficient-paid-pass",
     ],
 )
 def test_commercial_access_fails_closed(
@@ -167,6 +143,40 @@ def test_commercial_access_fails_closed(
     assert access.pass_status == status
     assert access.next_suggested.endswith("#pricing")
     assert len(transport.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "balance,expected_credit",
+    [
+        (
+            {"balance": 0, "tier": "free", "source": "monthly_pass",
+             "expires_at": "2026-08-21T00:00:00Z"},
+            0,
+        ),
+        (
+            {"balance": 9, "tier": "free", "source": "monthly_pass",
+             "expires_at": "2026-08-21T00:00:00Z"},
+            9,
+        ),
+    ],
+    ids=["zero-credit-paid-pass", "insufficient-paid-pass"],
+)
+def test_paid_pass_usable_with_low_credit_advisory(
+    balance: dict[str, Any], expected_credit: int,
+) -> None:
+    """§5.5c: a paid pass with zero/low credit is USABLE — balance is advisory,
+    not a start gate. The server's per-milestone 402 is the real billing gate."""
+    transport = FakeTransport(balance=(200, balance))
+    access = CommercialClient(
+        api_key="am_live_commercial_secret",
+        core_url="https://core.example.test",
+        transport=transport,
+    ).access()
+    assert access.usable is True
+    assert access.reason == "ready"
+    assert access.pass_status == "active"
+    assert access.credit == expected_credit
+    assert access.enough_credit is False
 
 
 def test_invalid_key_is_rejected_without_echoing_secret() -> None:

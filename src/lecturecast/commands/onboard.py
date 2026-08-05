@@ -134,7 +134,7 @@ def onboarding_status(
         next_suggested = access.next_suggested
     elif not access.usable:
         user_prompt = (
-            "当前 AgentMesh360 账户没有可用的付费 LectureCast 权限或不足 10 credits。"
+            "当前 AgentMesh360 账户没有可用的付费 LectureCast 权益。"
         )
         next_suggested = PRICING_URL
     elif not director["reachable"]:

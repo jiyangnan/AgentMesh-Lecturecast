@@ -16,7 +16,7 @@ from .config import PROJECT_DIRECTORY, PROJECT_SCHEMA_VERSION
 from .errors import LectureCastError
 from .file_lock import exclusive_file_lock
 from .manifest import verify_manifest
-from .protocol import ClientCapabilities, CreativeBrief, ProductionManifest, canonical_digest
+from .protocol import ClientCapabilities, CreativeBrief, ProductionManifest, canonical_digest, parse_client_capabilities, parse_creative_brief
 from .timing import narration_timing_issues
 
 
@@ -222,7 +222,7 @@ class ProjectStore:
     def _verify_documents(self, state: ProjectState) -> None:
         expected_brief = state.payload["creative_brief_digest"]
         if expected_brief is not None:
-            brief = CreativeBrief.model_validate(_read_object(self.brief_path))
+            brief = parse_creative_brief(_read_object(self.brief_path))
             if canonical_digest(brief) != expected_brief:
                 raise LectureCastError(
                     code="manifest_incompatible",
@@ -240,7 +240,7 @@ class ProjectStore:
                 )
         expected_capabilities = state.payload["capability_digest"]
         if expected_capabilities is not None:
-            capabilities = ClientCapabilities.model_validate(_read_object(self.capabilities_path))
+            capabilities = parse_client_capabilities(_read_object(self.capabilities_path))
             if canonical_digest(capabilities) != expected_capabilities:
                 raise LectureCastError(
                     code="manifest_incompatible",
@@ -264,7 +264,7 @@ class ProjectStore:
         *,
         expected_revision: int,
     ) -> ProjectState:
-        document = brief if isinstance(brief, CreativeBrief) else CreativeBrief.model_validate(brief)
+        document = brief if isinstance(brief, CreativeBrief) else parse_creative_brief(brief)
         with self._locked():
             state = self._load_unlocked()
             self._check_revision(state, expected_revision)
@@ -275,6 +275,16 @@ class ProjectStore:
                 creative_brief_digest=canonical_digest(document),
             )
 
+    def load_brief_dict(self) -> dict[str, Any] | None:
+        """§5.5e5d-d D13: return the persisted Creative Brief as a raw dict, or
+        None if no brief has been saved yet. Read-only; does NOT re-validate the
+        digest (callers that need integrity use `_verify_documents`). Raises
+        `manifest_incompatible` via `_read_object` on corrupt/invalid JSON so the
+        caller can wrap it for fail-closed behavior. Symmetric with `save_brief`."""
+        if not self.brief_path.exists():
+            return None
+        return _read_object(self.brief_path)
+
     def save_capabilities(
         self,
         capabilities: ClientCapabilities | dict[str, Any],
@@ -284,7 +294,7 @@ class ProjectStore:
         document = (
             capabilities
             if isinstance(capabilities, ClientCapabilities)
-            else ClientCapabilities.model_validate(capabilities)
+            else parse_client_capabilities(capabilities)
         )
         with self._locked():
             state = self._load_unlocked()

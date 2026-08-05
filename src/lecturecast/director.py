@@ -11,10 +11,16 @@ from typing import Any, Mapping, Protocol
 from urllib.parse import urlparse
 
 from .auth import require_api_key
-from .config import DEFAULT_DIRECTOR_URL, DIRECTOR_URL_ENV
+from .config import (
+    DEFAULT_DIRECTOR_URL,
+    DIRECTOR_URL_ENV,
+    SUPPORTED_PROTOCOL_VERSIONS,
+)
 from .errors import LectureCastError
 from .project import ProjectStore, atomic_write_json
-from .protocol import CreativeBrief, DecisionCardSet, ProductionManifest
+from .protocol import CreativeBrief, DecisionCardSet, ManifestGenerationOutV1_1, ProductionManifest
+from .protocol.models import ProtocolValidationError
+from .protocol.models import documents_for_protocol_version
 
 
 DIRECTOR_STATE_SCHEMA_VERSION = "1.0"
@@ -205,20 +211,49 @@ class DirectorClient:
         self.timeout = timeout
 
     @staticmethod
-    def _error(status: int, document: dict[str, Any]) -> LectureCastError:
+    def _error(status: int, document: dict[str, Any], *, protocol_version: str = "1.0") -> LectureCastError:
         detail = document.get("detail")
-        if not isinstance(detail, dict):
+        # v1.1: non-dict/missing detail → manifest_incompatible (strict).
+        if protocol_version == "1.1":
+            if not isinstance(detail, dict):
+                return LectureCastError(
+                    code="manifest_incompatible",
+                    message="Director Server 返回了不符合 v1.1 协议的错误响应。",
+                    next_action="不要根据未验证字段继续；保留本地状态后联系支持。",
+                    retryable=False,
+                    http_status=status,
+                )
+            from .protocol.models import ProtocolValidationError
+            try:
+                from .protocol import ErrorEnvelopeV1_1
+                ErrorEnvelopeV1_1.model_validate(detail)
+            except ProtocolValidationError:
+                return LectureCastError(
+                    code="manifest_incompatible",
+                    message="Director Server 返回了不符合 v1.1 协议的错误响应。",
+                    next_action="不要根据未验证字段继续；保留本地状态后联系支持。",
+                    retryable=False,
+                    http_status=status,
+                )
+        elif not isinstance(detail, dict):
+            # v1.0: preserve legacy behavior.
             return LectureCastError(
                 code="core_unavailable",
                 message="Director Server 请求失败。",
                 next_action="稍后重试；本地状态会保留稳定 ID。",
                 retryable=status >= 500,
+                http_status=status,
             )
+        # Strict retryable: only accept literal bool.
+        raw_retryable = detail.get("retryable", False)
+        if type(raw_retryable) is not bool:
+            raw_retryable = False
         return LectureCastError(
             code=str(detail.get("code") or "core_unavailable"),
             message=str(detail.get("message") or "Director Server 请求失败。"),
             next_action=str(detail.get("next_action") or "按 Server 提示修复后重试。"),
-            retryable=bool(detail.get("retryable", False)),
+            retryable=raw_retryable,
+            http_status=status,
         )
 
     def request(
@@ -238,7 +273,7 @@ class DirectorClient:
             timeout=self.timeout,
         )
         if status >= 400:
-            raise self._error(status, document)
+            raise self._error(status, document, protocol_version="1.0")
         return document
 
     @staticmethod
@@ -251,7 +286,7 @@ class DirectorClient:
         )
 
     @classmethod
-    def _session(cls, document: dict[str, Any]) -> dict[str, Any]:
+    def _session(cls, document: dict[str, Any], *, protocol_version: str = "1.0") -> dict[str, Any]:
         try:
             if not isinstance(document["session_id"], str):
                 raise TypeError("session_id")
@@ -268,18 +303,19 @@ class DirectorClient:
                 raise TypeError("catalog_version")
             if not isinstance(document["updated_at"], str):
                 raise TypeError("updated_at")
+            models = documents_for_protocol_version(protocol_version)
             card_set = document.get("decision_card_set")
             if card_set is not None:
-                DecisionCardSet.model_validate(card_set)
+                models["decision_card_set"].model_validate(card_set)
             brief = document.get("brief")
             if brief is not None:
-                CreativeBrief.model_validate(brief)
+                models["creative_brief"].model_validate(brief)
         except (KeyError, TypeError, ValueError) as exc:
             raise cls._invalid_response(type(exc).__name__) from None
         return document
 
     @classmethod
-    def _generation(cls, document: dict[str, Any]) -> dict[str, Any]:
+    def _generation(cls, document: dict[str, Any], *, protocol_version: str = "1.0") -> dict[str, Any]:
         try:
             if not isinstance(document["generation_id"], str):
                 raise TypeError("generation_id")
@@ -301,18 +337,31 @@ class DirectorClient:
             manifest = document.get("manifest")
             if manifest is not None:
                 ProductionManifest.model_validate(manifest)
-        except (KeyError, TypeError, ValueError) as exc:
+            # v1.1: validate the full generation document against the schema,
+            # which includes milestone_charges + billing_state + resume_available
+            # and rejects sensitive fields (additionalProperties: false).
+            if protocol_version == "1.1":
+                ManifestGenerationOutV1_1.model_validate(document)
+        except (KeyError, TypeError, ValueError, ProtocolValidationError) as exc:
             raise cls._invalid_response(type(exc).__name__) from None
         return document
 
-    def create_session(self, source: dict[str, Any]) -> dict[str, Any]:
+    def create_session(
+        self, source: dict[str, Any], *, protocol_version: str = "1.0"
+    ) -> dict[str, Any]:
         return self._session(
-            self.request("POST", "/director/sessions", {"source": source})
+            self.request(
+                "POST",
+                "/director/sessions",
+                {"source": source, "protocol_version": protocol_version},
+            ),
+            protocol_version=protocol_version,
         )
 
-    def get_session(self, session_id: str) -> dict[str, Any]:
+    def get_session(self, session_id: str, *, protocol_version: str = "1.0") -> dict[str, Any]:
         return self._session(
-            self.request("GET", f"/director/sessions/{session_id}")
+            self.request("GET", f"/director/sessions/{session_id}"),
+            protocol_version=protocol_version,
         )
 
     def answer(
@@ -323,6 +372,7 @@ class DirectorClient:
         option_id: str,
         catalog_version: str,
         custom_text: str | None = None,
+        protocol_version: str = "1.0",
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "question_id": question_id,
@@ -334,18 +384,21 @@ class DirectorClient:
         return self._session(
             self.request(
                 "POST", f"/director/sessions/{session_id}/answers", payload
-            )
+            ),
+            protocol_version=protocol_version,
         )
 
     def confirm_brief(
-        self, session_id: str, *, expected_brief_version: int
+        self, session_id: str, *, expected_brief_version: int,
+        protocol_version: str = "1.0",
     ) -> dict[str, Any]:
         return self._session(
             self.request(
                 "POST",
                 f"/director/sessions/{session_id}/brief/confirm",
                 {"expected_brief_version": expected_brief_version},
-            )
+            ),
+            protocol_version=protocol_version,
         )
 
     def create_generation(
@@ -355,6 +408,7 @@ class DirectorClient:
         generation_id: str,
         expected_brief_version: int,
         capabilities: dict[str, Any],
+        protocol_version: str = "1.0",
     ) -> dict[str, Any]:
         return self._generation(
             self.request(
@@ -365,13 +419,32 @@ class DirectorClient:
                     "expected_brief_version": expected_brief_version,
                     "capabilities": capabilities,
                 },
-            )
+            ),
+            protocol_version=protocol_version,
         )
 
-    def get_generation(self, generation_id: str) -> dict[str, Any]:
+    def get_generation(self, generation_id: str, *, protocol_version: str = "1.0") -> dict[str, Any]:
         return self._generation(
-            self.request("GET", f"/director/generations/{generation_id}")
+            self.request("GET", f"/director/generations/{generation_id}"),
+            protocol_version=protocol_version,
         )
+
+    def resume_generation(self, generation_id: str, *, protocol_version: str = "1.0") -> dict[str, Any]:
+        """POST /director/generations/{id}/resume — re-attempt deduct for
+        awaiting_credits milestones after the user tops up."""
+        status, document = self.transport.request(
+            method="POST",
+            url=f"{self.server_url}/director/generations/{generation_id}/resume",
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Accept": "application/json",
+            },
+            payload=None,
+            timeout=self.timeout,
+        )
+        if status >= 400:
+            raise self._error(status, document, protocol_version=protocol_version)
+        return self._generation(document, protocol_version=protocol_version)
 
     def delete_session(self, session_id: str) -> dict[str, Any]:
         document = self.request("DELETE", f"/director/sessions/{session_id}")
@@ -393,6 +466,11 @@ class DirectorState:
         return int(self.payload["state_revision"])
 
     @property
+    def protocol_version(self) -> str:
+        # Pinned at session create; old v1.0 state files default to "1.0".
+        return self.payload.get("protocol_version", "1.0")
+
+    @property
     def session_id(self) -> str:
         return str(self.payload["session_id"])
 
@@ -400,6 +478,25 @@ class DirectorState:
     def generation_id(self) -> str | None:
         value = self.payload.get("generation_id")
         return str(value) if value is not None else None
+
+    @property
+    def billing_state(self) -> str | None:
+        """Last observed billing_state from the server. Advisory display only —
+        the server is always authoritative. Not a basis for auto-resume."""
+        return self.payload.get("billing_state")
+
+    @property
+    def resume_available(self) -> bool:
+        """Last observed resume_available from the server. Advisory display only."""
+        return bool(self.payload.get("resume_available"))
+
+    @property
+    def recovery_catalog(self) -> dict[str, Any] | None:
+        """Last delivered pre-signed RecoveryDirectiveCatalog (v1.3 state). At
+        resume-error time the catalog is reachable here (finding #6 resolution).
+        The client still verifies its signature before acting (fail-closed)."""
+        value = self.payload.get("recovery_catalog")
+        return value if isinstance(value, dict) else None
 
     def to_dict(self) -> dict[str, Any]:
         return dict(self.payload)
@@ -427,9 +524,88 @@ class DirectorStateStore:
             "generation_status",
             "updated_at",
         }
-        if set(payload) != required:
-            raise ValueError("unexpected or incomplete Director state")
-        if payload.get("schema_version") != DIRECTOR_STATE_SCHEMA_VERSION:
+        # State schema is versioned by the Director protocol version (§5.5a):
+        # v1.0: frozen 13-key shape (no protocol_version key).
+        # v1.1: 14 keys (adds protocol_version="1.1").
+        # v1.2: 17 keys (adds billing_state / resume_available / billing_updated_at)
+        #       — written when the first v1.1 generation response with billing
+        #       state is persisted. Old v1.0/v1.1 files load unchanged.
+        # v1.3: 18 keys (adds recovery_catalog — the pre-signed RecoveryDirective
+        #       Catalog delivered with the v1.1 session/generation response).
+        #       Written when a response carrying recovery_catalog is persisted,
+        #       so the catalog is reachable at resume-error time. Old v1.0-v1.2
+        #       files load unchanged (recovery_catalog defaults to None).
+        schema_version = payload.get("schema_version")
+        if schema_version == "1.0":
+            if set(payload) != required:
+                raise ValueError("unexpected or incomplete Director state")
+        elif schema_version == "1.1":
+            if set(payload) != required | {"protocol_version"}:
+                raise ValueError("unexpected or incomplete Director state")
+            if payload.get("protocol_version") != "1.1":
+                raise ValueError("v1.1 state requires protocol_version=1.1")
+        elif schema_version == "1.2":
+            billing_keys = {"protocol_version", "billing_state", "resume_available", "billing_updated_at"}
+            if set(payload) != required | billing_keys:
+                raise ValueError("unexpected or incomplete Director state")
+            if payload.get("protocol_version") != "1.1":
+                raise ValueError("v1.2 state requires protocol_version=1.1")
+            # Strict type/vocab validation for billing snapshot fields.
+            billing_state = payload.get("billing_state")
+            if billing_state not in (
+                "in_progress", "awaiting_credits", "partially_charged", "charged", "blocked",
+            ):
+                raise ValueError(f"invalid billing_state: {billing_state!r}")
+            if type(payload.get("resume_available")) is not bool:
+                raise ValueError(f"resume_available must be bool, got {type(payload.get('resume_available'))}")
+            updated = payload.get("billing_updated_at")
+            if not isinstance(updated, str) or not updated:
+                raise ValueError("billing_updated_at must be a non-empty string")
+            # Must be a parseable timezone-aware ISO-8601 timestamp.
+            try:
+                from datetime import datetime
+                parsed = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    raise ValueError("billing_updated_at must be timezone-aware")
+            except ValueError as exc:
+                if "timezone-aware" in str(exc) or "must be" in str(exc):
+                    raise
+                raise ValueError(f"billing_updated_at is not a valid timestamp: {updated!r}")
+        elif schema_version == "1.3":
+            v1_3_keys = {
+                "protocol_version", "billing_state", "resume_available",
+                "billing_updated_at", "recovery_catalog",
+            }
+            if set(payload) != required | v1_3_keys:
+                raise ValueError("unexpected or incomplete Director state")
+            if payload.get("protocol_version") != "1.1":
+                raise ValueError("v1.3 state requires protocol_version=1.1")
+            # Strict type/vocab validation for billing snapshot fields.
+            billing_state = payload.get("billing_state")
+            if billing_state not in (
+                "in_progress", "awaiting_credits", "partially_charged", "charged", "blocked",
+            ):
+                raise ValueError(f"invalid billing_state: {billing_state!r}")
+            if type(payload.get("resume_available")) is not bool:
+                raise ValueError(f"resume_available must be bool, got {type(payload.get('resume_available'))}")
+            updated = payload.get("billing_updated_at")
+            if not isinstance(updated, str) or not updated:
+                raise ValueError("billing_updated_at must be a non-empty string")
+            try:
+                from datetime import datetime
+                parsed = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    raise ValueError("billing_updated_at must be timezone-aware")
+            except ValueError as exc:
+                if "timezone-aware" in str(exc) or "must be" in str(exc):
+                    raise
+                raise ValueError(f"billing_updated_at is not a valid timestamp: {updated!r}")
+            # recovery_catalog must be a dict (or None), never an arbitrary
+            # truthy non-dict — the client reads it back at error time.
+            recovery_catalog = payload.get("recovery_catalog")
+            if recovery_catalog is not None and not isinstance(recovery_catalog, dict):
+                raise ValueError("recovery_catalog must be an object or null")
+        else:
             raise ValueError("unsupported Director state version")
         revision = payload.get("state_revision")
         if not isinstance(revision, int) or revision < 1:
@@ -445,6 +621,9 @@ class DirectorStateStore:
             or adapter_version != adapter_version.strip()
         ):
             raise ValueError("Director adapter identity is not normalized")
+        protocol_version = payload.get("protocol_version", "1.0")
+        if protocol_version not in SUPPORTED_PROTOCOL_VERSIONS:
+            raise ValueError(f"unsupported protocol_version: {protocol_version!r}")
         return DirectorState(payload)
 
     def _load_unlocked(self) -> DirectorState:
@@ -484,6 +663,7 @@ class DirectorStateStore:
         session: dict[str, Any],
         adapter_kind: str,
         adapter_version: str,
+        protocol_version: str = "1.0",
     ) -> DirectorState:
         with self.project._locked():
             project = self.project._load_unlocked()
@@ -493,8 +673,13 @@ class DirectorStateStore:
                     message="本地项目已经绑定 Director Session。",
                     next_action="运行 director next/status 恢复，或新建另一个本地项目。",
                 )
+            if protocol_version not in SUPPORTED_PROTOCOL_VERSIONS:
+                raise ValueError(f"unsupported protocol_version: {protocol_version!r}")
+            # v1.0 → frozen 13-key shape (no protocol_version key); v1.1 →
+            # schema_version 1.1 + protocol_version 1.1.
+            state_schema = "1.1" if protocol_version == "1.1" else "1.0"
             payload = {
-                "schema_version": DIRECTOR_STATE_SCHEMA_VERSION,
+                "schema_version": state_schema,
                 "project_id": project.payload["project_id"],
                 "state_revision": 1,
                 "server_url": normalize_server_url(server_url),
@@ -508,6 +693,8 @@ class DirectorStateStore:
                 "generation_status": None,
                 "updated_at": session["updated_at"],
             }
+            if protocol_version == "1.1":
+                payload["protocol_version"] = "1.1"
             state = self._validate(payload)
             atomic_write_json(self.path, state.payload)
             return state
@@ -609,6 +796,29 @@ class DirectorStateStore:
                         "updated_at": generation["updated_at"],
                     }
                 )
+                # §5.5d2: persist billing snapshot from v1.1 generation responses.
+                # Only billing_state / resume_available / billing_updated_at are
+                # stored — never ledger_id, idempotency_key, lease fields.
+                billing_state = generation.get("billing_state")
+                if billing_state is not None:
+                    payload["billing_state"] = billing_state
+                    payload["resume_available"] = generation.get("resume_available")
+                    payload["billing_updated_at"] = generation["updated_at"]
+                    # One-way upgrade to schema 1.2 on first billing snapshot.
+                    if payload.get("schema_version") == "1.1":
+                        payload["schema_version"] = "1.2"
+                    # v1.3 (finding #6 resolution): persist the pre-signed
+                    # recovery catalog delivered with the v1.1 generation
+                    # response so it is reachable at resume-error time (the
+                    # error path has no fresh response dict). The server always
+                    # sends billing + recovery_catalog together, so this is
+                    # gated on the billing snapshot — a v1.3 state is exactly
+                    # v1.2 + recovery_catalog, no other shape is valid.
+                    generation_catalog = generation.get("recovery_catalog")
+                    if generation_catalog is not None:
+                        payload["recovery_catalog"] = generation_catalog
+                        if payload.get("schema_version") == "1.2":
+                            payload["schema_version"] = "1.3"
             if generation_id is not None:
                 payload["generation_id"] = generation_id
             if generation_status is not None:

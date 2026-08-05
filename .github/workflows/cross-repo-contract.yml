@@ -1,0 +1,82 @@
+name: Three-repo cross-contract gate
+
+# Runs the cross-repo contract tests (§6, tech-spec v1.3) that span
+# agentmesh-core / lecturecast-server / AgentMesh-Lecturecast. The cross-repo
+# tests @skip_cross_repo when a sibling repo is absent, so this workflow
+# checks out all three as siblings under one parent dir and runs ONLY
+# tests/test_cross_repo_contracts.py. The client is public; server + core are
+# private and are cloned with a read-only PAT (repo secret PAT_CROSS_REPO).
+#
+# The client protocol dir must sit next to the siblings as
+#   <parent>/AgentMesh-Lecturecast, <parent>/lecturecast-server, <parent>/agentmesh-core
+# because test_cross_repo_contracts.py resolves them relative to the client.
+#
+# The siblings are pinned to their digital-human feature branches (not default
+# main): the byte-identity test compares the client's vendored v1.1 lock
+# against the server's lock, and server main has no protocol/v1.1/ until the
+# coordinated feature merges. Pin refs to the feature branches during the
+# cross-repo development window; move them to main after both merge.
+
+on:
+  push:
+    branches: [feat/digital-human-protocol-v1_1, main]
+    paths:
+      - "src/lecturecast/protocol/**"
+      - "src/lecturecast/protocol/protocol.lock"
+      - "src/lecturecast/protocol/schemas/**"
+      - "tests/test_cross_repo_contracts.py"
+      - ".github/workflows/cross-repo-contract.yml"
+  pull_request:
+    paths:
+      - "src/lecturecast/protocol/**"
+      - "src/lecturecast/protocol/protocol.lock"
+      - "src/lecturecast/protocol/schemas/**"
+      - "tests/test_cross_repo_contracts.py"
+      - ".github/workflows/cross-repo-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cross-repo-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: parent/AgentMesh-Lecturecast
+
+      # Private siblings need read access. On the feature branch a PAT
+      # (scoped Content:read on the two private repos) is injected as
+      # PAT_CROSS_REPO; without it the checkout fails fast so drift is
+      # surfaced loudly instead of silently skipping.
+      - name: Checkout lecturecast-server (private sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: jiyangnan/lecturecast-server
+          ref: feat/digital-human-edition
+          token: ${{ secrets.PAT_CROSS_REPO }}
+          path: parent/lecturecast-server
+
+      - name: Checkout agentmesh-core (private sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: jiyangnan/agentmesh-core
+          ref: feat/digital-human-milestone-actions
+          token: ${{ secrets.PAT_CROSS_REPO }}
+          path: parent/agentmesh-core
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install client (dev)
+        run: |
+          cd parent/AgentMesh-Lecturecast
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run cross-repo contract tests
+        run: |
+          cd parent/AgentMesh-Lecturecast
+          python -m pytest tests/test_cross_repo_contracts.py -v

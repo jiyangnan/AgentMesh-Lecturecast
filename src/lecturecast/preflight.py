@@ -10,7 +10,7 @@ from .assets import local_asset_errors
 from .capabilities import load_component_catalog
 from .errors import LectureCastError
 from .manifest import PublicKeyRing, VerificationResult, verify_manifest
-from .protocol import ClientCapabilities, ProductionManifest, canonical_digest
+from .protocol import ClientCapabilities, ProductionManifest, canonical_digest, parse_client_capabilities
 from .timing import narration_timing_issues
 
 
@@ -52,7 +52,7 @@ def run_preflight(
     client = (
         capabilities
         if isinstance(capabilities, ClientCapabilities)
-        else ClientCapabilities.model_validate(capabilities)
+        else parse_client_capabilities(capabilities)
     )
     payload = document.model_dump()
     available = client.model_dump()

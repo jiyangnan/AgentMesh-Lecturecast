@@ -6,7 +6,7 @@ using it:
 1. the exact host-Skill command, such as `lecturecast onboard --adapter codex
    --host-contract 1.0.0 --json`, reports `workflow.ready: true`;
 2. the Director returned a verified signed `ProductionManifest`;
-3. the human explicitly approved the 10-credit generation;
+3. the human explicitly approved the per-milestone credit cost (from server pricing_estimate);
 4. the complete signed script was shown and explicitly approved.
 
 Original media, voice, subtitles, rendering and exports remain local. The cloud
