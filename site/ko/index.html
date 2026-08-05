@@ -299,7 +299,7 @@
       <article class="route route-director" data-route="director" data-access="paid" data-media="local">
         <div class="route-top"><span class="route-label">Lecturecast Director</span><span class="route-status">유효한 월간 패스 · 생성당 10 credits</span></div>
         <h3>클라우드 디렉팅, 로컬 제작.</h3>
-        <p>에이전트가 범용 API 키, 유효한 월간 패스, 공유 credits 를 검증한 뒤 선택 UI 와 Brief 승인으로 진행합니다. 10 credits 를 명시적으로 승인하면 Director 는 서명된 ProductionManifest 와 변경 불가능한 서명 대본을 반환합니다. 전체 내레이션을 검토·승인해야 로컬 TTS 와 렌더링이 시작됩니다.</p>
+        <p>에이전트는 범용 API 키, 유효한 월간 패스, 공유 credits 를 먼저 검증하고 네이티브 선택 UI 와 Brief 승인을 마칩니다. 10 credits 차감이 확인되면 클라우드 Director 가 서명된 ProductionManifest 와 전체 서명 대본을 생성하며, 두 항목은 호스트 Agent 가 임의로 수정할 수 없습니다. 전체 서명 대본은 구간별로 사람의 승인을 거쳐야만 로컬 TTS 와 렌더링으로 진행합니다.</p>
       </article>
     </div>
 
@@ -326,7 +326,7 @@
     </div>
     <div class="why-body">
       <p>AI 에게 대본을 쓰게 하는 건 어렵지 않습니다. 어려운 건 그 뒤—<span class="hi">더빙, 타임라인 정렬, 렌더링, 자막 굽기, 커버 작업, 그리고 가로판과 세로판을 매번 따로 맞추는 일</span>입니다.</p>
-      <p>Lecturecast 는 AI 에이전트에 실행 가능한 단일 제어 흐름을 제공합니다. Director 는 서명된 제작 계획을, 로컬 머신은 TTS·타이밍·렌더링을 담당합니다. 권한, 자산, 타이밍, QA 중 하나라도 실패하면 불완전한 영상을 전달하지 않고 중단합니다.</p>
+      <p>Lecturecast 는 AI 에이전트에 실행 가능한 단일 제어 흐름을 제공합니다. Director 는 서명된 제작 계획을, 로컬 머신은 TTS·타이밍·렌더링을 담당합니다. 권한, 자산, 타이밍, QA 검사 중 하나라도 실패하면 납품이 중단되며, 완성된 듯한 텍스트나 불완전한 영상은 전달되지 않습니다.</p>
     </div>
   </div>
 </section>
@@ -339,7 +339,7 @@
       <div class="feat">
         <span class="feat-num">i.</span>
         <h3>Director 의 서명된 대본</h3>
-        <p>Creative Brief 에서 방향과 사실을 확인합니다. 10-credit 승인 후 Director 가 변경 불가능한 서명 ProductionManifest 와 전체 대본을 생성하며 호스트 Agent 는 이를 임의로 수정할 수 없습니다.</p>
+        <p>Creative Brief 에서 방향과 사실을 확인합니다. 10 credits 승인 후 Director 가 변경 불가능한 서명 ProductionManifest 와 전체 대본을 생성하며, 호스트 Agent 는 이를 임의로 수정할 수 없습니다.</p>
       </div>
       <div class="feat">
         <span class="feat-num">ii.</span>
@@ -481,7 +481,7 @@
         <div class="step-n">03</div>
         <div class="step-body">
           <h3>Director 가 계획하고 로컬이 제작</h3>
-          <p>선택과 Brief 승인 후 10 credits 를 명시 승인해 서명 ProductionManifest 를 받습니다. Agent 는 변경 불가능한 서명 대본 전체를 보여 주고 다시 멈추며, 승인 후에만 로컬 TTS, 가로·세로 렌더링, 자막, 커버 두 장을 실행합니다.</p>
+          <p>Director 선택과 Brief 승인 후 10 credits 를 소진하여 서명 ProductionManifest 를 받습니다. Agent 는 변경 불가능한 전체 서명 대본을 표시하고 다시 승인을 기다립니다. 승인되면 로컬에서 TTS, 가로·세로 렌더링, 자막, 커버 두 장이 실행되며, QA 실패 시 납품이 중단됩니다.</p>
         </div>
       </div>
     </div>
@@ -507,7 +507,7 @@
       </details>
       <details class="faq-item">
         <summary>완전 자동인가요? 사람 승인 게이트는 무엇인가요?</summary>
-        <div class="faq-answer">무인 실행이 아닙니다. Creative Brief, 한 번의 10-credit Manifest 생성, 전체 서명 대본을 각각 승인합니다. 서명 후 호스트 Agent 는 내용을 수정할 수 없고, 거절하면 TTS·렌더링 전에 중단됩니다.</div>
+        <div class="faq-answer">무인 실행이 아닙니다. 납품에는 Creative Brief, 10 credits Manifest 생성, 전체 서명 대본의 구간별 검토라는 세 번의 사람 승인이 필요합니다. 서명 후 호스트 Agent 는 내용을 수정할 수 없으며, 한 단계라도 통과하지 못하면 TTS 나 렌더링으로 진입하지 않고 중단됩니다.</div>
       </details>
       <details class="faq-item">
         <summary>무엇을 설치해야 하나요?</summary>

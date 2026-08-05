@@ -299,7 +299,7 @@
       <article class="route route-director" data-route="director" data-access="paid" data-media="local">
         <div class="route-top"><span class="route-label">Lecturecast Director</span><span class="route-status">有効な月間パス · 1 回 10 credits</span></div>
         <h3>クラウドで演出、ローカルで制作。</h3>
-        <p>エージェントが共通 API キー、有効な月間パス、共有 credits を検証してから選択 UI と Brief 承認へ進みます。10 credits を明示承認すると、Director は署名付き ProductionManifest と変更不可の署名脚本を返します。全文を確認・承認するまでローカル TTS とレンダリングは始まりません。</p>
+        <p>エージェントは共通 API キー、有効な月間パス、共有 credits を検証し、ネイティブの選択 UI と Brief 承認を完了します。10 credits の消費が確認されると、クラウドの Director が署名付き ProductionManifest と署名脚本全文を生成し、いずれも宿主 Agent による書き換えは不可となります。署名脚本全文は段落ごとに人の承認を経て初めて、TTS およびレンダリングはローカルでのみ実行されます。</p>
       </article>
     </div>
 
@@ -326,7 +326,7 @@
     </div>
     <div class="why-body">
       <p>AI に脚本を書かせるのは難しくありません。難しいのはその後——<span class="hi">配音、タイムライン整合、レンダリング、字幕焼き付け、カバー作成、横版と縦版それぞれの調整</span>です。</p>
-      <p>Lecturecast は AI エージェントに実行可能な唯一の制御フローを渡します。Director が署名済み制作計画を、本機が TTS・時間軸・レンダリングを担当します。権限、素材、時間、QA のどれかが失敗すれば、不完全な動画を届けず停止します。</p>
+      <p>Lecturecast は AI エージェントに実行可能な唯一の制御フローを渡します。Director が署名済み制作計画を、本機が TTS・時間軸・レンダリングを担当します。権限、素材、時間、QA のいずれかが失敗した場合、納品はその場で停止し、完成したように見えるテキストや不完全な動画は届けられません。</p>
     </div>
   </div>
 </section>
@@ -339,7 +339,7 @@
       <div class="feat">
         <span class="feat-num">i.</span>
         <h3>Director の署名付き脚本</h3>
-        <p>Creative Brief で方向と事実を確認します。10-credit 承認後、Director が変更不可の署名付き ProductionManifest と全文脚本を生成し、宿主 Agent はそれを書き換えられません。</p>
+        <p>Creative Brief で方向と事実を確認します。10 credits の承認後、Director は変更不可の署名付き ProductionManifest と署名脚本全文を生成し、宿主 Agent による書き換えは不可です。</p>
       </div>
       <div class="feat">
         <span class="feat-num">ii.</span>
@@ -481,7 +481,7 @@
         <div class="step-n">03</div>
         <div class="step-body">
           <h3>Director が計画し、本機が制作</h3>
-          <p>選択と Brief 承認後、10 credits を明示承認して署名 ProductionManifest を取得します。Agent は変更不可の署名脚本全文を表示して再度停止し、承認後だけローカル TTS、横縦レンダリング、字幕、2 枚のカバーを実行します。</p>
+          <p>Director の選択と Brief 承認を経て、10 credits を消費して署名付き ProductionManifest を取得します。Agent は変更不可の署名脚本全文を提示し、改めて承認を待機します。承認後に限り、ローカルで TTS、縦横両バージョンのレンダリング、字幕、2 枚のカバーを実行し、QA が失敗した場合は納品を停止します。</p>
         </div>
       </div>
     </div>
@@ -507,7 +507,7 @@
       </details>
       <details class="faq-item">
         <summary>完全自動ですか？人間の承認ゲートは？</summary>
-        <div class="faq-answer">無人実行ではありません。Creative Brief、1 回の 10-credit Manifest 生成、署名脚本全文をそれぞれ承認します。署名後、宿主 Agent は内容を変更できません。拒否すれば TTS・レンダリング前に停止します。</div>
+        <div class="faq-answer">無人運用ではありません。納品には 3 つの人による承認（Creative Brief、10 credits による Manifest 生成、署名脚本全文の段階的な確認）が必要です。署名後の内容は宿主 Agent が変更できず、いずれかの承認ゲートを通過しない場合は TTS やレンダリングに進まず、納品は停止されます。</div>
       </details>
       <details class="faq-item">
         <summary>何をインストールする必要がありますか？</summary>
