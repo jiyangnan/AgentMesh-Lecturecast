@@ -262,7 +262,7 @@ def test_d_t12_only_locked_entries_called_source_level() -> None:
     ``delete_pass_for_operation`` directly (those are reached ONLY via the
     locked recover_deletions → delete_pass_for_operation → _drive_video /
     _drive_asset chain). Static source assertion — the wiring is one file."""
-    src = Path(maintenance_mod.__file__).read_text()
+    src = Path(maintenance_mod.__file__).read_text(encoding="utf-8")
     assert "recover_withdrawn_asset_cleanups" in src
     assert "recover_deletions" in src
     for forbidden in (".delete_video(", ".delete_asset(", "delete_pass_for_operation"):

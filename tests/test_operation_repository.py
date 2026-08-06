@@ -69,7 +69,9 @@ def _grant(svc, digests, gen=GEN, decision="granted"):
 
 
 def _real_chain(gen=GEN):
-    brief_p = json.loads((FIXTURE_DIR / "creative-brief-v1_1.json").read_text())
+    brief_p = json.loads(
+        (FIXTURE_DIR / "creative-brief-v1_1.json").read_text(encoding="utf-8")
+    )
     brief_p["presenter"] = {
         "avatar": "photo", "voice_mode": "own_voice", "presenter_mode": "three_segment",
         "bgm": "none",
@@ -80,7 +82,9 @@ def _real_chain(gen=GEN):
     }
     brief = CreativeBriefV1_1.model_validate(brief_p)
     brief_digest = canonical_digest(brief)
-    manifest_p = json.loads((FIXTURE_DIR / "production-manifest-v1.json").read_text())
+    manifest_p = json.loads(
+        (FIXTURE_DIR / "production-manifest-v1.json").read_text(encoding="utf-8")
+    )
     manifest_p["generation_id"] = gen
     manifest_p["brief_digest"] = brief_digest
     manifest = ProductionManifest.model_validate(manifest_p)
@@ -500,7 +504,8 @@ def test_begin_immediate_context_manager_commits_and_tightens(tmp_path: Path):
     # Committed + permissions tightened.
     row = _op_row(tmp_path, prepared.operation_id)
     assert row["lease_owner"] == OWNER
-    assert stat.S_IMODE(os.stat(tmp_path / DB_REL).st_mode) == 0o600
+    if os.name != "nt":
+        assert stat.S_IMODE(os.stat(tmp_path / DB_REL).st_mode) == 0o600
 
 
 def test_begin_immediate_rolls_back_on_exception(tmp_path: Path):

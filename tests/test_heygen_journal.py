@@ -268,18 +268,20 @@ def hj_operations_seed() -> str:
 def test_init_sets_runtime_dir_mode_0700(project: Path):
     _open(project).close()
     runtime = project / ".lecturecast" / "runtime"
-    assert stat.S_IMODE(os.stat(runtime).st_mode) == 0o700
+    if os.name != "nt":
+        assert stat.S_IMODE(os.stat(runtime).st_mode) == 0o700
 
 
 def test_init_sets_db_and_sidecar_modes_0600(project: Path):
     conn = _open(project)
     runtime = project / ".lecturecast" / "runtime"
     db = runtime / "heygen-operations.db"
-    assert stat.S_IMODE(os.stat(db).st_mode) == 0o600
+    if os.name != "nt":
+        assert stat.S_IMODE(os.stat(db).st_mode) == 0o600
     # WAL/SHM materialize once the connection writes; tighten + check if present.
     for sidecar in ("heygen-operations.db-wal", "heygen-operations.db-shm"):
         p = runtime / sidecar
-        if p.exists():
+        if p.exists() and os.name != "nt":
             assert stat.S_IMODE(os.stat(p).st_mode) == 0o600
     conn.close()
 
@@ -618,8 +620,9 @@ def test_symlink_lecturecast_dir_rejected_and_target_untouched(tmp_path: Path):
         init_database(project)
 
     # Target untouched: content preserved, mode unchanged, no runtime created.
-    assert (real_target / "sentinel").read_text() == "keep-me"
-    assert stat.S_IMODE(os.stat(real_target).st_mode) == 0o755
+    assert (real_target / "sentinel").read_text(encoding="utf-8") == "keep-me"
+    if os.name != "nt":
+        assert stat.S_IMODE(os.stat(real_target).st_mode) == 0o755
     assert not (real_target / "runtime").exists()
 
 

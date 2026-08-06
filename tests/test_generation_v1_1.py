@@ -385,7 +385,9 @@ def test_generation_resume_command_v1_1_charged_saves_manifest(tmp_path: Path, m
     # Fake resume response: charged + ready + real manifest.
     charged_gen = _v1_1_generation(billing_state="charged")
     manifest_fixture = json.loads(
-        Path(__file__).parent.joinpath("fixtures", "production-manifest-v1.json").read_text()
+        Path(__file__).parent.joinpath(
+            "fixtures", "production-manifest-v1.json"
+        ).read_text(encoding="utf-8")
     )
     from lecturecast.protocol import ProductionManifest, canonical_digest
     manifest_obj = ProductionManifest.model_validate(manifest_fixture)
@@ -718,7 +720,9 @@ def test_full_recovery_chain_status_resume_charged_review(tmp_path: Path, monkey
 
     # Build a real Manifest fixture.
     manifest_fixture = json.loads(
-        Path(__file__).parent.joinpath("fixtures", "production-manifest-v1.json").read_text()
+        Path(__file__).parent.joinpath(
+            "fixtures", "production-manifest-v1.json"
+        ).read_text(encoding="utf-8")
     )
     manifest_obj = ProductionManifest.model_validate(manifest_fixture)
     manifest_digest = canonical_digest(manifest_obj.model_dump())

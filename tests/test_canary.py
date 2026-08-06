@@ -206,7 +206,7 @@ def test_canary_writes_only_to_its_sandbox(tmp_path: Path) -> None:
     assert (sandbox / DB_REL).exists()
     assert not (user_project / "runtime").exists()
     assert not (user_project / DB_REL).exists()
-    assert sentinel.read_text() == "user-data-must-survive"
+    assert sentinel.read_text(encoding="utf-8") == "user-data-must-survive"
 
 
 def test_canary_zero_real_network_stubs_only(tmp_path: Path) -> None:

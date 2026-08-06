@@ -365,6 +365,9 @@ def test_default_journal_probe_unwritable_runtime_is_not_ready(
     fail. The probe requires W_OK|X_OK on runtime/."""
     import os
 
+    if os.name == "nt":
+        pytest.skip("Windows does not enforce POSIX directory mode bits")
+
     from lecturecast.heygen_journal import _SCHEMA_VERSION
 
     _make_db(tmp_path, head=_SCHEMA_VERSION, core_table=True)
@@ -395,6 +398,9 @@ def test_default_journal_probe_readonly_db_file_is_not_ready(tmp_path: Path) -> 
     'attempt to write a readonly database'. The probe requires W_OK on the DB
     file too."""
     import os
+
+    if os.name == "nt":
+        pytest.skip("Windows does not enforce POSIX file mode bits")
 
     from lecturecast.heygen_journal import _SCHEMA_VERSION
 
@@ -681,7 +687,9 @@ def test_stored_capabilities_version_mismatch_returns_none(tmp_path: Path) -> No
     store = ProjectStore(tmp_path)
     store.init(name="T")
     v10_caps = json.loads(
-        (Path(__file__).parent / "fixtures" / "client-capabilities-v1.json").read_text()
+        (Path(__file__).parent / "fixtures" / "client-capabilities-v1.json").read_text(
+            encoding="utf-8"
+        )
     )
     from lecturecast.protocol import ClientCapabilities
     store.save_capabilities(ClientCapabilities.model_validate(v10_caps), expected_revision=1)
@@ -712,7 +720,9 @@ def test_v1_1_brief_projectstore_round_trip(tmp_path: Path) -> None:
     from lecturecast.project import ProjectStore
 
     brief_payload = json.loads(
-        (Path(__file__).parent / "fixtures" / "creative-brief-v1_1.json").read_text()
+        (Path(__file__).parent / "fixtures" / "creative-brief-v1_1.json").read_text(
+            encoding="utf-8"
+        )
     )
     brief = CreativeBriefV1_1.model_validate(brief_payload)
 

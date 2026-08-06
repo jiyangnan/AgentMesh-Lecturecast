@@ -319,7 +319,9 @@ class TestPricingDeliveryContract:
         # definition; it exists only on the v1.1 path. This keeps old clients
         # working against a v1.0 server without breaking on an unknown field.
         v10 = json.loads(
-            (CLIENT_V10_SCHEMAS / "decision-card-set.schema.json").read_text()
+            (CLIENT_V10_SCHEMAS / "decision-card-set.schema.json").read_text(
+                encoding="utf-8"
+            )
         )
         assert "PricingEstimate" not in v10.get("$defs", {}), (
             "v1.0 decision-card-set schema leaked PricingEstimate — the v1.0 "
@@ -423,7 +425,9 @@ class TestM1CapabilityGateIndependentOfHeyGen:
         # client therefore reports the key absent — valid — and the server's M1
         # gate never needs to see it.
         schema = json.loads(
-            (CLIENT_V11_SCHEMAS / "client-capabilities.schema.json").read_text()
+            (CLIENT_V11_SCHEMAS / "client-capabilities.schema.json").read_text(
+                encoding="utf-8"
+            )
         )
         assert "third_party_processors" not in schema.get("required", []), (
             "v1.1 client-capabilities made third_party_processors required — "
@@ -793,7 +797,9 @@ class TestM3OrchestrationCrossRepoContract:
         # client-side envelope parsing. This is the byte-level check that the
         # re-vendor in m3-5 actually took.
         envelope = json.loads(
-            (CLIENT_V11_SCHEMAS / "error-envelope.schema.json").read_text()
+            (CLIENT_V11_SCHEMAS / "error-envelope.schema.json").read_text(
+                encoding="utf-8"
+            )
         )
         codes = _enum_values(envelope)
         assert "m3_not_ready" in codes, (

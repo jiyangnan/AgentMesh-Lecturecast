@@ -233,7 +233,11 @@ def test_update_with_billing_generation_upgrades_1_1_to_1_2(tmp_path: Path):
     assert reloaded.resume_available is True
 
     # Sensitive fields NOT persisted.
-    raw = json.loads((tmp_path / ".lecturecast" / "director-state.json").read_text())
+    raw = json.loads(
+        (tmp_path / ".lecturecast" / "director-state.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert "milestone_charges" not in raw
     assert "ledger_id" not in raw
     assert "idempotency_key" not in raw
@@ -263,7 +267,9 @@ def test_v1_1_capabilities_payload_rejects_under_v1_0_model() -> None:
     from lecturecast.protocol import ClientCapabilities, ClientCapabilitiesV1_1
 
     base = json.loads(
-        (Path(__file__).parent / "fixtures" / "client-capabilities-v1.json").read_text()
+        (Path(__file__).parent / "fixtures" / "client-capabilities-v1.json").read_text(
+            encoding="utf-8"
+        )
     )
     v1_1_payload = dict(base)
     v1_1_payload["schema_version"] = "1.1"
@@ -284,10 +290,14 @@ def _v1_1_session_document(card: bool, brief: bool) -> dict[str, Any]:
         "catalog_version": "2026-07-16.1",
         "updated_at": NOW,
         "decision_card_set": json.loads(
-            (Path(__file__).parent / "fixtures" / "decision-card-set-v1_1.json").read_text()
+            (
+                Path(__file__).parent / "fixtures" / "decision-card-set-v1_1.json"
+            ).read_text(encoding="utf-8")
         ) if card else None,
         "brief": json.loads(
-            (Path(__file__).parent / "fixtures" / "creative-brief-v1_1.json").read_text()
+            (Path(__file__).parent / "fixtures" / "creative-brief-v1_1.json").read_text(
+                encoding="utf-8"
+            )
         ) if brief else None,
     }
 
@@ -299,7 +309,11 @@ def test_v1_1_card_parses_under_1_1_rejects_under_1_0() -> None:
     from lecturecast.director import DirectorClient
 
     card = json.loads(
-        (Path(__file__).parent / "fixtures" / "decision-card-set-v1_1-presenter.json").read_text()
+        (
+            Path(__file__).parent
+            / "fixtures"
+            / "decision-card-set-v1_1-presenter.json"
+        ).read_text(encoding="utf-8")
     )
     doc = _v1_1_session_document(card=False, brief=False)
     doc["decision_card_set"] = card
@@ -335,7 +349,9 @@ def test_v1_1_plan_models_target_v1_1_bundle() -> None:
 
 def _v1_1_caps() -> dict[str, Any]:
     return json.loads(
-        (Path(__file__).parent / "fixtures" / "client-capabilities-v1_1.json").read_text()
+        (Path(__file__).parent / "fixtures" / "client-capabilities-v1_1.json").read_text(
+            encoding="utf-8"
+        )
     )
 
 
@@ -376,7 +392,9 @@ def test_v1_1_bundle_lock_is_intact_and_audited() -> None:
     digest) AND the audited bundle digest — catches lock/schema drift."""
     import hashlib
 
-    lock = json.loads((V1_1_BUNDLE_DIR / "protocol.lock").read_text())
+    lock = json.loads(
+        (V1_1_BUNDLE_DIR / "protocol.lock").read_text(encoding="utf-8")
+    )
     assert lock["bundle_version"] == "1.1"
     files = lock["files"]
     assert set(files) == {

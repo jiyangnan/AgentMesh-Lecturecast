@@ -24,8 +24,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from lecturecast.heygen_http import (HeyGenHttpTransport, HttpResponse,
-    HttpErrorResponse, HttpTransportError)
+from lecturecast.heygen_http import (
+    HeyGenHttpTransport,
+    HttpErrorResponse,
+    HttpTransportError,
+)
 from lecturecast.heygen_adapter import HeyGenAdapterError
 
 AssetRole = Literal["portrait_photo", "synthetic_narration_audio"]
@@ -199,7 +202,7 @@ def _validate_asset_path(runtime_root: Path, local_output_ref: str) -> None:
     except ValueError:
         raise ValueError("file path escapes runtime")
     if "." in rel.parts or ".." in rel.parts:
-        raise ValueError(f"path contains . or ..")
+        raise ValueError("path contains . or ..")
     current = runtime_root
     try:
         root_st = current.lstat()
@@ -234,7 +237,10 @@ def prepare_asset_upload(
     _validate_asset_path(runtime_root, local_output_ref)
     file_path = runtime_root / local_output_ref
     # Open safely
-    flags = os.O_RDONLY
+    # Windows defaults low-level descriptors to text mode unless O_BINARY is
+    # explicit. Text mode rewrites the PNG CRLF signature and treats Ctrl-Z as
+    # EOF, so both validation and hashing must always use binary descriptors.
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
     try:
         flags |= os.O_NOFOLLOW  # type: ignore[attr-defined]
     except AttributeError:
@@ -328,7 +334,7 @@ class HeyGenAssetAdapter:
         except ValueError as exc:
             raise AssetUploadError(code="validation_error", message=str(exc))
         file_path = runtime_root / command.local_output_ref
-        flags = os.O_RDONLY
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
         try:
             flags |= os.O_NOFOLLOW  # type: ignore[attr-defined]
         except AttributeError:

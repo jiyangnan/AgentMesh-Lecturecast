@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -34,7 +35,6 @@ D = "sha256:" + "a" * 64
 GEN = "gen_1"
 DB_REL = Path(".lecturecast") / "runtime" / "heygen-operations.db"
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
-import hashlib
 
 def Z(seed) -> str:
     """A valid, distinct sha256 digest from any seed (for non-artifact identities)."""
@@ -77,7 +77,9 @@ def _real_chain(gen=GEN, avatar="photo", consent_status="granted",
                 consented_at="2026-07-29T00:00:00Z"):
     """Build real schema-valid Brief/Manifest/Presenter/Orchestration with a
     chained digest set, for the guard (which isinstance-checks each)."""
-    brief_p = json.loads((FIXTURE_DIR / "creative-brief-v1_1.json").read_text())
+    brief_p = json.loads(
+        (FIXTURE_DIR / "creative-brief-v1_1.json").read_text(encoding="utf-8")
+    )
     brief_p["presenter"] = {
         "avatar": avatar, "voice_mode": "own_voice", "presenter_mode": "three_segment",
         "bgm": "none",
@@ -90,7 +92,9 @@ def _real_chain(gen=GEN, avatar="photo", consent_status="granted",
     }
     brief = CreativeBriefV1_1.model_validate(brief_p)
     brief_digest = canonical_digest(brief)
-    manifest_p = json.loads((FIXTURE_DIR / "production-manifest-v1.json").read_text())
+    manifest_p = json.loads(
+        (FIXTURE_DIR / "production-manifest-v1.json").read_text(encoding="utf-8")
+    )
     manifest_p["generation_id"] = gen
     manifest_p["brief_digest"] = brief_digest
     manifest = ProductionManifest.model_validate(manifest_p)

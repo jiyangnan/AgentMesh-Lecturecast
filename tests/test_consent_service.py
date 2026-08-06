@@ -266,8 +266,9 @@ def test_write_tightens_db_permissions(tmp_path: Path):
     )
     import os
     import stat
-    mode = stat.S_IMODE(os.stat(tmp_path / DB_REL).st_mode)
-    assert mode == 0o600
+    if os.name != "nt":
+        mode = stat.S_IMODE(os.stat(tmp_path / DB_REL).st_mode)
+        assert mode == 0o600
 
 
 # ---- §5.5e2b round-2: heygen_title conflict, pristine-attach, integrity ---
