@@ -5,7 +5,14 @@ description: Create or resume paid LectureCast videos with AgentMesh360 commerci
 
 # LectureCast for Claude Code
 
-This Skill implements host workflow contract `1.0.0`. Start every new or resumed
+This Skill implements host workflow contract `1.0.0`. That number attests this
+installer-owned Skill only; it is not the cloud Director protocol. New Director
+Sessions use protocol `1.1`, reported separately as
+`contracts.director_protocol.version`, and existing Sessions keep their locked
+protocol. Never infer the Director protocol from `--host-contract` or ask the
+user to set `LECTURECAST_PROTOCOL_VERSION`.
+
+Start every new or resumed
 task with exactly `lecturecast onboard --adapter claude-code --host-contract
 1.0.0 --json`. Do not create, resume, or render a project until `workflow.ready`
 is true. If the payload sets

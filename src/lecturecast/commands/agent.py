@@ -7,10 +7,12 @@ import typer
 
 from ..director import DirectorStateStore
 from ..errors import LectureCastError
+from ..config import resolve_protocol_version
 from ..host_agent import (
     HOST_WORKFLOW_CONTRACT_VERSION,
     NATIVE_HOST_ADAPTERS,
     HostWorkflowStore,
+    contract_summary,
     host_adapter_status,
 )
 from ..project import ProjectStore
@@ -214,6 +216,14 @@ def status(
     emit(
         {
             "ok": True,
+            "contracts": (
+                contract_summary(DirectorStateStore(root).load().protocol_version)
+                if root is not None
+                and (root / ".lecturecast" / "director-state.json").is_file()
+                else onboarding.get(
+                    "contracts", contract_summary(resolve_protocol_version())
+                )
+            ),
             "host_agent": onboarding["host_agent"],
             "host_workflow": receipt,
             "project": project,

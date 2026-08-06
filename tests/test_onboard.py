@@ -51,7 +51,9 @@ def test_missing_key_returns_agent_readable_user_action(monkeypatch) -> None:
         lambda: AuthStatus(False, None, False),
     )
     monkeypatch.setattr(onboard_module, "get_api_key", lambda: None)
-    monkeypatch.setattr(onboard_module, "_renderer", lambda _root=None: _renderer(True))
+    monkeypatch.setattr(
+        onboard_module, "_renderer", lambda _root=None, **_kwargs: _renderer(True)
+    )
     monkeypatch.setattr(onboard_module, "_director", lambda: _director())
 
     result = onboard_module.onboarding_status(
@@ -80,7 +82,9 @@ def test_unavailable_keychain_is_a_recoverable_onboarding_state(monkeypatch) -> 
         "get_api_key",
         lambda: (_ for _ in ()).throw(AssertionError("must not read twice")),
     )
-    monkeypatch.setattr(onboard_module, "_renderer", lambda _root=None: _renderer(True))
+    monkeypatch.setattr(
+        onboard_module, "_renderer", lambda _root=None, **_kwargs: _renderer(True)
+    )
     monkeypatch.setattr(onboard_module, "_director", lambda: _director())
 
     result = onboard_module.onboarding_status(
@@ -102,7 +106,9 @@ def test_paid_account_and_renderer_make_workflow_ready(monkeypatch) -> None:
         lambda: AuthStatus(True, "keyring", False),
     )
     monkeypatch.setattr(onboard_module, "get_api_key", lambda: "am_live_key")
-    monkeypatch.setattr(onboard_module, "_renderer", lambda _root=None: _renderer(True))
+    monkeypatch.setattr(
+        onboard_module, "_renderer", lambda _root=None, **_kwargs: _renderer(True)
+    )
     monkeypatch.setattr(onboard_module, "_director", lambda: _director())
 
     class FakeClient:
@@ -136,7 +142,9 @@ def test_no_paid_access_never_falls_back_to_local_render(monkeypatch) -> None:
         lambda: AuthStatus(True, "keyring", False),
     )
     monkeypatch.setattr(onboard_module, "get_api_key", lambda: "am_live_key")
-    monkeypatch.setattr(onboard_module, "_renderer", lambda _root=None: _renderer(True))
+    monkeypatch.setattr(
+        onboard_module, "_renderer", lambda _root=None, **_kwargs: _renderer(True)
+    )
     monkeypatch.setattr(onboard_module, "_director", lambda: _director())
 
     class FakeClient:
@@ -165,7 +173,9 @@ def test_unavailable_director_blocks_otherwise_ready_workflow(monkeypatch) -> No
         lambda: AuthStatus(True, "keyring", False),
     )
     monkeypatch.setattr(onboard_module, "get_api_key", lambda: "am_live_key")
-    monkeypatch.setattr(onboard_module, "_renderer", lambda _root=None: _renderer(True))
+    monkeypatch.setattr(
+        onboard_module, "_renderer", lambda _root=None, **_kwargs: _renderer(True)
+    )
     monkeypatch.setattr(onboard_module, "_director", lambda: _director(False))
 
     class FakeClient:
@@ -196,7 +206,9 @@ def test_project_specific_renderer_setup_is_a_staged_machine_action(
         lambda: AuthStatus(True, "keyring", False),
     )
     monkeypatch.setattr(onboard_module, "get_api_key", lambda: "am_live_key")
-    monkeypatch.setattr(onboard_module, "_renderer", lambda _root=None: _renderer(False))
+    monkeypatch.setattr(
+        onboard_module, "_renderer", lambda _root=None, **_kwargs: _renderer(False)
+    )
     monkeypatch.setattr(onboard_module, "_director", lambda: _director())
 
     class FakeClient:

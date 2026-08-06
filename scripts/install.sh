@@ -107,6 +107,16 @@ else
   ok "lecturecast package installed"
 fi
 
+DIRECTOR_PROTOCOL=$(
+  "$VENV/bin/python" -c \
+    'from lecturecast.config import resolve_protocol_version; print(resolve_protocol_version({}))'
+)
+if [ "$DIRECTOR_PROTOCOL" != "1.1" ]; then
+  err "installed client has an unexpected new-session Director protocol: $DIRECTOR_PROTOCOL"
+  exit 1
+fi
+ok "new Director sessions use protocol $DIRECTOR_PROTOCOL (host Skill contract remains 1.0.0)"
+
 # --- shim on PATH ---
 SHIM_DIR="$HOME/.local/bin"
 mkdir -p "$SHIM_DIR"

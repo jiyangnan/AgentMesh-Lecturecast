@@ -13,6 +13,13 @@ Original media, voice, subtitles, rendering and exports remain local. The cloud
 never receives those files. macOS and native Windows are supported; Linux and
 WSL are not. See [SUPPORTED-PLATFORMS.md](SUPPORTED-PLATFORMS.md).
 
+Host workflow contract `1.0.0` only attests the installed Skill. New Director
+Sessions use protocol `1.1`; existing Sessions remain locked to their stored
+protocol. A selected photo presenter is delivered through the signed
+PresenterPlan and the client-owned HeyGen flow. A selected BGM is delivered
+through the signed OrchestrationPlan and mixed locally; neither path changes the
+local-media boundary.
+
 ## 1. Resume durable project state
 
 ```bash

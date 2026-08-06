@@ -51,6 +51,9 @@ are not supported; read [docs/SUPPORTED-PLATFORMS.md](docs/SUPPORTED-PLATFORMS.m
    - After each command, execute only its returned `workflow.next_action`. Use
      `lecturecast agent status <project> --adapter <host> --host-contract 1.0.0
      --json` only when a recovery/read-only response has no workflow field.
+   - Host contract `1.0.0` is Skill attestation, not the Director protocol.
+     Fresh Sessions use Director protocol `1.1`, reported separately under
+     `contracts`; existing Sessions remain pinned to their stored protocol.
 2. **Install missing renderer tools** using `renderer.next_actions`:
    - Node 20+ + npm — use a supported Node LTS installation and verify the
      exact `node` and `npm` selected in the current PATH
@@ -66,6 +69,10 @@ are not supported; read [docs/SUPPORTED-PLATFORMS.md](docs/SUPPORTED-PLATFORMS.m
    **[skills/shared/director-workflow.md](skills/shared/director-workflow.md)**:
    source summary → choice cards → Brief approval → per-milestone credit approval →
    signed ProductionManifest.
+   - Never skip a returned protocol `1.1` presenter card. Surface the stable
+     `presenter` and `bgm` choices; photo presenter continues through the HeyGen
+     disclosure and PresenterPlan, while BGM continues through OrchestrationPlan
+     and local mixing.
 4. **Review and approve the complete signed script:** when the returned
    `workflow.next_action` is `manifest.review`, execute its exact argv, show every
    narration section to the human, and wait. Only after approval, execute the

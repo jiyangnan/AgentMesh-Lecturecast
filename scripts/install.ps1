@@ -143,6 +143,13 @@ if ($PackageCurrent) {
     Write-Ok "lecturecast package installed"
 }
 
+$DirectorProtocol = & $VenvPython -c 'from lecturecast.config import resolve_protocol_version; print(resolve_protocol_version({}))'
+Assert-LastExit "Director protocol inspection"
+if ($DirectorProtocol.Trim() -ne "1.1") {
+    throw "installed client has an unexpected new-session Director protocol: $DirectorProtocol"
+}
+Write-Ok "new Director sessions use protocol 1.1 (host Skill contract remains 1.0.0)"
+
 $ShimDir = Join-Path $HOME ".local\bin"
 $Shim = Join-Path $ShimDir "lecturecast.cmd"
 New-Item -ItemType Directory -Force -Path $ShimDir | Out-Null

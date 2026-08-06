@@ -11,27 +11,41 @@ name: Three-repo cross-contract gate
 #   <parent>/AgentMesh-Lecturecast, <parent>/lecturecast-server, <parent>/agentmesh-core
 # because test_cross_repo_contracts.py resolves them relative to the client.
 #
-# The siblings are pinned to their digital-human feature branches (not default
-# main): the byte-identity test compares the client's vendored v1.1 lock
-# against the server's lock, and server main has no protocol/v1.1/ until the
-# coordinated feature merges. Pin refs to the feature branches during the
-# cross-repo development window; move them to main after both merge.
+# The digital-human work is released. Always compare against the current main
+# branch of both private siblings so a public-client release cannot pass against
+# a stale feature snapshot.
 
 on:
   push:
     branches: [feat/digital-human-protocol-v1_1, main]
     paths:
       - "src/lecturecast/protocol/**"
+      - "src/lecturecast/config.py"
+      - "src/lecturecast/commands/onboard.py"
+      - "src/lecturecast/commands/project.py"
+      - "src/lecturecast/commands/director.py"
+      - "skills/**"
+      - "scripts/install.sh"
+      - "scripts/install.ps1"
       - "src/lecturecast/protocol/protocol.lock"
       - "src/lecturecast/protocol/schemas/**"
       - "tests/test_cross_repo_contracts.py"
+      - "tests/test_customer_default_v1_1.py"
       - ".github/workflows/cross-repo-contract.yml"
   pull_request:
     paths:
       - "src/lecturecast/protocol/**"
+      - "src/lecturecast/config.py"
+      - "src/lecturecast/commands/onboard.py"
+      - "src/lecturecast/commands/project.py"
+      - "src/lecturecast/commands/director.py"
+      - "skills/**"
+      - "scripts/install.sh"
+      - "scripts/install.ps1"
       - "src/lecturecast/protocol/protocol.lock"
       - "src/lecturecast/protocol/schemas/**"
       - "tests/test_cross_repo_contracts.py"
+      - "tests/test_customer_default_v1_1.py"
       - ".github/workflows/cross-repo-contract.yml"
   workflow_dispatch:
 
@@ -46,7 +60,7 @@ jobs:
         with:
           path: parent/AgentMesh-Lecturecast
 
-      # Private siblings need read access. On the feature branch a PAT
+      # Private siblings need read access. A PAT
       # (scoped Content:read on the two private repos) is injected as
       # PAT_CROSS_REPO; without it the checkout fails fast so drift is
       # surfaced loudly instead of silently skipping.
@@ -54,7 +68,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: jiyangnan/lecturecast-server
-          ref: feat/digital-human-edition
+          ref: main
           token: ${{ secrets.PAT_CROSS_REPO }}
           path: parent/lecturecast-server
 
@@ -62,7 +76,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: jiyangnan/agentmesh-core
-          ref: feat/digital-human-milestone-actions
+          ref: main
           token: ${{ secrets.PAT_CROSS_REPO }}
           path: parent/agentmesh-core
 

@@ -5,6 +5,13 @@ source summary, stable option IDs, the Creative Brief, ClientCapabilities and th
 resulting declarative Manifest; raw media, voice, local paths and rendered files
 stay on the user's machine.
 
+The host workflow contract and Director protocol are independent. Host contract
+`1.0.0` proves that the current task loaded the installer-owned Skill. New
+Director Sessions use protocol `1.1`, shown in
+`contracts.director_protocol.version`; an existing Session keeps the protocol
+stored in its local Director state. Never derive one version from the other and
+never ask a customer to set `LECTURECAST_PROTOCOL_VERSION`.
+
 LectureCast requires a current AgentMesh360 monthly pass.
 Use an AgentMesh360 universal API key; an older Job Agent-only key does not cover
 LectureCast. There is no separate LectureCast pass.
@@ -85,6 +92,13 @@ Call `director next --json`. For every question in `decision_card_set`:
 2. Keep the associated `question_id` and `option_id` internally.
 3. Submit only the stable IDs, never infer an ID from translated/display text.
 4. Submit one answer, then call `next` again before presenting another question.
+
+Protocol `1.1` includes a `presenter` stage. The unconditional `presenter`,
+`voice_mode`, and `bgm` questions must be shown when returned. A photo presenter
+continues through the HeyGen transfer disclosure, consent, local configuration,
+and signed PresenterPlan. A non-`none` BGM choice continues through the signed
+OrchestrationPlan and the local mixing entrypoint. Do not silently fall back to
+the v1.0 narration-only workflow.
 
 ```bash
 lecturecast director answer <project-path> \

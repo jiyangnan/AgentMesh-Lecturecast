@@ -15,20 +15,20 @@ KEYRING_SERVICE = "agentmesh-lecturecast"
 KEYRING_USERNAME = "api-key"
 PROJECT_DIRECTORY = ".lecturecast"
 PROJECT_SCHEMA_VERSION = "1.0"
-CLIENT_VERSION = "0.6.0"
+CLIENT_VERSION = "0.6.1"
 
-# Director protocol version negotiation (§5.5a). Default stays "1.0" until the
-# server's milestone-billing flags, Core actions, and client canary are all
-# live; an explicit LECTURECAST_PROTOCOL_VERSION=1.1 opts in. The version is
-# pinned per-session at create time and never silently downgraded.
+# Director protocol version negotiation (§5.5a). New sessions use the current
+# production protocol. Existing sessions ignore this default because their
+# protocol is pinned in director-state.json at creation time.
 PROTOCOL_VERSION_ENV = "LECTURECAST_PROTOCOL_VERSION"
-DEFAULT_PROTOCOL_VERSION = "1.0"
+DEFAULT_PROTOCOL_VERSION = "1.1"
 SUPPORTED_PROTOCOL_VERSIONS = ("1.0", "1.1")
 
 
 def resolve_protocol_version(env: dict[str, str] | None = None) -> str:
     """Resolve the Director protocol version to negotiate. Reads the env var;
-    defaults to 1.0. Rejects unsupported values rather than guessing."""
+    defaults to the current production protocol. Rejects unsupported values
+    rather than guessing."""
     sources = env if env is not None else os.environ
     raw = (sources.get(PROTOCOL_VERSION_ENV) or DEFAULT_PROTOCOL_VERSION).strip()
     if raw not in SUPPORTED_PROTOCOL_VERSIONS:
@@ -37,4 +37,3 @@ def resolve_protocol_version(env: dict[str, str] | None = None) -> str:
             f"{', '.join(SUPPORTED_PROTOCOL_VERSIONS)}"
         )
     return raw
-

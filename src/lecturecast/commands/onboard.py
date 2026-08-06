@@ -6,23 +6,66 @@ from typing import Any
 import typer
 
 from ..auth import AuthStatus, auth_status, get_api_key
-from ..capabilities import capture_capabilities, doctor_report
+from ..capabilities import (
+    build_heygen_doctor_section,
+    capture_capabilities,
+    capture_capabilities_v1_1,
+    default_heygen_adapter_probe,
+    default_heygen_journal_probe,
+    doctor_report,
+)
 from ..commercial import CommercialClient, missing_commercial_access
-from ..config import ACCOUNT_URL, PRICING_URL
-from ..director import probe_director
+from ..config import ACCOUNT_URL, PRICING_URL, resolve_protocol_version
+from ..director import DirectorStateStore, probe_director
 from ..errors import LectureCastError
 from ..host_agent import (
+    HOST_ADAPTER_VERSION,
     HOST_WORKFLOW_CONTRACT_VERSION,
+    NATIVE_HOST_ADAPTERS,
     HostWorkflowStore,
+    contract_summary,
     host_adapter_status,
 )
 from .output import emit
 
 
-def _renderer(project_root: Path | None = None) -> dict[str, Any]:
+def _project_protocol_version(project_root: Path | None) -> str:
+    if (
+        project_root is not None
+        and (project_root / ".lecturecast" / "director-state.json").is_file()
+    ):
+        return DirectorStateStore(project_root).load().protocol_version
+    return resolve_protocol_version()
+
+
+def _renderer(
+    project_root: Path | None = None,
+    *,
+    adapter_kind: str | None = None,
+) -> dict[str, Any]:
     repo_root = Path(__file__).resolve().parents[3]
+    root = project_root or Path.cwd()
+    protocol_version = _project_protocol_version(project_root)
+    current_adapter = (
+        str(adapter_kind) if adapter_kind in NATIVE_HOST_ADAPTERS else "text"
+    )
+    if protocol_version == "1.1":
+        capabilities = capture_capabilities_v1_1(
+            adapter_kind=current_adapter,
+            adapter_version=HOST_ADAPTER_VERSION,
+            project_root=root,
+            repo_root=repo_root,
+            adapter_probe=default_heygen_adapter_probe,
+            journal_probe=lambda: default_heygen_journal_probe(root),
+        )
+        return doctor_report(
+            capabilities,
+            heygen_section=build_heygen_doctor_section(project_root=root),
+        )
     return doctor_report(
         capture_capabilities(
+            adapter_kind=current_adapter,
+            adapter_version=HOST_ADAPTER_VERSION,
             project_root=project_root or Path.cwd(),
             repo_root=repo_root,
         )
@@ -50,6 +93,7 @@ def onboarding_status(
     adapter: str | None = None,
     host_contract: str | None = None,
 ) -> dict[str, Any]:
+    protocol_version = _project_protocol_version(project_root)
     host_agent = host_adapter_status(adapter, host_contract)
     credential_error: dict[str, Any] | None = None
     try:
@@ -83,7 +127,7 @@ def onboarding_status(
                 }
             )
 
-    renderer = _renderer(project_root)
+    renderer = _renderer(project_root, adapter_kind=adapter)
     director = (
         _director()
         if access.usable
@@ -229,6 +273,7 @@ def onboarding_status(
             else None
         ),
         "cloud_access": access.to_dict(),
+        "contracts": contract_summary(protocol_version),
         "host_agent": host_agent,
         "director": director,
         "renderer": renderer,

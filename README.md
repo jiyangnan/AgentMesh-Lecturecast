@@ -95,6 +95,11 @@ local render. In a newly started host-agent task, the installed Skill runs the
 host-specific `lecturecast onboard --adapter ... --host-contract 1.0.0 --json`
 command and reports adapter, commercial, and renderer readiness.
 
+Host workflow contract `1.0.0` only attests the installer-owned Skill. Fresh
+projects use Director protocol `1.1` by default; `onboard` reports the two
+separately under `contracts`. Existing Director Sessions keep their protocol
+locked and are not silently migrated.
+
 ---
 
 ## Use
@@ -124,7 +129,8 @@ lecturecast director next ./my-video --json
 blocked; they do not advance project state. Run the returned repairs, rerun
 `onboard`, and resume the single `workflow.next_action` chain only after
 `workflow.ready` becomes true. `--host-contract 1.0.0` attests the host Skill and
-is separate from ProductionManifest schema version `1.0`.
+is separate from both Director protocol `1.1` and ProductionManifest schema
+version `1.0`.
 
 The API key is never written to the project. The production Director URL is built
 in; `LECTURECAST_DIRECTOR_URL` is a staging/development override. `director
@@ -141,9 +147,11 @@ The agent reads [AGENTS.md](AGENTS.md) / [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WOR
 ```
 topic
   ▼ commercial onboarding (active monthly pass)
-  ▼ Director choices + signed ProductionManifest
+  ▼ Director v1.1 choices (including presenter + BGM)
+  ▼ signed ProductionManifest + applicable PresenterPlan / OrchestrationPlan
   ▼ complete signed script review  (your approval gate)
   ▼ per-section local TTS + measured execution timeline
+  ▼ local digital-human composition / BGM mix when selected
   ▼ scenes + subtitles driven by the same measured timing plan
   ▼ render      build_manifest_video.sh / .ps1 (Remotion + ffmpeg + libass)
   ▼ narration-coverage validation + 2 mp4s + 2 covers

@@ -12,11 +12,13 @@ from ..capabilities import (
 )
 from ..commercial import require_commercial_access
 from ..config import resolve_protocol_version
+from ..director import DirectorStateStore
 from ..errors import LectureCastError
 from ..host_agent import (
     HOST_ADAPTER_VERSION,
     HOST_WORKFLOW_CONTRACT_VERSION,
     HostWorkflowStore,
+    contract_summary,
     require_host_adapter,
     require_project_host_workflow,
 )
@@ -25,6 +27,13 @@ from .output import emit, fail
 
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
+
+
+def _project_protocol_version(directory: Path) -> str:
+    state_path = directory.expanduser().resolve() / ".lecturecast" / "director-state.json"
+    if state_path.is_file():
+        return DirectorStateStore(directory).load().protocol_version
+    return resolve_protocol_version()
 
 
 @app.command("init")
@@ -48,6 +57,7 @@ def init_project(
             {
                 "project": state.to_dict(),
                 "host_workflow": receipt,
+                "contracts": contract_summary(_project_protocol_version(directory)),
                 "workflow": {
                     "phase": "source_summary_required",
                     "next_action": {
@@ -126,6 +136,7 @@ def resume(
             {
                 "project": state.to_dict(),
                 "host_workflow": receipt,
+                "contracts": contract_summary(_project_protocol_version(directory)),
                 "workflow": {
                     "phase": "project_resumed",
                     "next_action": {
@@ -183,7 +194,7 @@ def capabilities(
                 message="命令提供的 Adapter version 与当前 Skill 合同不一致。",
                 next_action="不要手工指定版本；在新任务中按当前 Skill 继续。",
             )
-        protocol_version = resolve_protocol_version()
+        protocol_version = _project_protocol_version(directory)
         if protocol_version == "1.1":
             # §5.5e5c: v1.1 capture with real HeyGen probes (mirror director.py
             # generate path) so the persisted client-capabilities.json carries
@@ -210,6 +221,7 @@ def capabilities(
                 "project": updated.to_dict(),
                 "capabilities": document.model_dump(),
                 "host_workflow": receipt,
+                "contracts": contract_summary(protocol_version),
                 "workflow": {
                     "phase": "capabilities_saved",
                     "policy": "execute_only_returned_next_action",

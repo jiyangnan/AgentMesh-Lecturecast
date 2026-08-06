@@ -5,7 +5,14 @@ description: Create or resume paid LectureCast videos with AgentMesh360 commerci
 
 # LectureCast for Codex
 
-This Skill implements host workflow contract `1.0.0`. Start every new or resumed
+This Skill implements host workflow contract `1.0.0`. That number attests this
+installer-owned Skill only; it is not the cloud Director protocol. New Director
+Sessions use protocol `1.1`, reported separately as
+`contracts.director_protocol.version`, and existing Sessions keep the protocol
+locked in their local Director state. Never infer the Director protocol from
+`--host-contract` or ask the user to set `LECTURECAST_PROTOCOL_VERSION`.
+
+Start every new or resumed
 task with exactly `lecturecast onboard --adapter codex --host-contract 1.0.0
 --json`. Do not create, resume, or render a project until `workflow.ready` is
 true. If the payload sets
@@ -36,6 +43,12 @@ user explicitly approves and `lecturecast manifest approve
 an improvised local script.
 
 For each Director question, use Codex's native interactive choice control when it is available. Preserve the server's 2–3 options, label/description and stable `option_id`. If the control accepts at most three questions, split larger card sets and call `lecturecast director next --json` after every submitted answer. If native choices are unavailable, use the shared numbered-text fallback.
+
+In Director protocol `1.1`, do not skip the `presenter` stage. Surface every
+applicable server question, including `presenter` and `bgm`; choosing the photo
+presenter must continue through the returned HeyGen disclosure and configuration
+flow, while a non-`none` BGM choice continues through the signed
+OrchestrationPlan and local mix workflow.
 
 When continuing an existing project, first run `lecturecast project resume
 <project-path> --adapter codex --host-contract 1.0.0 --json`, then execute its

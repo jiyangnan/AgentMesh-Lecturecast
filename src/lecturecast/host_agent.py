@@ -20,6 +20,21 @@ HOST_WORKFLOW_SCHEMA_VERSION = "1.0"
 HOST_WORKFLOW_FILENAME = "host-workflow.json"
 
 
+def contract_summary(director_protocol_version: str) -> dict[str, Any]:
+    """Keep host Skill attestation distinct from the Director wire protocol."""
+    return {
+        "host_workflow": {
+            "version": HOST_WORKFLOW_CONTRACT_VERSION,
+            "purpose": "installer_owned_skill_attestation",
+        },
+        "director_protocol": {
+            "version": director_protocol_version,
+            "purpose": "cloud_director_session",
+            "locked_at": "session_creation",
+        },
+    }
+
+
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 

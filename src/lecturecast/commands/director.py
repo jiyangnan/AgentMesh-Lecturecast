@@ -30,6 +30,7 @@ from ..host_agent import (
     HOST_ADAPTER_VERSION,
     HOST_WORKFLOW_CONTRACT_VERSION,
     HostWorkflowStore,
+    contract_summary,
     require_host_adapter,
     require_project_host_workflow,
 )
@@ -100,7 +101,10 @@ def _result(
     project: dict[str, Any] | None = None,
     workflow: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {"director": state.to_dict()}
+    payload: dict[str, Any] = {
+        "director": state.to_dict(),
+        "contracts": contract_summary(state.protocol_version),
+    }
     if session is not None:
         payload["session"] = session
         payload["decision_card_set"] = session.get("decision_card_set")

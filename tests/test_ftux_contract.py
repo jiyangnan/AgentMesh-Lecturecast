@@ -32,6 +32,31 @@ def test_installers_run_the_machine_readable_commercial_gate() -> None:
     assert "& $LectureCastExe onboard --json" in windows
 
 
+def test_installers_fail_closed_unless_new_sessions_default_to_director_v1_1() -> None:
+    macos = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+    windows = (ROOT / "scripts" / "install.ps1").read_text(encoding="utf-8")
+
+    for installer in (macos, windows):
+        assert "resolve_protocol_version({})" in installer
+        assert "host Skill contract remains 1.0.0" in installer
+
+
+def test_public_agent_guidance_distinguishes_host_contract_from_director_protocol() -> None:
+    documents = (
+        ROOT / "README.md",
+        ROOT / "README.zh.md",
+        ROOT / "AGENTS.md",
+        ROOT / "skills" / "codex" / "SKILL.md",
+        ROOT / "skills" / "shared" / "director-workflow.md",
+    )
+
+    for path in documents:
+        content = path.read_text(encoding="utf-8")
+        assert "1.0.0" in content
+        assert "1.1" in content
+        assert "Director protocol" in content or "Director 协议" in content
+
+
 def test_repeat_install_can_reuse_current_editable_package_without_network() -> None:
     macos = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
     windows = (ROOT / "scripts" / "install.ps1").read_text(encoding="utf-8")

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from lecturecast.config import PROTOCOL_VERSION_ENV, resolve_protocol_version
 from lecturecast.director import DirectorStateStore
+
+if TYPE_CHECKING:
+    from lecturecast.director import DirectorClient
 
 
 NOW = "2026-07-15T12:00:00Z"
@@ -17,12 +20,12 @@ NOW = "2026-07-15T12:00:00Z"
 
 # ---- resolve_protocol_version ----
 
-def test_default_protocol_version_is_1_0() -> None:
-    assert resolve_protocol_version({}) == "1.0"
+def test_default_protocol_version_is_current_v1_1() -> None:
+    assert resolve_protocol_version({}) == "1.1"
 
 
-def test_env_can_opt_into_1_1() -> None:
-    assert resolve_protocol_version({PROTOCOL_VERSION_ENV: "1.1"}) == "1.1"
+def test_explicit_v1_0_override_remains_available_for_compatibility_tests() -> None:
+    assert resolve_protocol_version({PROTOCOL_VERSION_ENV: "1.0"}) == "1.0"
 
 
 def test_unsupported_protocol_version_rejected() -> None:

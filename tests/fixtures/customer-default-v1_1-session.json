@@ -1,0 +1,113 @@
+{
+  "session_id": "session_customer_default_v1_1",
+  "status": "collecting_decisions",
+  "brief_version": 0,
+  "catalog_version": "2026-08-05.1",
+  "updated_at": "2026-08-06T00:00:00Z",
+  "decision_card_set": {
+    "schema_version": "1.1",
+    "card_set_id": "card_presenter_customer_default",
+    "session_id": "session_customer_default_v1_1",
+    "catalog_version": "2026-08-05.1",
+    "stage": "presenter",
+    "title": "数字人出镜、声音与背景音乐",
+    "questions": [
+      {
+        "question_id": "presenter",
+        "selection_mode": "single",
+        "title": "是否加入数字人出镜？",
+        "description": "选择不出镜，或使用照片数字人。",
+        "options": [
+          {
+            "option_id": "none",
+            "label": "不出镜",
+            "description": "保持纯画面与旁白。"
+          },
+          {
+            "option_id": "photo",
+            "label": "照片数字人",
+            "description": "进入 HeyGen 披露、配置与 PresenterPlan 流程。"
+          }
+        ],
+        "other_allowed": false,
+        "min_selections": 1,
+        "max_selections": 1
+      },
+      {
+        "question_id": "voice_mode",
+        "selection_mode": "single",
+        "title": "旁白声音用哪种？",
+        "description": "形象与声音独立选择。",
+        "options": [
+          {
+            "option_id": "stock",
+            "label": "通用配音",
+            "description": "使用客户端支持的通用声音。"
+          },
+          {
+            "option_id": "own_voice",
+            "label": "本人声音克隆",
+            "description": "使用本机声音克隆能力。"
+          }
+        ],
+        "other_allowed": false,
+        "min_selections": 1,
+        "max_selections": 1
+      },
+      {
+        "question_id": "bgm",
+        "selection_mode": "single",
+        "title": "是否自动配乐？",
+        "description": "配乐参数由 OrchestrationPlan 签发并在本机混音。",
+        "options": [
+          {
+            "option_id": "none",
+            "label": "不配乐",
+            "description": "保持纯旁白。"
+          },
+          {
+            "option_id": "light_tech",
+            "label": "科技轻盈",
+            "description": "轻节奏科技感配乐。"
+          },
+          {
+            "option_id": "bright_launch",
+            "label": "明亮发布",
+            "description": "明亮、有推进感的发布感配乐。"
+          }
+        ],
+        "other_allowed": false,
+        "min_selections": 1,
+        "max_selections": 1
+      }
+    ],
+    "pricing_estimate": {
+      "estimate_status": "provisional",
+      "minimum_total": 10,
+      "maximum_total": 30,
+      "charge_model": "per_milestone_success",
+      "pricing_version": "pricing.v1",
+      "applicable_milestones": [
+        "manifest"
+      ],
+      "per_milestone": {
+        "manifest": 10
+      },
+      "next_milestone_cost": 10
+    }
+  },
+  "pricing_estimate": {
+    "estimate_status": "provisional",
+    "minimum_total": 10,
+    "maximum_total": 30,
+    "charge_model": "per_milestone_success",
+    "pricing_version": "pricing.v1",
+    "applicable_milestones": [
+      "manifest"
+    ],
+    "per_milestone": {
+      "manifest": 10
+    },
+    "next_milestone_cost": 10
+  }
+}

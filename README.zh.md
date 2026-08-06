@@ -90,6 +90,10 @@ pip install -e .
 Agent 任务；新版 Skill 会运行带 `--adapter` 与 `--host-contract 1.0.0` 的
 onboard 命令，同时验证 Skill、商业账户和渲染器。
 
+宿主工作流合同 `1.0.0` 只用于证明当前任务加载了安装器提供的 Skill。全新项目默认
+使用 Director 协议 `1.1`，`onboard` 会在 `contracts` 中分别报告两者；已有
+Director Session 继续使用创建时锁定的协议，不会被静默迁移。
+
 ---
 
 ## 用
@@ -117,7 +121,7 @@ lecturecast director next ./my-video --json
 `renderer.next_actions` 只在 onboarding 被本地依赖阻塞时修复 renderer，不推进项目
 状态。完成其返回的修复动作后重新运行 `onboard`；只有 `workflow.ready=true` 才回到
 唯一 `workflow.next_action` 链。`--host-contract 1.0.0` 证明宿主 Skill，与
-ProductionManifest schema `1.0` 是两份不同合同。
+Director 协议 `1.1`、ProductionManifest schema `1.0` 都是不同概念。
 
 API Key 不会写入项目。生产 Director URL 已内置，`LECTURECAST_DIRECTOR_URL`
 只用于受控的测试环境。`director resume` 仅本地重新绑定，不扣 credit。每次确认
@@ -133,9 +137,11 @@ Agent 会读 [AGENTS.md](AGENTS.md) / [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFL
 ```
 主题
   ▼ 商业 onboarding（有效 monthly pass）
-  ▼ Director 选择 + 签名 ProductionManifest
+  ▼ Director v1.1 选择（包含数字人和背景音乐）
+  ▼ 签名 ProductionManifest + 适用的 PresenterPlan / OrchestrationPlan
   ▼ 展示完整签名脚本         （你审批）
   ▼ 分节本地配音 + 实测执行时间线
+  ▼ 选中时在本机完成数字人合成 / 背景音乐混音
   ▼ 场景与字幕共同使用同一份实测时间线
   ▼ 渲染   build_manifest_video.sh / .ps1（Remotion + ffmpeg + libass）
   ▼ 旁白覆盖验收 + 2 个 mp4 + 2 张封面

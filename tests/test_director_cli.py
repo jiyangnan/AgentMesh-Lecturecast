@@ -17,6 +17,7 @@ from lecturecast.director import (
     normalize_server_url,
     probe_director,
 )
+from lecturecast.config import PROTOCOL_VERSION_ENV
 from lecturecast.errors import LectureCastError
 from lecturecast.project import ProjectStore
 from lecturecast.protocol import ClientCapabilities
@@ -29,6 +30,9 @@ NOW = "2026-07-15T12:00:00Z"
 
 @pytest.fixture(autouse=True)
 def allow_commercial_commands(monkeypatch: pytest.MonkeyPatch) -> None:
+    # This module exercises the frozen v1.0 fixture flow. The customer-default
+    # v1.1 path has a separate regression test with the override removed.
+    monkeypatch.setenv(PROTOCOL_VERSION_ENV, "1.0")
     monkeypatch.setattr(
         "lecturecast.commands.project.require_commercial_access", lambda: None
     )
