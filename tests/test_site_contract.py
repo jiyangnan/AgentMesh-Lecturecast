@@ -246,6 +246,53 @@ def test_current_site_publishes_real_dual_format_customer_case() -> None:
         assert header[4:8] == b"ftyp"
 
 
+def test_current_site_localizes_dual_format_platform_labels() -> None:
+    expected = {
+        "index.html": (
+            "BILIBILI · 16:9 · 04:48",
+            "<h3>B 站横版</h3>",
+            "XIAOHONGSHU · 9:16 · 04:48",
+            "<h3>小红书竖版</h3>",
+        ),
+        "en/index.html": (
+            "YOUTUBE · 16:9 · 04:48",
+            "<h3>YouTube landscape</h3>",
+            "TIKTOK · 9:16 · 04:48",
+            "<h3>TikTok portrait</h3>",
+        ),
+        "ja/index.html": (
+            "YOUTUBE · 16:9 · 04:48",
+            "<h3>YouTube 横版</h3>",
+            "TIKTOK · 9:16 · 04:48",
+            "<h3>TikTok 縦版</h3>",
+        ),
+        "ko/index.html": (
+            "YOUTUBE · 16:9 · 04:48",
+            "<h3>YouTube 가로형</h3>",
+            "TIKTOK · 9:16 · 04:48",
+            "<h3>TikTok 세로형</h3>",
+        ),
+    }
+    metadata_names = {
+        "en/index.html": (
+            "real YouTube landscape delivery",
+            "real TikTok portrait delivery",
+        ),
+        "ja/index.html": ("YouTube 横版の実納品", "TikTok 縦版の実納品"),
+        "ko/index.html": ("YouTube 가로형 실제 납품", "TikTok 세로형 실제 납품"),
+    }
+
+    for relative, labels in expected.items():
+        page = (ROOT / "site" / relative).read_text(encoding="utf-8")
+        case = page.split('data-case-study="real-customer-canary-v1"', 1)[1].split(
+            "</section>", 1
+        )[0]
+        for label in labels:
+            assert label in case
+        for name in metadata_names.get(relative, ()):
+            assert name in page
+
+
 def test_current_site_installs_then_onboards_before_conditional_login() -> None:
     for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
