@@ -31,6 +31,20 @@ lecturecast director status ./my-video --json
 Never reconstruct IDs from chat and never copy only the final videos out of a
 temporary project. The `.lecturecast/` directory is the recovery source.
 
+If an existing protocol `1.1` project selected a photo presenter and reports
+`heygen_key_required`, do not query cloud status or create another generation.
+Show the returned `user_prompt`; the user obtains their own Key from the
+[official HeyGen API settings](https://app.heygen.com/settings?from=&nav=API),
+then enters it only through the hidden local prompt:
+
+```bash
+lecturecast presenter configure ./my-video --json
+```
+
+Never receive the Key in agent chat, command arguments, logs, stdout, project
+files, or memory. The command stores it in the operating system credential
+store and returns the exact continuation for the already reserved generation.
+
 ## 2. Review and approve the full script
 
 ```bash

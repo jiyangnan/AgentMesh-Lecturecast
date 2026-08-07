@@ -147,6 +147,21 @@ Agent 会读 [AGENTS.md](AGENTS.md) / [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFL
   ▼ 旁白覆盖验收 + 2 个 mp4 + 2 张封面
 ```
 
+### 照片数字人 — 安全配置 HeyGen 自带 Key
+
+选择照片数字人后，LectureCast 可能要求用户提供自己申请的 HeyGen API Key。请从
+[HeyGen 官方 API 设置页](https://app.heygen.com/settings?from=&nav=API)获取。
+它是用户自带的第三方凭据，HeyGen 可能另行收费，与 AgentMesh360 credits 无关。
+不要把 Key 粘贴到 Agent 聊天、命令参数、项目文件、日志或 stdout。只执行产品返回的：
+
+```bash
+lecturecast presenter configure <项目路径> --json
+```
+
+命令会在本机终端通过隐藏输入读取 Key，并保存到操作系统安全凭证库。若当前已经
+保留了 generation，配置成功后会继续使用原 generation ID，不会要求新建一笔，也
+不需要手工修改 `.lecturecast` 状态。
+
 ### 配音 — 默认免费，MiniMax 可选（BYOK 自带 key）
 
 配音默认走 **Edge TTS**（免费、零配置）。想升级到更暖更自然的 **MiniMax** 音色，

@@ -16,14 +16,12 @@ Per Codex e5b plan:
 from __future__ import annotations
 
 import json
-import os
 import re
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Callable, Protocol
+from typing import Callable
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
+
+from .heygen_credentials import get_heygen_api_key
 
 _DEFAULT_BASE_URL = "https://api.heygen.com"
 _RESPONSE_MAX = 1_048_576 + 1  # 1 MiB + 1 to detect overflow
@@ -169,7 +167,6 @@ class HeyGenHttpTransport:
         boundary derived from the idempotency key. The file is streamed in
         chunks — never fully buffered. Only the 'file' field is sent."""
         import hashlib as _h
-        import io as _io
         _validate_path(path)
         if not _IDEMPOTENCY_RE.fullmatch(idempotency_key):
             raise ValueError(f"invalid Idempotency-Key: {idempotency_key!r}")
@@ -250,7 +247,7 @@ class HeyGenHttpTransport:
 # --- helpers ---------------------------------------------------------------
 
 def _default_key_provider() -> str:
-    return os.environ.get("HEYGEN_API_KEY", "")
+    return get_heygen_api_key() or ""
 
 
 def _validate_base_url(url: str) -> str:

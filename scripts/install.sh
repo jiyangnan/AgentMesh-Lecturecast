@@ -130,6 +130,8 @@ ok "shim at $SHIM_DIR/lecturecast"
 # --- host-specific commercial workflow Skill; conflicts block safe onboarding ---
 bash "$INSTALL_DIR/scripts/manage_adapters.sh" install
 "$VENV/bin/lecturecast" agent adapters --json
+"$VENV/bin/lecturecast" presenter --help >/dev/null
+ok "secure HeyGen credential command available"
 
 # --- distinguish CLI installation from renderer readiness ---
 DOCTOR_JSON=$("$VENV/bin/lecturecast" doctor --json)
@@ -161,6 +163,8 @@ echo "    Codex:       lecturecast onboard --adapter codex --host-contract 1.0.0
 echo "    Claude Code: lecturecast onboard --adapter claude-code --host-contract 1.0.0 --json"
 echo "    OpenClaw:    lecturecast onboard --adapter openclaw --host-contract 1.0.0 --json"
 echo "    lecturecast auth login       # when onboarding asks for an API Key"
+echo "    lecturecast presenter configure <project-path> --json"
+echo "        # only when returned; HeyGen Key is entered in the hidden local prompt, never chat"
 echo
 echo "A paid AgentMesh360 account and at least 10 shared credits are required."
 echo "Account center: https://agentmesh360.com/app/"

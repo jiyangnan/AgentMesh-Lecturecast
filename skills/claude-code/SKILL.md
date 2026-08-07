@@ -31,6 +31,12 @@ contract.
 After onboarding succeeds, follow the complete [shared Director workflow](../shared/director-workflow.md).
 All original media, voice, editing and rendering remain local.
 
+If the returned action is `presenter.heygen.configure`, relay the complete
+`user_prompt` and wait while the user runs that exact action in their own local
+terminal. Never request, receive, paste, or retain the HeyGen Key in Claude Code
+chat or tool arguments. After the hidden local input succeeds, execute only the
+returned continuation, which preserves the original generation ID.
+
 For each Director question, use Claude Code's `AskUserQuestion` choice UI when available. Preserve the server's label/description and map the response to the exact stable `option_id`; never infer it from display text. Submit one answer and refresh server state before asking the next question. If the choice UI is unavailable, use the shared numbered-text fallback.
 
 When continuing an existing project, first run `lecturecast project resume

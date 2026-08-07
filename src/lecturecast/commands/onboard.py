@@ -27,6 +27,7 @@ from ..host_agent import (
     host_adapter_status,
 )
 from .output import emit
+from .presenter import is_locally_reserved_generation, reserved_generation_contract
 
 
 def _project_protocol_version(project_root: Path | None) -> str:
@@ -139,6 +140,14 @@ def onboarding_status(
         }
     )
     blocked_by: list[str] = []
+    reserved_contract: dict[str, Any] | None = None
+    if (
+        project_root is not None
+        and (project_root / ".lecturecast" / "director-state.json").is_file()
+    ):
+        local_state = DirectorStateStore(project_root).load()
+        if is_locally_reserved_generation(local_state):
+            reserved_contract = reserved_generation_contract(project_root, local_state)
     if not host_agent["ready"]:
         blocked_by.append(str(host_agent["reason"]))
     if not credential.configured:
@@ -147,7 +156,13 @@ def onboarding_status(
         blocked_by.append(access.reason)
     elif not access.usable:
         blocked_by.append(access.reason)
-    if project_root is not None and not renderer["ready"]:
+    if reserved_contract is not None and reserved_contract["requires_user_action"]:
+        blocked_by.extend(reserved_contract["workflow"]["blocked_by"])
+    if (
+        project_root is not None
+        and not renderer["ready"]
+        and reserved_contract is None
+    ):
         blocked_by.append("renderer_not_ready")
     if access.usable and not director["reachable"]:
         blocked_by.append("director_unavailable")
@@ -181,6 +196,9 @@ def onboarding_status(
             "当前 AgentMesh360 账户没有可用的付费 LectureCast 权益。"
         )
         next_suggested = PRICING_URL
+    elif reserved_contract is not None and reserved_contract["requires_user_action"]:
+        user_prompt = str(reserved_contract["user_prompt"])
+        next_suggested = str(reserved_contract["next_suggested"])
     elif not director["reachable"]:
         user_prompt = (
             "商业账户已绑定，但 LectureCast Director 服务当前不可用；"
@@ -197,7 +215,9 @@ def onboarding_status(
             f"--adapter {adapter} --host-contract {HOST_WORKFLOW_CONTRACT_VERSION} --json"
         )
 
-    if ready:
+    if ready and reserved_contract is not None:
+        next_action = reserved_contract["workflow"]["next_action"]
+    elif ready:
         next_action = {
             "id": "project.init",
             "kind": "command",
@@ -225,6 +245,8 @@ def onboarding_status(
             "mutates": False,
             "requires_user_approval": True,
         }
+    elif reserved_contract is not None and reserved_contract["requires_user_action"]:
+        next_action = reserved_contract["workflow"]["next_action"]
     elif project_root is not None and not renderer["ready"]:
         next_action = {
             "id": "renderer.setup",
@@ -279,6 +301,11 @@ def onboarding_status(
         "renderer": renderer,
         "workflow": {
             "ready": ready,
+            "phase": (
+                reserved_contract["workflow"]["phase"]
+                if reserved_contract is not None
+                else "onboarding_ready" if ready else "onboarding_blocked"
+            ),
             "blocked_by": blocked_by,
             "requires_user_action": not ready,
             "next_suggested": next_suggested,

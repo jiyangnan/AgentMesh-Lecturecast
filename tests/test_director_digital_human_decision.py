@@ -51,6 +51,16 @@ def _bypass_gates(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda *a, **kw: None,
     )
     monkeypatch.setenv("LECTURECAST_API_KEY", "test_key")
+    monkeypatch.delenv("HEYGEN_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "lecturecast.capabilities.get_heygen_api_key", lambda: None
+    )
+    monkeypatch.setattr(
+        "lecturecast.commands.presenter.require_project_host_workflow",
+        lambda *a, **kw: {
+            "adapter": {"kind": "codex", "version": "1.0.0"}
+        },
+    )
 
 
 # ===========================================================================
@@ -287,6 +297,11 @@ def test_generate_fires_d13_card_when_photo_and_unconfigured(
     assert body["workflow"]["phase"] == "digital_human_decision_required"
     assert body["workflow"]["next_action"]["id"] == "director.digital_human.decide"
     assert body["workflow"]["next_action"]["kind"] == "host_choice"
+    assert body["requires_user_action"] is True
+    assert body["local_generation"]["cloud_submission_state"] == "not_submitted"
+    assert body["local_generation"]["credit_deducted"] is False
+    assert "app.heygen.com/settings" in body["user_prompt"]
+    assert "不要把 Key 粘贴到聊天" in body["user_prompt"]
     assert capture.calls == []  # paid call intercepted
 
 
@@ -421,10 +436,17 @@ def _setup_decide_project(
     return store
 
 
-def test_decide_configure_routes_to_doctor(
+def test_decide_configure_routes_to_secure_local_credential_input(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _setup_decide_project(tmp_path, monkeypatch)
+    store = _setup_decide_project(tmp_path, monkeypatch)
+    state = store.load()
+    generation_id = "generation_09176419e9704cb48f843942e27086ec"
+    store.update(
+        state,
+        generation_id=generation_id,
+        generation_status="reserved",
+    )
     result = runner.invoke(
         app,
         ["director", "digital-human", "decide", str(tmp_path),
@@ -432,13 +454,240 @@ def test_decide_configure_routes_to_doctor(
     )
     assert result.exit_code == 0, result.output
     body = json.loads(result.stdout)
-    assert body["workflow"]["phase"] == "digital_human_configure_required"
+    assert body["workflow"]["phase"] == "heygen_credential_required"
+    assert body["requires_user_action"] is True
+    assert body["local_generation"]["generation_id"] == generation_id
+    assert body["local_generation"]["cloud_submission_state"] == "not_submitted"
+    assert body["local_generation"]["credit_deducted"] is False
+    assert "https://app.heygen.com/settings" in body["user_prompt"]
+    assert "用户自带的第三方凭据" in body["user_prompt"]
+    assert "聊天" in body["user_prompt"]
+    assert "命令参数" in body["user_prompt"]
+    assert "stdout" in body["user_prompt"]
+    assert "系统安全凭证存储" in body["user_prompt"]
     action = body["workflow"]["next_action"]
-    assert action["id"] == "lecturecast.doctor"
-    assert action["kind"] == "command"
-    assert action["mutates"] is False  # doctor is read-only
+    assert action["id"] == "presenter.heygen.configure"
+    assert action["kind"] == "interactive_secret_input"
+    assert action["secret_input"]["hidden"] is True
+    assert action["secret_input"]["transport"] == "local_tty"
+    assert action["secret_input"]["storage"] == "system_credential_store"
+    assert action["requires_user_approval"] is True
+    assert action["argv"] == [
+        "lecturecast", "presenter", "configure", str(tmp_path), "--json"
+    ]
+    assert all("key" not in arg.lower() for arg in action["argv"])
+
+
+def test_reserved_generation_status_and_resume_never_query_cloud(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    generation_id = "generation_09176419e9704cb48f843942e27086ec"
+    _setup_d13_project(tmp_path, monkeypatch, avatar="photo", configured=False)
+    first = _invoke_generate(tmp_path, "--generation-id", generation_id)
+    assert first.exit_code == 0, first.output
+
+    def unexpected_client(_url: str) -> Any:
+        raise AssertionError("locally reserved generation must not query Director")
+
+    monkeypatch.setattr(
+        "lecturecast.commands.director._make_client", unexpected_client
+    )
+    for argv in (
+        ["director", "status", str(tmp_path), "--json"],
+        ["director", "generation-resume", str(tmp_path), "--json"],
+    ):
+        result = runner.invoke(app, argv)
+        assert result.exit_code == 0, result.output
+        body = json.loads(result.stdout)
+        assert body["workflow"]["phase"] == "heygen_credential_required"
+        assert body["workflow"]["next_action"]["id"] == "presenter.heygen.configure"
+        assert body["local_generation"]["generation_id"] == generation_id
+        assert body["local_generation"]["cloud_submission_state"] == "not_submitted"
+        assert body["local_generation"]["credit_deducted"] is False
+
+
+def test_doctor_returns_the_same_secure_action_for_a_reserved_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    generation_id = "generation_09176419e9704cb48f843942e27086ec"
+    _setup_d13_project(tmp_path, monkeypatch, avatar="photo", configured=False)
+    first = _invoke_generate(tmp_path, "--generation-id", generation_id)
+    assert first.exit_code == 0, first.output
+
+    section = {
+        "configured": False,
+        "key_present": False,
+        "blockers": ["key_missing"],
+        "warnings": [],
+        "operations": [],
+        "features": [],
+    }
+    capabilities = parse_client_capabilities(
+        {
+            key: value
+            for key, value in _fixture("client-capabilities-v1_1.json").items()
+            if key != "third_party_processors"
+        }
+    )
+    monkeypatch.setattr(
+        "lecturecast.commands.doctor.capture_capabilities_v1_1",
+        lambda **_kwargs: capabilities,
+    )
+    monkeypatch.setattr(
+        "lecturecast.commands.doctor.build_heygen_doctor_section",
+        lambda **_kwargs: section,
+    )
+    monkeypatch.setattr(
+        "lecturecast.commands.presenter.build_heygen_doctor_section",
+        lambda **_kwargs: section,
+    )
+
+    result = runner.invoke(
+        app,
+        ["doctor", "--project-root", str(tmp_path), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    body = json.loads(result.stdout)
+    assert body["requires_user_action"] is True
+    assert body["workflow"]["phase"] == "heygen_credential_required"
+    assert body["workflow"]["next_action"]["id"] == "presenter.heygen.configure"
+    assert body["local_generation"]["generation_id"] == generation_id
+
+
+def test_agent_onboarding_prioritizes_heygen_over_renderer_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lecturecast.auth import AuthStatus
+    from lecturecast.commercial import CommercialAccess
+    from lecturecast.commands.onboard import onboarding_status
+
+    _setup_d13_project(tmp_path, monkeypatch, avatar="photo", configured=False)
+    generated = _invoke_generate(tmp_path)
+    assert generated.exit_code == 0, generated.output
+
+    access = CommercialAccess(
+        valid=True,
+        usable=True,
+        reason="ready",
+        legacy_tier="monthly",
+        pass_status="active",
+        credit=100,
+        source="monthly_pass",
+        expires_at=None,
+        required_credits=10,
+        paid_pass_required=False,
+        account_url="https://agentmesh360.com/app/",
+        pricing_url="https://agentmesh360.com/app/#pricing",
+        next_suggested="lecturecast doctor --json",
+        enough_credit=True,
+    )
+
+    class _Commercial:
+        def __init__(self, *, api_key: str) -> None:
+            assert api_key == "test_key"
+
+        def access(self) -> CommercialAccess:
+            return access
+
+    monkeypatch.setattr(
+        "lecturecast.commands.onboard.host_adapter_status",
+        lambda *_args: {"ready": True, "reason": "ready", "bootstrap_argv": []},
+    )
+    monkeypatch.setattr(
+        "lecturecast.commands.onboard.auth_status",
+        lambda: AuthStatus(True, "keyring", False),
+    )
+    monkeypatch.setattr("lecturecast.commands.onboard.get_api_key", lambda: "test_key")
+    monkeypatch.setattr("lecturecast.commands.onboard.CommercialClient", _Commercial)
+    monkeypatch.setattr(
+        "lecturecast.commands.onboard._renderer",
+        lambda *_args, **_kwargs: {
+            "ready": False,
+            "next_actions": ["install renderer"],
+        },
+    )
+    monkeypatch.setattr(
+        "lecturecast.commands.onboard._director",
+        lambda: {"reachable": True, "url": "https://api.test", "status": "ok"},
+    )
+
+    payload = onboarding_status(
+        tmp_path,
+        adapter="codex",
+        host_contract="1.0.0",
+    )
+
+    assert payload["ok"] is False
+    assert payload["workflow"]["phase"] == "heygen_credential_required"
+    assert payload["workflow"]["next_action"]["id"] == "presenter.heygen.configure"
+    assert "renderer_not_ready" not in payload["workflow"]["blocked_by"]
+
+
+def test_secure_presenter_configure_resumes_the_same_reserved_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from lecturecast.heygen_credentials import HeyGenCredentialStatus
+
+    generation_id = "generation_09176419e9704cb48f843942e27086ec"
+    capture, _ = _setup_d13_project(
+        tmp_path, monkeypatch, avatar="photo", configured=False
+    )
+    first = _invoke_generate(tmp_path, "--generation-id", generation_id)
+    assert first.exit_code == 0, first.output
+    assert capture.calls == []
+
+    secret = "heygen_test_secret_never_echo"
+    monkeypatch.setattr("typer.prompt", lambda *a, **kw: secret)
+    monkeypatch.setattr(
+        "lecturecast.commands.presenter.save_heygen_api_key",
+        lambda value: (
+            HeyGenCredentialStatus(True, "system_credential_store", False)
+            if value == secret
+            else pytest.fail("unexpected credential value")
+        ),
+    )
+    monkeypatch.setattr(
+        "lecturecast.commands.presenter.build_heygen_doctor_section",
+        lambda **_kwargs: {
+            "configured": True,
+            "blockers": [],
+            "warnings": [],
+        },
+    )
+    configured_caps = parse_client_capabilities(
+        _fixture("client-capabilities-v1_1.json")
+    )
+    monkeypatch.setattr(
+        "lecturecast.commands.presenter.capture_capabilities_v1_1",
+        lambda **_kwargs: configured_caps,
+    )
+
+    result = runner.invoke(
+        app,
+        ["presenter", "configure", str(tmp_path), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert secret not in result.output
+    body = json.loads(result.stdout)
+    assert body["credential"]["configured"] is True
+    assert body["key_echoed"] is False
+    assert body["workflow"]["phase"] == "local_generation_ready_to_submit"
+    action = body["workflow"]["next_action"]
+    assert action["id"] == "director.generate.resume_reserved"
     assert action["requires_user_approval"] is False
-    assert action["argv"][:2] == ["lecturecast", "doctor"]
+    assert action["argv"] == [
+        "lecturecast",
+        "director",
+        "generate",
+        str(tmp_path),
+        "--generation-id",
+        generation_id,
+        "--json",
+    ]
+    assert body["local_generation"]["generation_id"] == generation_id
+    assert capture.calls == []
 
 
 def test_decide_downgrade_routes_to_generate_with_flag(

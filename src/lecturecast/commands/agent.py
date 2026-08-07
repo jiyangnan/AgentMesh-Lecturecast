@@ -18,6 +18,7 @@ from ..host_agent import (
 from ..project import ProjectStore
 from .onboard import onboarding_status
 from .output import emit
+from .presenter import is_locally_reserved_generation, reserved_generation_contract
 
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -113,6 +114,12 @@ def _project_action(root: Path, adapter: str) -> tuple[str, dict[str, Any]]:
 
     generation_status = director.payload["generation_status"]
     if director.generation_id is not None:
+        if is_locally_reserved_generation(director):
+            contract = reserved_generation_contract(root, director)
+            return (
+                str(contract["workflow"]["phase"]),
+                dict(contract["workflow"]["next_action"]),
+            )
         if generation_status == "ready":
             return (
                 "manifest_recovery_required",

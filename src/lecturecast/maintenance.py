@@ -530,8 +530,9 @@ def run_maintenance(
             db_recovery=db_tally,
             network_skipped=True,
             skip_reason=(
-                "HEYGEN_API_KEY 未配置或为空白 — 资产未从 HeyGen 删除；"
-                "仅本地账本状态已恢复。配置 key 后重跑以执行真实删除。"
+                "HeyGen 本地 API Key 未配置或为空白 — 资产未从 HeyGen 删除；"
+                "仅本地账本状态已恢复。运行 lecturecast presenter configure "
+                "安全配置后重跑以执行真实删除。"
             ),
             force=force,
         )

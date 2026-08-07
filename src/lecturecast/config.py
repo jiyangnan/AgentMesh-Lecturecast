@@ -13,9 +13,12 @@ PRICING_URL = "https://agentmesh360.com/app/#pricing"
 MANIFEST_CREDIT_COST = 10
 KEYRING_SERVICE = "agentmesh-lecturecast"
 KEYRING_USERNAME = "api-key"
+HEYGEN_KEYRING_USERNAME = "heygen-api-key"
+HEYGEN_API_SETTINGS_URL = "https://app.heygen.com/settings?from=&nav=API"
+HEYGEN_API_HELP_URL = "https://help.heygen.com/en/articles/10060327-heygen-api-pricing-explained"
 PROJECT_DIRECTORY = ".lecturecast"
 PROJECT_SCHEMA_VERSION = "1.0"
-CLIENT_VERSION = "0.6.1"
+CLIENT_VERSION = "0.6.2"
 
 # Director protocol version negotiation (§5.5a). New sessions use the current
 # production protocol. Existing sessions ignore this default because their

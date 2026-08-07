@@ -307,21 +307,18 @@ def test_m1_parent_unwritable_journal_skips_without_sentinel(tmp_path: Path) -> 
 
 
 # ===========================================================================
-# D-T10c — whitespace / empty / unset HEYGEN_API_KEY fail-closed (audit B1)
+# D-T10c — no usable HeyGen credential fails closed (audit B1)
 # ===========================================================================
 
 @pytest.mark.parametrize("keyval", ["", "   ", "\t\n ", None])
 def test_d_t10c_blank_key_fail_closed(tmp_path: Path, monkeypatch, keyval) -> None:
-    """D-T10c / B1: a whitespace-only, empty, OR unset HEYGEN_API_KEY is treated
-    identically to an absent key — the network pass is skipped (fail-closed:
-    deletion_recovery stays ``{}``, NOT over-claimed as deleted). The DB pass
-    STILL runs (state recovery is key-independent). The predicate reads the
-    transport's OWN provider (single source of truth) + applies the SAME check
-    the transport applies per-request (heygen_http.py:107:
-    ``not isinstance(key, str) or not key.strip()``) — so it cannot drift from
-    the value the transport would actually use, and a whitespace key cannot
-    mask a config bug (audit B1)."""
+    """D-T10c / B1: whitespace, empty, or unset environment compatibility
+    input plus an empty system credential store is one absent credential. The
+    network pass is skipped and deletion is never over-claimed. The DB pass is
+    still key-independent. The predicate reads the transport's own provider,
+    so maintenance and the actual request boundary cannot drift."""
     project = _current_project(tmp_path)
+    monkeypatch.setattr("lecturecast.heygen_http.get_heygen_api_key", lambda: None)
     if keyval is None:
         monkeypatch.delenv("HEYGEN_API_KEY", raising=False)
     else:
@@ -330,7 +327,7 @@ def test_d_t10c_blank_key_fail_closed(tmp_path: Path, monkeypatch, keyval) -> No
     assert report.network_skipped is True
     assert report.deletion_recovery == {}  # network did not run
     assert report.skip_reason is not None
-    assert "HEYGEN_API_KEY" in report.skip_reason
+    assert "lecturecast presenter configure" in report.skip_reason
     # DB pass ran (key-independent) — empty aggregate on a journal with no
     # withdrawn receipts.
     assert report.db_recovery == dict(_EMPTY_DB_TALLY)

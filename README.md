@@ -157,6 +157,23 @@ topic
   ▼ narration-coverage validation + 2 mp4s + 2 covers
 ```
 
+### Photo presenter — HeyGen BYOK with safe local setup
+
+When a photo presenter is selected, LectureCast may ask for the user's own
+HeyGen API Key. Get it from the official [HeyGen API settings](https://app.heygen.com/settings?from=&nav=API).
+It is a third-party credential and HeyGen may charge separately from
+AgentMesh360. Never paste it into agent chat, command arguments, project files,
+logs, or stdout. Follow the returned action instead:
+
+```bash
+lecturecast presenter configure <project-path> --json
+```
+
+The command accepts the Key through hidden terminal input and stores it in the
+operating system credential store. If a generation was already reserved, the
+result continues with that exact generation ID; it does not create another
+charge or ask the user to edit local state.
+
 ### Voiceover — free by default, MiniMax optional (BYOK)
 
 Voiceover defaults to **Edge TTS** (free, no setup). To upgrade to the warmer

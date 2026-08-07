@@ -41,6 +41,18 @@ def test_installers_fail_closed_unless_new_sessions_default_to_director_v1_1() -
         assert "host Skill contract remains 1.0.0" in installer
 
 
+def test_installers_expose_the_safe_cross_platform_heygen_configuration_path() -> None:
+    macos = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+    windows = (ROOT / "scripts" / "install.ps1").read_text(encoding="utf-8")
+
+    assert '"$VENV/bin/lecturecast" presenter --help' in macos
+    assert "& $LectureCastExe presenter --help" in windows
+    for installer in (macos, windows):
+        assert "lecturecast presenter configure <project-path> --json" in installer
+        assert "hidden local prompt" in installer
+        assert "never chat" in installer
+
+
 def test_public_agent_guidance_distinguishes_host_contract_from_director_protocol() -> None:
     documents = (
         ROOT / "README.md",

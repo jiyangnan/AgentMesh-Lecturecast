@@ -7,7 +7,7 @@ media handling, read
 [`docs/LECTURECAST-SYSTEM-BOUNDARY.md`](docs/LECTURECAST-SYSTEM-BOUNDARY.md).
 Before changing installer, host-adapter, recovery, credential or render
 behavior, also read
-[`docs/COMMERCIAL-WORKFLOW-LESSONS.zh.md`](docs/COMMERCIAL-WORKFLOW-LESSONS.zh.md).
+[`skills/shared/director-workflow.md`](skills/shared/director-workflow.md).
 
 - The official site is served through the existing AgentMesh360
   `jobagent-caddy`; GitHub Pages is not a production origin.
@@ -73,6 +73,10 @@ are not supported; read [docs/SUPPORTED-PLATFORMS.md](docs/SUPPORTED-PLATFORMS.m
      `presenter` and `bgm` choices; photo presenter continues through the HeyGen
      disclosure and PresenterPlan, while BGM continues through OrchestrationPlan
      and local mixing.
+   - If the returned action is `presenter.heygen.configure`, relay its complete
+     `user_prompt`. Never ask for or receive the HeyGen Key in chat, arguments,
+     logs, stdout, or memory. The user enters it only in LectureCast's hidden
+     local prompt; then follow the returned continuation with the same generation ID.
 4. **Review and approve the complete signed script:** when the returned
    `workflow.next_action` is `manifest.review`, execute its exact argv, show every
    narration section to the human, and wait. Only after approval, execute the
@@ -145,8 +149,8 @@ never create a second generation ID after a timeout.
 ## More
 
 - Local pipeline (full): [docs/LOCAL-WORKFLOW.md](docs/LOCAL-WORKFLOW.md)
-- Commercial workflow lessons and regression checklist:
-  [docs/COMMERCIAL-WORKFLOW-LESSONS.zh.md](docs/COMMERCIAL-WORKFLOW-LESSONS.zh.md)
+- Commercial host workflow and recovery rules:
+  [skills/shared/director-workflow.md](skills/shared/director-workflow.md)
 - Supported hosts: [docs/SUPPORTED-PLATFORMS.md](docs/SUPPORTED-PLATFORMS.md)
 - Human-facing docs: [README.md](README.md) · [中文](README.zh.md)
 - Agent Skills: [Codex](skills/codex/SKILL.md) · [Claude Code](skills/claude-code/SKILL.md) · [OpenClaw](skills/openclaw/SKILL.md)

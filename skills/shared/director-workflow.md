@@ -100,6 +100,32 @@ and signed PresenterPlan. A non-`none` BGM choice continues through the signed
 OrchestrationPlan and the local mixing entrypoint. Do not silently fall back to
 the v1.0 narration-only workflow.
 
+When a photo presenter is selected and the returned blocker is
+`heygen_key_required`, treat the returned `workflow.next_action` as the only
+recovery path:
+
+1. Relay the complete `user_prompt`. It tells the user to obtain their own
+   HeyGen API Key from the official HeyGen Settings > API page at
+   <https://app.heygen.com/settings?from=&nav=API>. This third-party credential
+   and any HeyGen charges are separate from AgentMesh360.
+2. Never ask the user to paste the Key into chat, a tool argument, a command
+   argument, a project file, a log, stdout, or agent memory. Do not run an
+   improvised `export HEYGEN_API_KEY=...` command.
+3. Ask the user to run the returned `lecturecast presenter configure
+   <project-path> --json` action in their local terminal. LectureCast reads the
+   value with hidden input and stores it in the operating system credential
+   store. The action argv never contains the Key.
+4. After configuration succeeds, execute its returned next action. It retries
+   `director generate` with the exact locally reserved generation ID; do not
+   create a replacement ID and do not query cloud generation status first.
+
+A local `generation_status=reserved` means the paid Director request has not
+been submitted and no credit was deducted. `director status`,
+`generation-resume`, `doctor`, `onboard`, and `agent status` return the same
+local recovery action for this state. Never reinterpret it as
+`session_not_found`, and never prioritize an unrelated renderer setup over the
+returned HeyGen credential action.
+
 ```bash
 lecturecast director answer <project-path> \
   --question-id <stable-question-id> \

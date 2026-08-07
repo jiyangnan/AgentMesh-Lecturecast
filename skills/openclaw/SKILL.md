@@ -30,6 +30,12 @@ start a new task; an old task may not self-attest the new contract.
 After onboarding succeeds, follow the complete [shared Director workflow](../shared/director-workflow.md).
 All original media, voice, editing and rendering remain local.
 
+If the returned action is `presenter.heygen.configure`, relay the complete
+`user_prompt` and wait while the user runs that exact action in their own local
+terminal. Never request, receive, paste, or retain the HeyGen Key in OpenClaw
+chat, tool arguments, or memory. After the hidden local input succeeds, execute
+only the returned continuation, which preserves the original generation ID.
+
 For each Director question, use the current OpenClaw channel's native choice/form capability when exposed. Keep the server label/description and exact stable `option_id`. Submit one answer and refresh server state before asking the next. When a channel has no reliable choice control, use the shared numbered-text fallback; do not invent channel-specific IDs.
 
 When continuing an existing project, first run `lecturecast project resume

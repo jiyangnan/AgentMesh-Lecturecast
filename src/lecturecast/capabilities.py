@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .config import CLIENT_VERSION
+from .heygen_credentials import HEYGEN_API_KEY_ENV, get_heygen_api_key
 from .protocol import ClientCapabilities, ClientCapabilitiesV1_1, canonical_digest
 
 
@@ -26,7 +27,6 @@ COMPONENT_CATALOG_LOCK_PATH = Path(__file__).with_name("component-catalog.lock")
 # boundary. `configured` is a capability gate (M2 compatibility), not a
 # preflight-passed claim.
 F5_MODEL_PATH_ENV = "LECTURECAST_F5_MODEL_PATH"
-HEYGEN_API_KEY_ENV = "HEYGEN_API_KEY"
 
 # §5.5e5c locked capability surface — the SINGLE source of truth for both the
 # reported third_party_processors payload (heygen_processor) and the doctor
@@ -465,10 +465,12 @@ def heygen_processor(
     is ready (journal_probe). Both probes default fail-closed — no adapter or
     journal is shipped yet (§5.5e). Returns the processor declaration (no key,
     no verified field); None when not fully configured."""
-    import os
-
-    sources = env if env is not None else os.environ
-    if not (sources.get(HEYGEN_API_KEY_ENV) or "").strip():
+    key = (
+        (env.get(HEYGEN_API_KEY_ENV) or "").strip()
+        if env is not None
+        else (get_heygen_api_key() or "").strip()
+    )
+    if not key:
         return None
     if not (adapter_probe() and journal_probe()):
         return None
@@ -679,10 +681,12 @@ def build_heygen_doctor_section(
 
     `adapter_probe` and `journal_diagnostic` are injectable for tests; the
     diagnostic is computed fresh from `project_root` if not supplied."""
-    import os
-
-    sources = env if env is not None else os.environ
-    key_present = bool((sources.get(HEYGEN_API_KEY_ENV) or "").strip())
+    key = (
+        (env.get(HEYGEN_API_KEY_ENV) or "").strip()
+        if env is not None
+        else (get_heygen_api_key() or "").strip()
+    )
+    key_present = bool(key)
     try:
         adapter_ok = bool(adapter_probe())
     except Exception:

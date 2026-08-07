@@ -167,6 +167,9 @@ try {
 }
 & $LectureCastExe agent adapters --json
 Assert-LastExit "adapter inspection"
+& $LectureCastExe presenter --help | Out-Null
+Assert-LastExit "secure HeyGen credential command inspection"
+Write-Ok "secure HeyGen credential command available"
 
 $DoctorJson = & $LectureCastExe doctor --json
 Assert-LastExit "lecturecast doctor"
@@ -198,6 +201,8 @@ Write-Host "    Codex:       lecturecast onboard --adapter codex --host-contract
 Write-Host "    Claude Code: lecturecast onboard --adapter claude-code --host-contract 1.0.0 --json"
 Write-Host "    OpenClaw:    lecturecast onboard --adapter openclaw --host-contract 1.0.0 --json"
 Write-Host "    lecturecast auth login    # when onboarding asks for an API Key"
+Write-Host "    lecturecast presenter configure <project-path> --json"
+Write-Host "        # only when returned; enter the HeyGen Key in the hidden local prompt, never chat"
 Write-Host ""
 Write-Host "A paid AgentMesh360 account and at least 10 shared credits are required."
 Write-Host "Account center: https://agentmesh360.com/app/"

@@ -19,6 +19,7 @@ from .commands.manifest import app as manifest_app
 from .commands.maintenance import maintenance
 from .commands.onboard import onboard
 from .commands.outcome import app as outcome_app
+from .commands.presenter import app as presenter_app
 from .commands.project import app as project_app
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, rich_markup_mode="rich")
@@ -28,6 +29,11 @@ app.add_typer(agent_app, name="agent", help="Drive the current native host throu
 app.add_typer(director_app, name="director", help="Use the cloud creative Director.")
 app.add_typer(project_app, name="project", help="Create and resume durable local projects.")
 app.add_typer(manifest_app, name="manifest", help="Inspect and verify signed manifests.")
+app.add_typer(
+    presenter_app,
+    name="presenter",
+    help="Configure and inspect user-owned digital-human credentials locally.",
+)
 app.add_typer(
     outcome_app,
     name="outcome",

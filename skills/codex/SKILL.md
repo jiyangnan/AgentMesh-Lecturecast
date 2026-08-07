@@ -50,6 +50,12 @@ presenter must continue through the returned HeyGen disclosure and configuration
 flow, while a non-`none` BGM choice continues through the signed
 OrchestrationPlan and local mix workflow.
 
+If the returned action is `presenter.heygen.configure`, relay the complete
+`user_prompt` and wait while the user runs that exact action in their own local
+terminal. Never request, receive, paste, or retain the HeyGen Key in Codex chat
+or tool arguments. After the hidden local input succeeds, execute only the
+returned continuation, which preserves the original generation ID.
+
 When continuing an existing project, first run `lecturecast project resume
 <project-path> --adapter codex --host-contract 1.0.0 --json`, then execute its
 returned next action. A cross-host project will return an exact `director resume`

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import typer
@@ -12,7 +11,10 @@ from ..capabilities import (
     default_heygen_journal_probe,
     doctor_report,
 )
+from ..director import DirectorStateStore
+from ..errors import LectureCastError
 from .output import emit
+from .presenter import is_locally_reserved_generation, reserved_generation_contract
 
 
 def doctor(
@@ -33,16 +35,26 @@ def doctor(
     capabilities = capture_capabilities_v1_1(
         project_root=project_root,
         repo_root=repo_root,
-        env=os.environ,
         adapter_probe=default_heygen_adapter_probe,
         journal_probe=lambda: default_heygen_journal_probe(project_root),
     )
     heygen_section = build_heygen_doctor_section(
-        env=os.environ,
         project_root=project_root,
         adapter_probe=default_heygen_adapter_probe,
     )
     report = doctor_report(capabilities, heygen_section=heygen_section)
+
+    # A local reservation has not reached the Director. Keep doctor inside the
+    # same recoverable chain instead of sending the host to cloud status.
+    state_path = project_root / ".lecturecast" / "director-state.json"
+    if state_path.is_file():
+        try:
+            state = DirectorStateStore(project_root).load()
+            if is_locally_reserved_generation(state):
+                report.update(reserved_generation_contract(project_root, state))
+        except LectureCastError:
+            # The report remains useful; state commands surface corrupt state.
+            pass
 
     missing = ", ".join(report["missing"]) or "无"
     actions = "\n".join(f"- {action}" for action in report["next_actions"])
@@ -62,6 +74,8 @@ def doctor(
             parts = list(blockers) + [f"WARN:{w}" for w in warnings]
             detail = ", ".join(parts) or "未知"
             message += f"\nHeyGen 数字人：未就绪（{detail}）。"
+    if report.get("requires_user_action") and report.get("user_prompt"):
+        message += f"\n{report['user_prompt']}"
 
     emit(
         report,

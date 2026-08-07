@@ -7,6 +7,7 @@ from typing import Any
 import typer
 
 from ..capabilities import (
+    build_heygen_doctor_section,
     capture_capabilities,
     capture_capabilities_v1_1,
     default_heygen_adapter_probe,
@@ -38,6 +39,12 @@ from ..manifest import verify_recovery_catalog_signature as _verify_catalog_sign
 from ..project import ProjectStore
 from ..protocol import ClientCapabilities, canonical_digest, parse_client_capabilities
 from .output import emit, fail
+from .presenter import (
+    heygen_key_required_contract,
+    heygen_key_user_prompt,
+    is_locally_reserved_generation,
+    reserved_generation_contract,
+)
 
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -462,6 +469,8 @@ def _state_workflow(directory: Path, state: DirectorState) -> dict[str, Any]:
             ["lecturecast", "director", "status", root, "--json"],
         )
         phase = "billing_refresh_required"
+    elif is_locally_reserved_generation(state):
+        return reserved_generation_contract(directory, state)["workflow"]
     elif state.generation_id is not None:
         action = _command_action(
             "director.status",
@@ -708,8 +717,8 @@ def digital_human_decide(
 ) -> None:
     """§5.5e5d-d D13: route the user's digital-human downgrade decision.
 
-    Client-local — does NOT hit the server. Option A (configure) routes to the
-    read-only ``lecturecast doctor`` (HeyGen setup diagnosis); option B
+    Client-local — does NOT hit the server. Option A (configure) routes to
+    hidden local credential input backed by the system credential store; option B
     (downgrade) routes back to ``director generate --accept-digital-human-downgrade``
     (paid; the create_generation payload still omits third_party_processors).
     """
@@ -725,24 +734,26 @@ def digital_human_decide(
             )
         store = DirectorStateStore(directory)
         state = store.load()
-        root = str(directory.expanduser().resolve())
         if choice == "configure":
-            # doctor is read-only (no project/server mutation) → mutates=False,
-            # no approval. Built as a raw dict because _command_action's
-            # mutate-heuristic would wrongly mark doctor mutates=True.
-            action: dict[str, Any] = {
-                "id": "lecturecast.doctor",
-                "kind": "command",
-                "argv": ["lecturecast", "doctor", "--project-root", root, "--json"],
-                "mutates": False,
-                "requires_user_approval": False,
-            }
-            phase = "digital_human_configure_required"
-            message = (
-                "请按 doctor 报告配置 HeyGen（设置 HEYGEN_API_KEY、确保 adapter 可导入、"
-                "journal 就绪），再重新采集能力并运行 director generate。"
+            contract = heygen_key_required_contract(
+                directory, generation_id=state.generation_id
             )
+            payload = _result(state=state, workflow=contract["workflow"])
+            payload.update(
+                {
+                    key: value
+                    for key, value in contract.items()
+                    if key != "workflow"
+                }
+            )
+            emit(
+                payload,
+                json_output=json_output,
+                message=str(contract["user_prompt"]),
+            )
+            return
         else:  # downgrade
+            root = str(directory.expanduser().resolve())
             action = _command_action(
                 "director.generate",
                 [
@@ -996,7 +1007,7 @@ def _d13_heygen_configured(capabilities: ClientCapabilities) -> bool:
     presence + ``provider == "heygen"`` + ``configured`` truthy. Keep the two in
     sync if the HeyGen capability shape ever changes. ``capture_capabilities_v1_1``
     sets ``third_party_processors = [processor]`` ONLY when processor is not None
-    (env HEYGEN_API_KEY + adapter probe + journal probe all pass), so key
+    (a local credential + adapter probe + journal probe all pass), so key
     presence is the configured+live truth — the B1 stale-snapshot guard (@820)
     has already dropped + recaptured if live state diverged from the snapshot.
     """
@@ -1016,8 +1027,8 @@ def _d13_decision_action(root: str) -> dict[str, Any]:
     capability gap (§0 Principle 6: advisory never uploaded), so this card is
     NOT driven by ``session.decision_card_set`` — question/options are inline.
     The host fills ``<option_id>`` (configure|downgrade) into ``argv_template``
-    and runs ``director digital-human decide``, which routes option A to the
-    read-only doctor (HeyGen setup diagnosis) and option B back to
+    and runs ``director digital-human decide``, which routes option A to secure
+    local credential setup and option B back to
     ``director generate --accept-digital-human-downgrade`` (paid; payload still
     omits ``third_party_processors`` — configured source-of-truth is untouched).
     """
@@ -1027,12 +1038,12 @@ def _d13_decision_action(root: str) -> dict[str, Any]:
         "question_id": "digital_human_downgrade",
         "question_label": (
             "检测到 Creative Brief 指定 presenter.avatar=photo（要数字人），"
-            "但本机尚未配置 HeyGen（缺 HEYGEN_API_KEY / adapter / journal）。请裁定："
+            "但本机尚未配置 HeyGen（缺本地凭据 / adapter / journal）。请裁定："
         ),
         "options": [
             {
                 "id": "configure",
-                "label": "配置 HEYGEN_API_KEY 并重新采集（配置成功后可出数字人）",
+                "label": "安全配置本机 HeyGen 凭据（配置成功后继续原 generation）",
             },
             {
                 "id": "downgrade",
@@ -1111,12 +1122,20 @@ def generate(
             # so a stale configured=true cannot bill an unexecutable capability.
             if not _stored_heygen_still_live(capabilities, directory):
                 capabilities = None
+            elif (
+                _d13_brief_avatar(project_store) == "photo"
+                and not _d13_heygen_configured(capabilities)
+                and build_heygen_doctor_section(project_root=directory).get("configured")
+            ):
+                # The credential may have been safely configured after the
+                # original snapshot. Re-capture instead of looping on stale state.
+                capabilities = None
         if capabilities is None:
             if state.protocol_version == "1.1":
                 # §5.5e5c: pass real adapter + journal probes so the HeyGen
                 # capability is reported when the shipped stack is actually
                 # importable + the journal is not in a refuse-downgrade state.
-                # The key is still gated inside heygen_processor (env HEYGEN_API_KEY).
+                # The key stays gated inside the shared local credential provider.
                 capabilities = capture_capabilities_v1_1(
                     adapter_kind=adapter_kind,
                     adapter_version=adapter_version,
@@ -1154,17 +1173,35 @@ def generate(
             and _d13_brief_avatar(project_store) == "photo"
             and not _d13_heygen_configured(capabilities)
         ):
+            root = str(directory.expanduser().resolve())
+            user_prompt = (
+                "当前项目选择了照片数字人，但本机尚未配置 HeyGen。"
+                "请在返回的选项卡中选择 configure 或 downgrade。若选择 configure："
+                + heygen_key_user_prompt(root)
+            )
             emit(
-                _result(
-                    state=state,
-                    workflow={
-                        "phase": "digital_human_decision_required",
-                        "policy": "execute_only_returned_next_action",
-                        "next_action": _d13_decision_action(
-                            str(directory.expanduser().resolve())
-                        ),
+                {
+                    **_result(
+                        state=state,
+                        workflow={
+                            "phase": "digital_human_decision_required",
+                            "ready": False,
+                            "blocked_by": ["heygen_key_required"],
+                            "requires_user_action": True,
+                            "policy": "execute_only_returned_next_action",
+                            "next_action": _d13_decision_action(root),
+                        },
+                    ),
+                    "requires_user_action": True,
+                    "user_prompt": user_prompt,
+                    "next_suggested": "回答 digital_human_downgrade 选项卡",
+                    "local_generation": {
+                        "generation_id": selected_id,
+                        "cloud_submission_state": "not_submitted",
+                        "credit_deducted": False,
+                        "preserve_generation_id": True,
                     },
-                ),
+                },
                 json_output=json_output,
                 message=(
                     "检测到 avatar=photo 但本机未配置 HeyGen —— 已拦截 "
@@ -1250,6 +1287,21 @@ def status(
                 message="本地项目还没有 Manifest generation。",
                 next_action="先运行 director generate。",
             )
+        if is_locally_reserved_generation(state):
+            contract = reserved_generation_contract(directory, state)
+            payload = _result(state=state, workflow=contract["workflow"])
+            payload.update(
+                {key: value for key, value in contract.items() if key != "workflow"}
+            )
+            emit(
+                payload,
+                json_output=json_output,
+                message=(
+                    "Generation 已在本地保留，尚未提交云端；"
+                    "请执行返回的唯一下一动作。"
+                ),
+            )
+            return
         generation = _make_client(state.payload["server_url"]).get_generation(
             state.generation_id, protocol_version=state.protocol_version,
         )
@@ -1310,6 +1362,21 @@ def generation_resume(
                 message="本地项目还没有 Manifest generation。",
                 next_action="先运行 director generate。",
             )
+        if is_locally_reserved_generation(state):
+            contract = reserved_generation_contract(directory, state)
+            payload = _result(state=state, workflow=contract["workflow"])
+            payload.update(
+                {key: value for key, value in contract.items() if key != "workflow"}
+            )
+            emit(
+                payload,
+                json_output=json_output,
+                message=(
+                    "Generation 尚未提交云端，无需恢复云端计费；"
+                    "请执行返回的本地配置或原 ID 提交动作。"
+                ),
+            )
+            return
         generation = _make_client(state.payload["server_url"]).resume_generation(
             state.generation_id, protocol_version=state.protocol_version,
         )
