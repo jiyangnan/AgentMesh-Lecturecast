@@ -9,8 +9,8 @@ https://lecturecast.agentmesh360.com/
 
 ## Available Languages
 
-- 中文 (zh-CN, default): https://lecturecast.agentmesh360.com/
-- English (en): https://lecturecast.agentmesh360.com/en/
+- English (en, default): https://lecturecast.agentmesh360.com/
+- 中文 (zh-CN): https://lecturecast.agentmesh360.com/zh/
 - 日本語 (ja): https://lecturecast.agentmesh360.com/ja/
 - 한국어 (ko): https://lecturecast.agentmesh360.com/ko/
 

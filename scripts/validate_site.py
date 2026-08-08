@@ -10,6 +10,7 @@ from urllib.parse import unquote, urlsplit
 
 COMMERCIAL_ONLY_PAGES = (
     Path("index.html"),
+    Path("zh/index.html"),
     Path("en/index.html"),
     Path("ja/index.html"),
     Path("ko/index.html"),
@@ -29,7 +30,12 @@ COMMERCIAL_REQUIRED_PAGE_TOKENS = (
     "PNG",
 )
 COMMERCIAL_LOCALIZED_TOKENS = {
-    Path("index.html"): ("有效月卡", "完整签名讲稿", "三次独立人工"),
+    Path("index.html"): (
+        "active monthly pass",
+        "complete signed narration",
+        "three independent human",
+    ),
+    Path("zh/index.html"): ("有效月卡", "完整签名讲稿", "三次独立人工"),
     Path("en/index.html"): (
         "active monthly pass",
         "complete signed narration",

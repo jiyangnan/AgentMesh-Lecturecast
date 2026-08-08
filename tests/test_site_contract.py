@@ -46,10 +46,7 @@ def test_validate_site_accepts_offline_static_structure(tmp_path: Path) -> None:
     site = tmp_path / "site"
     _write_base_site(
         site,
-        body=(
-            '<main id="main"></main><a href="#main">Main</a>'
-            '<a href="/llms.txt">LLMs</a>'
-        ),
+        body=('<main id="main"></main><a href="#main">Main</a><a href="/llms.txt">LLMs</a>'),
     )
 
     process, result = _validate(site)
@@ -65,13 +62,11 @@ def test_production_site_links_and_indexes_course_video_guides() -> None:
         "/guides/ai-course-video-generator/",
         "/guides/course-video-for-bilibili-xiaohongshu/",
     )
-    landing = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    landing = (ROOT / "site" / "zh" / "index.html").read_text(encoding="utf-8")
     sitemap = (ROOT / "site" / "sitemap.xml").read_text(encoding="utf-8")
 
     for route in routes:
-        source = (
-            ROOT / "site" / route.strip("/") / "index.html"
-        ).read_text(encoding="utf-8")
+        source = (ROOT / "site" / route.strip("/") / "index.html").read_text(encoding="utf-8")
         canonical = f"https://lecturecast.agentmesh360.com{route}"
         assert f'href="{route}"' in landing
         assert f'rel="canonical" href="{canonical}"' in source
@@ -162,16 +157,27 @@ def _write_contract_site(
     extra_route: bool = False,
 ) -> None:
     localized_tokens = {
-        "index.html": ("有效月卡", "完整签名讲稿", "三次独立人工"),
+        "index.html": (
+            "active monthly pass",
+            "complete signed narration",
+            "three independent human",
+        ),
         "en/index.html": (
             "active monthly pass",
             "complete signed narration",
             "three independent human",
         ),
+        "zh/index.html": ("有效月卡", "完整签名讲稿", "三次独立人工"),
         "ja/index.html": ("有効な月間パス", "署名脚本全文", "3 つの独立"),
         "ko/index.html": ("유효한 월간 패스", "전체 서명 대본", "세 번의 사람"),
     }
-    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+    for relative in (
+        "index.html",
+        "en/index.html",
+        "zh/index.html",
+        "ja/index.html",
+        "ko/index.html",
+    ):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
@@ -201,11 +207,17 @@ def test_commercial_only_contract_accepts_one_paid_local_media_route(
 
     assert process.returncode == 0
     assert result["ok"] is True
-    assert result["files_checked"] == 4
+    assert result["files_checked"] == 5
 
 
 def test_current_site_publishes_ten_credit_manifest_price() -> None:
-    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+    for relative in (
+        "index.html",
+        "en/index.html",
+        "zh/index.html",
+        "ja/index.html",
+        "ko/index.html",
+    ):
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
         assert "10 credits" in page
 
@@ -220,11 +232,17 @@ def test_current_site_publishes_real_dual_format_customer_case() -> None:
         "assets/showcase/difficult-task-xiaohongshu-poster.jpg",
     )
 
-    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+    for relative in (
+        "index.html",
+        "en/index.html",
+        "zh/index.html",
+        "ja/index.html",
+        "ko/index.html",
+    ):
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
-        case = page.split('data-case-study="real-customer-canary-v1"', 1)[1].split(
-            "</section>", 1
-        )[0]
+        case = page.split('data-case-study="real-customer-canary-v1"', 1)[1].split("</section>", 1)[
+            0
+        ]
 
         assert case.count("<video ") == 2
         assert case.count(" controls") == 2
@@ -249,16 +267,22 @@ def test_current_site_publishes_real_dual_format_customer_case() -> None:
 def test_current_site_localizes_dual_format_platform_labels() -> None:
     expected = {
         "index.html": (
-            "BILIBILI · 16:9 · 04:48",
-            "<h3>B 站横版</h3>",
-            "XIAOHONGSHU · 9:16 · 04:48",
-            "<h3>小红书竖版</h3>",
+            "YOUTUBE · 16:9 · 04:48",
+            "<h3>YouTube landscape</h3>",
+            "TIKTOK · 9:16 · 04:48",
+            "<h3>TikTok portrait</h3>",
         ),
         "en/index.html": (
             "YOUTUBE · 16:9 · 04:48",
             "<h3>YouTube landscape</h3>",
             "TIKTOK · 9:16 · 04:48",
             "<h3>TikTok portrait</h3>",
+        ),
+        "zh/index.html": (
+            "BILIBILI · 16:9 · 04:48",
+            "<h3>B 站横版</h3>",
+            "XIAOHONGSHU · 9:16 · 04:48",
+            "<h3>小红书竖版</h3>",
         ),
         "ja/index.html": (
             "YOUTUBE · 16:9 · 04:48",
@@ -274,6 +298,10 @@ def test_current_site_localizes_dual_format_platform_labels() -> None:
         ),
     }
     metadata_names = {
+        "index.html": (
+            "real YouTube landscape delivery",
+            "real TikTok portrait delivery",
+        ),
         "en/index.html": (
             "real YouTube landscape delivery",
             "real TikTok portrait delivery",
@@ -284,9 +312,9 @@ def test_current_site_localizes_dual_format_platform_labels() -> None:
 
     for relative, labels in expected.items():
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
-        case = page.split('data-case-study="real-customer-canary-v1"', 1)[1].split(
-            "</section>", 1
-        )[0]
+        case = page.split('data-case-study="real-customer-canary-v1"', 1)[1].split("</section>", 1)[
+            0
+        ]
         for label in labels:
             assert label in case
         for name in metadata_names.get(relative, ()):
@@ -294,15 +322,19 @@ def test_current_site_localizes_dual_format_platform_labels() -> None:
 
 
 def test_current_site_installs_then_onboards_before_conditional_login() -> None:
-    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+    for relative in (
+        "index.html",
+        "en/index.html",
+        "zh/index.html",
+        "ja/index.html",
+        "ko/index.html",
+    ):
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
         terminal = re.search(r'<pre class="code"(?:\s+[^>]*)?>', page, re.S)
         assert terminal is not None, f"terminal block missing in {relative}"
         terminal = page[terminal.end() :].split("</pre>", 1)[0]
 
-        assert terminal.index("lecturecast onboard") < terminal.index(
-            "lecturecast auth login"
-        )
+        assert terminal.index("lecturecast onboard") < terminal.index("lecturecast auth login")
         assert "requires_user_action" in terminal
         assert "workflow.next_action" in terminal
         assert "--host-contract 1.0.0" in terminal
@@ -310,8 +342,13 @@ def test_current_site_installs_then_onboards_before_conditional_login() -> None:
 
 def test_current_site_publishes_three_human_gates_in_every_language() -> None:
     required = {
-        "index.html": ("Creative Brief", "10 credits", "完整签名讲稿"),
+        "index.html": (
+            "Creative Brief",
+            "10 credits",
+            "complete signed narration",
+        ),
         "en/index.html": ("Creative Brief", "10 credits", "complete signed narration"),
+        "zh/index.html": ("Creative Brief", "10 credits", "完整签名讲稿"),
         "ja/index.html": ("Creative Brief", "10 credits", "署名脚本全文"),
         "ko/index.html": ("Creative Brief", "10 credits", "전체 서명 대본"),
     }
@@ -328,7 +365,13 @@ def test_current_site_publishes_tts_network_and_credential_boundaries() -> None:
         "ディスクに書き込まれることはありません",
         "디스크에 기록되지 않습니다",
     )
-    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+    for relative in (
+        "index.html",
+        "en/index.html",
+        "zh/index.html",
+        "ja/index.html",
+        "ko/index.html",
+    ):
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
         assert "Microsoft Edge" in page
         assert "MiniMax" in page
@@ -339,16 +382,19 @@ def test_current_site_publishes_tts_network_and_credential_boundaries() -> None:
 
 def test_current_site_declares_four_standard_outputs_and_one_product_route() -> None:
     retired_route_labels = ("两种路线", "2 つの経路", "두 경로")
-    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+    for relative in (
+        "index.html",
+        "en/index.html",
+        "zh/index.html",
+        "ja/index.html",
+        "ko/index.html",
+    ):
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
         assert "1920×1080" in page
         assert "1080×1920" in page
         assert "MP4" in page
         assert "PNG" in page
-        assert (
-            ".routes{margin-top:40px;display:grid;"
-            "grid-template-columns:1fr 1fr"
-        ) not in page
+        assert (".routes{margin-top:40px;display:grid;grid-template-columns:1fr 1fr") not in page
         assert page.count('data-route="director"') == 1
         assert all(label not in page for label in retired_route_labels)
 
@@ -360,7 +406,13 @@ def test_current_site_metadata_describes_the_commercial_product() -> None:
         "オープンソースのローカル",
         "오픈소스 로컬",
     )
-    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+    for relative in (
+        "index.html",
+        "en/index.html",
+        "zh/index.html",
+        "ja/index.html",
+        "ko/index.html",
+    ):
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
         head = page.split("</head>", 1)[0]
         assert "commercial agentic video production" in head
@@ -368,15 +420,27 @@ def test_current_site_metadata_describes_the_commercial_product() -> None:
 
 
 def test_current_site_links_every_language_directly_to_pass_purchase() -> None:
-    purchase_url = "https://agentmesh360.com/app/#pricing"
-    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+    purchase_urls = {
+        "index.html": "https://agentmesh360.com/app/#pricing",
+        "en/index.html": "https://agentmesh360.com/app/#pricing",
+        "zh/index.html": "https://agentmesh360.com/app/?lang=zh-CN#pricing",
+        "ja/index.html": "https://agentmesh360.com/app/?lang=ja#pricing",
+        "ko/index.html": "https://agentmesh360.com/app/?lang=ko#pricing",
+    }
+    for relative, purchase_url in purchase_urls.items():
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
         assert page.count("data-purchase-cta") == 1
         assert f'href="{purchase_url}"' in page
 
 
 def test_current_site_supports_macos_and_windows_without_linux() -> None:
-    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+    for relative in (
+        "index.html",
+        "en/index.html",
+        "zh/index.html",
+        "ja/index.html",
+        "ko/index.html",
+    ):
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
         assert '"operatingSystem": "macOS, Windows"' in page
         assert '"operatingSystem": "macOS, Windows, Linux"' not in page
@@ -394,7 +458,7 @@ def test_commercial_only_contract_rejects_unmetered_director_access(
     assert process.returncode == 1
     errors = result["errors"]
     assert isinstance(errors, list)
-    assert sum("director route must be paid" in error for error in errors) == 4
+    assert sum("director route must be paid" in error for error in errors) == 5
 
 
 def test_commercial_only_contract_requires_machine_readable_boundary(
@@ -424,18 +488,20 @@ def test_commercial_only_contract_rejects_a_second_product_route(tmp_path: Path)
 
 def test_current_site_does_not_publish_retired_product_tier() -> None:
     retired_tier = "".join(("comm", "unity"))
-    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+    for relative in (
+        "index.html",
+        "en/index.html",
+        "zh/index.html",
+        "ja/index.html",
+        "ko/index.html",
+    ):
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
         assert retired_tier not in page.lower()
-    assert retired_tier not in (ROOT / "site" / "llms.txt").read_text(
-        encoding="utf-8"
-    ).lower()
+    assert retired_tier not in (ROOT / "site" / "llms.txt").read_text(encoding="utf-8").lower()
 
 
 def test_production_hosting_stays_behind_agentmesh_caddy() -> None:
-    boundary = (ROOT / "docs/LECTURECAST-SYSTEM-BOUNDARY.md").read_text(
-        encoding="utf-8"
-    )
+    boundary = (ROOT / "docs/LECTURECAST-SYSTEM-BOUNDARY.md").read_text(encoding="utf-8")
 
     assert not (ROOT / ".github/workflows/pages.yml").exists()
     assert not (ROOT / "site/CNAME").exists()
@@ -450,10 +516,15 @@ def test_localized_pages_use_the_lecturecast_product_mark_as_favicon() -> None:
 
     assert "#D1493F" in favicon
     assert "Lecturecast" in favicon
-    for relative in ("index.html", "en/index.html", "ja/index.html", "ko/index.html"):
+    for relative in (
+        "index.html",
+        "en/index.html",
+        "zh/index.html",
+        "ja/index.html",
+        "ko/index.html",
+    ):
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
         assert (
-            '<link rel="icon" type="image/svg+xml" '
-            'href="/favicon.svg?v=product-mark-v1" />'
+            '<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=product-mark-v1" />'
         ) in page
         assert "data:image/svg+xml" not in page
