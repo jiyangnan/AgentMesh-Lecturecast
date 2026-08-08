@@ -1,24 +1,23 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Lecturecast | AI Course Video Generator · AgentMesh360</title>
-<meta name="description" content="Create landscape and portrait course videos with a signed cloud production plan, three human approvals, and local media rendering." />
-<meta property="og:title" content="Lecturecast — Turn one idea into a course video" />
-<meta property="og:description" content="AgentMesh360 commercial course-video production: the cloud Director signs the plan and script; your machine creates two MP4s, subtitles, and two covers." />
+<title>Lecturecast — 把一个想法，变成一条课程视频 · AgentMesh360 商业产品</title>
+<meta name="description" content="Lecturecast 是 AgentMesh360 商业课程视频产品：绑定有效月卡与通用 API Key，由云端 Director 生成签名 ProductionManifest，再在本机完成配音、编辑和渲染。" />
+<meta property="og:title" content="Lecturecast — 把一个想法，变成一条课程视频" />
+<meta property="og:description" content="AgentMesh360 商业课程视频产品：云端 Director 负责签名方案与脚本，本机完成 TTS、横竖双版渲染、字幕和双封面。" />
 <meta property="og:type" content="website" />
-<meta property="og:url" content="https://lecturecast.agentmesh360.com/en/" />
+<meta property="og:url" content="https://lecturecast.agentmesh360.com/zh/" />
 <meta property="og:site_name" content="Lecturecast · AgentMesh360" />
 <meta property="og:image" content="https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili-poster.jpg" />
-<meta property="og:locale" content="en_US" />
 <meta name="robots" content="index,follow,max-image-preview:large" />
 <meta name="theme-color" content="#0E8A6E" />
 <meta name="twitter:card" content="summary" />
-<meta name="twitter:title" content="Lecturecast — AgentMesh360 commercial course-video production" />
-<meta name="twitter:description" content="Bind an active monthly pass and universal API key, pass three human approval gates, then produce two MP4s and two covers on your machine." />
+<meta name="twitter:title" content="Lecturecast — AgentMesh360 商业课程视频产品" />
+<meta name="twitter:description" content="绑定有效月卡与通用 API Key，经三次人工确认获得签名制作方案，再在本机完成横竖双版视频和两张封面。" />
 <meta name="twitter:image" content="https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili-poster.jpg" />
-<link rel="canonical" href="https://lecturecast.agentmesh360.com/" />
+<link rel="canonical" href="https://lecturecast.agentmesh360.com/zh/" />
 <link rel="alternate" type="text/markdown" href="/llms.txt" title="Lecturecast LLMs.txt" />
 <link rel="alternate" hreflang="zh-CN" href="https://lecturecast.agentmesh360.com/zh/" />
 <link rel="alternate" hreflang="en" href="https://lecturecast.agentmesh360.com/" />
@@ -41,8 +40,7 @@
       "@type": "SoftwareApplication",
       "@id": "https://lecturecast.agentmesh360.com/#software",
       "name": "Lecturecast",
-      "url": "https://lecturecast.agentmesh360.com/en/",
-      "inLanguage": "en",
+      "url": "https://lecturecast.agentmesh360.com/",
       "codeRepository": "https://github.com/jiyangnan/AgentMesh-Lecturecast",
       "license": "https://www.apache.org/licenses/LICENSE-2.0",
       "applicationCategory": "MultimediaApplication",
@@ -50,27 +48,33 @@
       "operatingSystem": "macOS, Windows",
       "isAccessibleForFree": false,
       "provider": { "@id": "https://agentmesh360.com/#organization" },
-      "description": "Lecturecast is an AgentMesh360 commercial course-video product. Active monthly-pass customers use the cloud Director for structured choices, a signed ProductionManifest, and a signed script, then produce media locally.",
+      "audience": {
+        "@type": "Audience",
+        "audienceType": "需要从一个主题生成知识讲解或课程视频的创作者、讲师与产品团队"
+      },
+      "description": "Lecturecast 是 AgentMesh360 商业课程视频产品；有效月卡用户通过云端 Director 获得结构化创作选择、签名 ProductionManifest 与签名脚本，再在本机完成媒体制作。",
       "featureList": [
-        "Cloud Director structured choices and signed narration script",
-        "Local voiceover and timeline alignment",
-        "1920×1080 landscape MP4 and matching PNG cover",
-        "1080×1920 portrait MP4 and matching PNG cover",
-        "Chinese subtitle burn-in",
-        "Signed declarative ProductionManifest",
-        "Three independent human approval gates"
+        "云端 Director 结构化创作选择与签名讲稿",
+        "本地配音与时间轴对齐",
+        "照片数字人出镜（可选，自备 HeyGen API Key）",
+        "自动配乐（科技轻盈 / 明亮发布，本地合成）",
+        "1920×1080 横版 MP4 与同尺寸 PNG 封面",
+        "1080×1920 竖版 MP4 与同尺寸 PNG 封面",
+        "中文字幕烧录",
+        "签名声明式 ProductionManifest",
+        "三次独立人工审批门禁"
       ],
       "offers": {
         "@type": "Offer",
-        "url": "https://agentmesh360.com/app/#pricing",
+        "url": "https://agentmesh360.com/app/?lang=zh-CN#pricing",
         "availability": "https://schema.org/InStock"
       }
     },
     {
       "@type": "VideoObject",
       "@id": "https://lecturecast.agentmesh360.com/#case-bilibili",
-      "name": "Difficult Task Start — real YouTube landscape delivery",
-      "description": "A 1920×1080 course video delivered by a real first-customer Lecturecast run.",
+      "name": "困难任务启动术｜B 站横版真实交付",
+      "description": "Lecturecast 真实首次客户验证交付的 1920×1080 横版课程视频。",
       "thumbnailUrl": "https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili-poster.jpg",
       "contentUrl": "https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili.mp4",
       "uploadDate": "2026-07-21",
@@ -82,8 +86,8 @@
     {
       "@type": "VideoObject",
       "@id": "https://lecturecast.agentmesh360.com/#case-xiaohongshu",
-      "name": "Difficult Task Start — real TikTok portrait delivery",
-      "description": "A 1080×1920 course video delivered by a real first-customer Lecturecast run.",
+      "name": "困难任务启动术｜小红书竖版真实交付",
+      "description": "Lecturecast 真实首次客户验证交付的 1080×1920 竖版课程视频。",
       "thumbnailUrl": "https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu-poster.jpg",
       "contentUrl": "https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu.mp4",
       "uploadDate": "2026-07-21",
@@ -94,23 +98,27 @@
     },
     {
       "@type": "FAQPage",
-      "@id": "https://lecturecast.agentmesh360.com/en/#faq",
-      "inLanguage": "en",
+      "@id": "https://lecturecast.agentmesh360.com/#faq",
       "mainEntity": [
         {
           "@type": "Question",
-          "name": "Does Lecturecast require an account or API key?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Yes. Lecturecast requires an active AgentMesh360 monthly pass and universal API key. 10 credits are deducted only upon approval of ProductionManifest generation." }
+          "name": "Lecturecast 需要账户或 API key 吗？",
+          "acceptedAnswer": { "@type": "Answer", "text": "需要。Lecturecast 要求有效的 AgentMesh360 月卡和通用 API Key；10 credits 仅在批准生成 ProductionManifest 时扣减。" }
         },
         {
           "@type": "Question",
-          "name": "Does Lecturecast upload anything to the cloud?",
-          "acceptedAnswer": { "@type": "Answer", "text": "A bounded source summary, stable choices, the Brief, and client capabilities go to the cloud Director; narration text goes to the selected TTS provider. Original media, generated audio, subtitles, rendering, and outputs stay local." }
+          "name": "Lecturecast 处理过程会上云吗？",
+          "acceptedAnswer": { "@type": "Answer", "text": "受限素材摘要、稳定选项、Brief 和客户端能力进入云端 Director；旁白文本发送给所选 TTS 服务。原始媒体、生成音频、字幕、渲染和成片留在本机。" }
         },
         {
           "@type": "Question",
-          "name": "Which video platform formats does Lecturecast support?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Standard delivery contains a 1920×1080 landscape MP4, a 1080×1920 portrait MP4, and two matching PNG covers." }
+          "name": "Lecturecast 支持哪些视频平台格式？",
+          "acceptedAnswer": { "@type": "Answer", "text": "标准交付包含 1920×1080 横版 MP4、1080×1920 竖版 MP4，以及两张对应尺寸的 PNG 封面。" }
+        },
+        {
+          "@type": "Question",
+          "name": "Lecturecast 适合谁？和 CreatorCut 有什么区别？",
+          "acceptedAnswer": { "@type": "Answer", "text": "Lecturecast 适合需要从一个主题生成知识讲解或课程视频的创作者、讲师和产品团队；CreatorCut 则从已经录好的口播或产品录屏出发，完成智能后期。" }
         }
       ]
     }
@@ -120,7 +128,7 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Noto+Serif+SC:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <link href="/showcase.css?v=real-delivery-v1" rel="stylesheet" />
 
 <style>
@@ -129,8 +137,8 @@
     --muted:#786F66; --rule:#E8DCCD; --accent:#0E8A6E; --accent-ink:#075B49;
     --blue:#2E5BFF; --red:#FF2442; --yellow:#FFD400;
     --code-bg:#0B2D27; --code-fg:#F5EFE5; --code-dim:#A7B7AE; --code-acc:#FFD400;
-    --serif:"Source Serif 4",Georgia,serif;
-    --sans:"Inter",-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;
+    --serif:"Source Serif 4","Noto Serif SC","Songti SC","STSong",Georgia,serif;
+    --sans:"Inter",-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
     --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
     --maxw:1120px; --gutter:clamp(20px,4vw,56px);
   }
@@ -191,9 +199,14 @@
   .terminal-bar .lights{display:flex;gap:6px}
   .terminal-bar .lights span{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,0.1)}
   .terminal-bar .title{font-family:var(--mono);font-size:12px;color:var(--code-dim);margin-left:8px}
+  .terminal-bar .copy-btn{margin-left:auto;font-family:var(--sans);font-size:11px;color:var(--code-dim);letter-spacing:0.06em;text-transform:uppercase;background:transparent;border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:5px 10px;cursor:pointer;transition:color .15s ease,border-color .15s ease,background .15s ease}
+  .terminal-bar .copy-btn:hover{color:var(--code-fg);border-color:rgba(255,255,255,0.18)}
+  .terminal-bar .copy-btn:active{background:rgba(255,255,255,0.04)}
+  .terminal-bar .copy-btn.copied{color:var(--code-acc);border-color:color-mix(in oklab,var(--code-acc) 40%,transparent)}
+  .terminal-bar .copy-btn:focus-visible{outline:2px solid var(--code-acc);outline-offset:1px}
   pre.code{margin:0;padding:22px 24px 26px;font-family:var(--mono);font-size:13.5px;line-height:1.85;overflow-x:auto;-webkit-overflow-scrolling:touch}
   pre.code .c-prompt{color:var(--code-acc);user-select:none} pre.code .c-cmd{color:var(--code-fg)}
-  pre.code .c-dim{color:var(--code-dim)}
+  pre.code .c-flag{color:var(--blue)} pre.code .c-str{color:var(--yellow)} pre.code .c-dim{color:var(--code-dim)}
 
   section.block{padding:clamp(72px,10vw,128px) 0;border-top:1px solid var(--rule)}
   .kicker{font-size:12.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);font-weight:500;margin-bottom:28px;display:flex;align-items:center;gap:12px}
@@ -214,6 +227,7 @@
   .feat p{margin:0;font-size:15.5px;line-height:1.6;color:var(--ink-soft);text-wrap:pretty}
   @media(max-width:820px){.features{grid-template-columns:1fr}}
 
+  /* local stack triplet */
   .stack{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(20px,3vw,32px);margin-top:clamp(48px,6vw,72px)}
   @media(max-width:680px){.stack{grid-template-columns:1fr}}
   .stk{background:var(--surface);border:1px solid var(--rule);border-radius:14px;padding:clamp(22px,2.6vw,30px)}
@@ -246,8 +260,6 @@
   footer.foot{border-top:1px solid var(--rule);padding:56px 0 72px;font-size:14px;color:var(--muted)}
   .foot-inner{display:flex;flex-wrap:wrap;justify-content:space-between;gap:24px;align-items:flex-end}
   .foot .brand{font-size:16px} .foot-meta{display:flex;flex-wrap:wrap;gap:24px} .foot-meta a:hover{color:var(--accent)}
-  .foot-note{margin-top:14px;font-size:12px;color:var(--muted);opacity:0.85;font-style:italic}
-  .foot-note a{border-bottom:1px dotted currentColor} .foot-note a:hover{color:var(--accent);border-bottom-color:var(--accent)}
 </style>
 <script defer src="https://analytics.agentmesh360.com/script.js" data-website-id="0471cc3b-8e74-442e-925f-fc76c33291da"></script>
 </head>
@@ -255,7 +267,7 @@
 
 <header class="nav" id="topnav">
   <div class="nav-inner">
-    <a href="/" class="brand" aria-label="Lecturecast">
+    <a href="/zh/" class="brand" aria-label="Lecturecast">
       <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <rect x="3" y="6" width="14" height="12" rx="2" stroke="currentColor" stroke-width="1.4"/>
         <path d="M17 10l4-2.5v9L17 14" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
@@ -263,21 +275,21 @@
       Lecturecast <small>· AgentMesh360</small>
     </a>
     <nav class="nav-links" aria-label="Primary">
-      <a href="#routes" class="nav-section">Commercial path</a>
-      <a href="#features" class="nav-section">Features</a>
-      <a href="#platforms" class="nav-section">Real delivery</a>
-      <a href="#how" class="nav-section">How</a>
+      <a href="#routes" class="nav-section">商业路线</a>
+      <a href="#features" class="nav-section">能力</a>
+      <a href="#platforms" class="nav-section">真实案例</a>
+      <a href="#how" class="nav-section">怎么用</a>
       <a href="#faq" class="nav-section">FAQ</a>
       <span class="lang-switch" aria-label="Language">
-        <a class="lang" href="/zh/" hreflang="zh-CN">中</a>
+        <a class="lang lang-active" aria-current="page">中</a>
         <span class="sep"></span>
-        <a class="lang lang-active" aria-current="page">EN</a>
+        <a class="lang" href="/" hreflang="en">EN</a>
         <span class="sep"></span>
         <a class="lang" href="/ja/" hreflang="ja">日</a>
         <span class="sep"></span>
         <a class="lang" href="/ko/" hreflang="ko">한</a>
       </span>
-      <a href="#install" class="nav-cta">Install</a>
+      <a href="#install" class="nav-cta">开始安装</a>
     </nav>
   </div>
 </header>
@@ -285,35 +297,35 @@
 <section class="hero">
   <div class="wrap">
     <div class="eyebrow"><span class="dot"></span> COMMERCIAL ACCESS · LOCAL PRODUCTION</div>
-    <h1 class="display">Turn one idea into <em>a course video</em>.</h1>
+    <h1 class="display">把一个想法，<em>变成</em>一条课程视频。</h1>
     <p class="lede">
-      Lecturecast is an <strong>AgentMesh360 commercial course-video product</strong>. Your Agent verifies an active monthly pass and universal API key, the cloud Director turns structured choices into a signed production plan and narration script, and your machine produces <strong>two MP4s plus two matching covers</strong>. Original media is never uploaded; narration text goes to your selected TTS provider.
-      <span style="display:block;margin-top:8px;font-size:0.9em;color:var(--muted);">(Bilibili and Xiaohongshu are the major Chinese video platforms — landscape and portrait respectively. The pipeline produces both formats whether or not you publish to them.)</span>
+      Lecturecast 是 AgentMesh360 的<strong>商业课程视频产品</strong>：用户 Agent 先验证有效月卡与通用 API Key，由云端 Director 把结构化创作选择变成签名制作方案和讲稿，再在你的机器上完成配音、编辑和渲染，<strong>同时产出横版与竖版 MP4 及两张封面</strong>。原始媒体不上云；旁白文本会发送给你选择的 TTS 服务。
     </p>
     <div class="hero-ctas">
-      <a href="#install" class="btn btn-primary">Install Lecturecast <span class="arrow">→</span></a>
-      <a href="https://agentmesh360.com/app/#pricing" class="btn btn-ghost" data-purchase-cta>Get an AgentMesh360 pass</a>
+      <a href="#install" class="btn btn-primary">开始安装 <span class="arrow">→</span></a>
+      <a href="https://agentmesh360.com/app/?lang=zh-CN#pricing" class="btn btn-ghost" data-purchase-cta>开通 AgentMesh360 通行证</a>
     </div>
 
-    <div class="routes" id="routes" data-product-contract="commercial-only-v1" aria-label="Lecturecast commercial access">
+    <div class="routes" id="routes" data-product-contract="commercial-only-v1" aria-label="Lecturecast 商业使用方式">
       <article class="route route-director" data-route="director" data-access="paid" data-media="local">
-        <div class="route-top"><span class="route-label">Lecturecast Director</span><span class="route-status">Active monthly pass · 10 credits / generation</span></div>
-        <h3>Cloud direction, local production.</h3>
-        <p>The Agent verifies the universal API key, active monthly pass, and shared credits, then completes the native choice cards and Creative Brief approval. Once 10 credits are confirmed, the cloud Director issues a signed ProductionManifest and a complete signed narration, both immutable to the host Agent. The complete signed narration is reviewed and approved section by section; TTS and rendering execute locally only after approval.</p>
+        <div class="route-top"><span class="route-label">Lecturecast Director</span><span class="route-status">有效月卡 · 10 credits / 次</span></div>
+        <h3>云端导演，本地制片</h3>
+        <p>Agent 先校验通用 API Key、有效月卡与共享 credits，完成原生选择卡与 Brief 审批。用户确认扣减 10 credits 后，云端 Director 生成签名 ProductionManifest 与完整签名讲稿，二者对宿主 Agent 不可改写；完整签名讲稿逐段经人工审阅批准后，TTS 与渲染仅在本机执行。</p>
       </article>
     </div>
 
-    <div class="terminal-frame" id="install" aria-label="Install locally, then let your agent drive it">
+    <div class="terminal-frame" id="install" aria-label="在本地装好，交给你的 agent">
       <div class="terminal-bar">
         <div class="lights"><span></span><span></span><span></span></div>
         <span class="title">~ run-this-locally</span>
+        <button type="button" class="copy-btn" id="copyCmds" aria-label="复制命令">copy-paste</button>
       </div>
-<pre class="code"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
+<pre class="code" id="cmdBlock"><span class="c-prompt">$</span> <span class="c-cmd">curl -fsSL https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.sh | bash</span>
 <span class="c-prompt">PS&gt;</span> <span class="c-cmd">irm https://raw.githubusercontent.com/jiyangnan/AgentMesh-Lecturecast/main/scripts/install.ps1 | iex</span>
-<span class="c-dim"># After installation, start a NEW host-Agent task; the fresh Skill returns the exact command</span>
-<span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --adapter codex --host-contract 1.0.0 --json</span> <span class="c-dim"># Codex example</span>
-<span class="c-dim"># Only if requires_user_action asks for an API key: lecturecast auth login</span>
-<span class="c-dim"># Rerun onboard after the fix, then execute only workflow.next_action</span></pre>
+<span class="c-dim"># 安装完成后，新建宿主 Agent 任务；由新加载的 Skill 返回准确命令</span>
+<span class="c-prompt">$</span> <span class="c-cmd">lecturecast onboard --adapter codex --host-contract 1.0.0 --json</span> <span class="c-dim"># Codex 示例</span>
+<span class="c-dim"># 仅当 requires_user_action 要求 API Key 时，运行：lecturecast auth login</span>
+<span class="c-dim"># 修复后重跑 onboard；随后只执行 workflow.next_action</span></pre>
     </div>
   </div>
 </section>
@@ -321,40 +333,50 @@
 <section class="block">
   <div class="wrap why">
     <div>
-      <div class="kicker">Why hand it off</div>
-      <h2 class="section-title">AI can write a script. <em>Production</em> is the actual pain.</h2>
+      <div class="kicker">为什么不自己剪</div>
+      <h2 class="section-title">写稿能交给 AI，<em>出片</em>才是真麻烦。</h2>
     </div>
     <div class="why-body">
-      <p>Getting an AI to write a script is easy. What's hard is everything after — <span class="hi">voiceover, timeline alignment, rendering, subtitle burn-in, cover design, and producing landscape + portrait versions each time</span>.</p>
-      <p>Lecturecast gives your AI agent an executable control flow: Director owns the signed creative plan; your machine owns TTS, timing, and rendering. Any access, asset, timing, or QA failure stops delivery instead of producing plausible text or an incomplete video.</p>
+      <p>让 AI 写个脚本不难，难的是后面——<span class="hi">配音、对轴、渲染、烧字幕、做封面、还要横竖两版各适配一次</span>。</p>
+      <p>Lecturecast 把可执行控制流交给你的 AI agent：Director 负责签名创作方案，本机负责 TTS、时间线和渲染。任何权限、素材、时长或 QA 检查失败都会停止交付，而非交付看似完成的文字或残缺视频。</p>
     </div>
   </div>
 </section>
 
 <section class="block" id="features">
   <div class="wrap">
-    <div class="kicker">Capabilities · cloud plan, local production</div>
-    <h2 class="section-title">From one topic to <em>two finished videos</em>.</h2>
+    <div class="kicker">产品能力 · 云端定方案，本机制作</div>
+    <h2 class="section-title">从一句主题，到<em>两条成片</em>。</h2>
     <div class="features">
       <div class="feat">
         <span class="feat-num">i.</span>
-        <h3>Director-generated signed script</h3>
-        <p>Direction and facts are confirmed in the Creative Brief. After 10 credits are approved, Director generates the immutable signed ProductionManifest and complete narration script; the host Agent cannot rewrite them.</p>
+        <h3>Director 生成签名讲稿</h3>
+        <p>在 Creative Brief 中确认方向与事实；批准 10 credits 后，Director 生成不可变的签名 ProductionManifest 与完整讲稿，宿主 Agent 不能擅自改写。</p>
       </div>
       <div class="feat">
         <span class="feat-num">ii.</span>
-        <h3>Local voiceover and alignment</h3>
-        <p>Only your approval of every signed narration section unlocks TTS. Measured audio drives scenes, subtitles, and composition duration; the build stops if any section or total leaves the 75–125% timing envelope, or final A/V coverage differs by more than one second.</p>
+        <h3>本地配音对轴</h3>
+        <p>完整签名讲稿经你逐段批准后才进入 TTS。真实音频时长驱动场景、字幕和成片时长；任一分节或总时长超出 75–125% 安全范围，或音视频覆盖差超过 1 秒，构建会停止。</p>
       </div>
       <div class="feat">
         <span class="feat-num">iii.</span>
-        <h3>Dual-platform rendering</h3>
-        <p>One script, rendered locally with Remotion into both Bilibili landscape (16:9) and Xiaohongshu portrait (9:16), each with its own layout. No second pass of editing required.</p>
+        <h3>数字人出镜</h3>
+        <p>可选照片数字人：上传一张照片，由云端 Director 签发制作方案，你的 HeyGen API Key 处理照片与旁白片段，数字人对着镜头讲述。</p>
       </div>
       <div class="feat">
         <span class="feat-num">iv.</span>
-        <h3>Subtitles + covers</h3>
-        <p>Local ffmpeg burns in Chinese subtitles and creates two matching PNG covers. Delivery waits for full decode, audio coverage, subtitle-glyph, and dimension QA; you make the final publish decision.</p>
+        <h3>自动配乐</h3>
+        <p>可选自动配乐：科技轻盈、明亮发布两档由云端签发档位，本机引擎按成片节奏合成，不依赖任何第三方曲库。不出镜也能配乐。</p>
+      </div>
+      <div class="feat">
+        <span class="feat-num">v.</span>
+        <h3>双平台渲染</h3>
+        <p>同一份内容，用本机的 Remotion 一次产出 B 站横版（16:9）和小红书竖版（9:16），各自适配排版，不用你二次剪辑。</p>
+      </div>
+      <div class="feat">
+        <span class="feat-num">vi.</span>
+        <h3>字幕 + 封面</h3>
+        <p>本机 ffmpeg 烧录中文字幕并生成两张对应尺寸的 PNG 封面。完整解码、音轨覆盖、字幕字形和尺寸 QA 通过后才交付，由你最终审核并决定是否发布。</p>
       </div>
     </div>
   </div>
@@ -362,12 +384,12 @@
 
 <section class="block" id="platforms" data-case-study="real-customer-canary-v1">
   <div class="wrap">
-    <div class="kicker">Real delivery · first-customer run</div>
-    <h2 class="section-title">One topic. <em>Two real videos.</em></h2>
-    <p class="section-lede">Produced in a real first-customer run on 2026-07-21. The same signed script and measured timeline became two native layouts on the customer's machine—not one crop in two containers.</p>
+    <div class="kicker">真实交付 · 首次客户验证</div>
+    <h2 class="section-title">一条主题，两条<em>真成片</em>。</h2>
+    <p class="section-lede">来自 2026-07-21 的真实首次客户验证。《困难任务启动术》使用同一份签名讲稿与计量时间线，在客户机器上分别完成横版和竖版制作——不是把一个画面裁成两种尺寸。</p>
 
-    <div class="case-proof" aria-label="Case provenance">
-      <div class="case-fact">Source<strong>First-customer run</strong></div>
+    <div class="case-proof" aria-label="案例来源">
+      <div class="case-fact">Source<strong>首次客户实测</strong></div>
       <div class="case-fact">Run date<strong>2026 · 07 · 21</strong></div>
       <div class="case-fact">Production<strong>Local render</strong></div>
       <div class="case-fact">Delivery<strong>QA verified</strong></div>
@@ -378,18 +400,18 @@
         <div class="case-frame">
           <div class="case-bar">
             <span class="signal" aria-hidden="true"></span>
-            <span class="case-file">YOUTUBE · 16:9 · 04:48</span>
+            <span class="case-file">BILIBILI · 16:9 · 04:48</span>
             <span class="case-qa">QA PASS</span>
           </div>
           <video class="case-video" width="1920" height="1080" controls playsinline preload="none"
             poster="/assets/showcase/difficult-task-bilibili-poster.jpg"
-            aria-label="Play the landscape YouTube delivery of Difficult Task Start">
+            aria-label="播放《困难任务启动术》B 站横版成片">
             <source src="/assets/showcase/difficult-task-bilibili.mp4" type="video/mp4" />
-            Your browser does not support HTML5 video. <a href="/assets/showcase/difficult-task-bilibili.mp4">Download the landscape video</a>.
+            你的浏览器不支持 HTML5 视频。<a href="/assets/showcase/difficult-task-bilibili.mp4">下载横版成片</a>。
           </video>
         </div>
         <figcaption class="case-caption">
-          <h3>YouTube landscape</h3>
+          <h3>B 站横版</h3>
           <p>1920 × 1080 · H.264 + AAC<br />8,653 FRAMES</p>
         </figcaption>
       </figure>
@@ -400,58 +422,58 @@
         <div class="case-frame">
           <div class="case-bar">
             <span class="signal" aria-hidden="true"></span>
-            <span class="case-file">TIKTOK · 9:16 · 04:48</span>
+            <span class="case-file">XIAOHONGSHU · 9:16 · 04:48</span>
             <span class="case-qa">QA PASS</span>
           </div>
           <video class="case-video" width="1080" height="1920" controls playsinline preload="none"
             poster="/assets/showcase/difficult-task-xiaohongshu-poster.jpg"
-            aria-label="Play the portrait TikTok delivery of Difficult Task Start">
+            aria-label="播放《困难任务启动术》小红书竖版成片">
             <source src="/assets/showcase/difficult-task-xiaohongshu.mp4" type="video/mp4" />
-            Your browser does not support HTML5 video. <a href="/assets/showcase/difficult-task-xiaohongshu.mp4">Download the portrait video</a>.
+            你的浏览器不支持 HTML5 视频。<a href="/assets/showcase/difficult-task-xiaohongshu.mp4">下载竖版成片</a>。
           </video>
         </div>
         <figcaption class="case-caption">
-          <h3>TikTok portrait</h3>
+          <h3>小红书竖版</h3>
           <p>1080 × 1920 · H.264 + AAC<br />8,653 FRAMES</p>
         </figcaption>
       </figure>
     </div>
 
-    <div class="case-stats" aria-label="Case production data">
-      <div class="case-stat"><strong>08</strong><span>chapters</span></div>
-      <div class="case-stat"><strong>1,409</strong><span>script characters</span></div>
-      <div class="case-stat"><strong>91</strong><span>subtitle events</span></div>
-      <div class="case-stat"><strong>288.433s</strong><span>per final video</span></div>
-      <div class="case-stat"><strong>0</strong><span>missing glyphs</span></div>
+    <div class="case-stats" aria-label="案例制作数据">
+      <div class="case-stat"><strong>08</strong><span>章节</span></div>
+      <div class="case-stat"><strong>1,409</strong><span>字签名讲稿</span></div>
+      <div class="case-stat"><strong>91</strong><span>条字幕事件</span></div>
+      <div class="case-stat"><strong>288.433s</strong><span>每条成片时长</span></div>
+      <div class="case-stat"><strong>0</strong><span>缺失字形</span></div>
     </div>
 
     <div class="case-note">
       <b>DELIVERY NOTE</b>
-      <p>The validation run preserved its full issue and repair record. These are the final files that passed audio-coverage, subtitle-glyph, dimension, and full-render QA.</p>
+      <p>真实验证保留了完整的问题与修复记录。这里展示的是通过音轨覆盖、字幕字形、尺寸和全长渲染 QA 的最终交付文件。</p>
     </div>
   </div>
 </section>
 
 <section class="block" id="stack">
   <div class="wrap">
-    <div class="kicker">Local three-piece stack</div>
-    <h2 class="section-title">All on <em>your own machine</em>.</h2>
-    <p class="section-lede">Native macOS and Windows are supported; Linux and WSL are not. There are no cloud media workers or remote renderers. The cloud handles commercial access, creative decisions, and a signed Manifest; narration text goes to the selected TTS service. <code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh / install.ps1</code> checks what the local machine is missing.</p>
+    <div class="kicker">本地三件套依赖</div>
+    <h2 class="section-title">全部跑在<em>你自己的机器</em>上。</h2>
+    <p class="section-lede">正式支持 macOS 与 Windows，不支持 Linux/WSL。没有云端媒体 worker，也没有远程渲染。云端只负责商业权限、创作决策与签名 Manifest；旁白文本会发送给所选 TTS 服务。<code style="font-family:var(--mono);background:color-mix(in oklab,var(--accent) 10%,var(--surface));color:var(--accent-ink);padding:1px 6px;border-radius:4px;font-size:0.9em">install.sh / install.ps1</code> 会检查本机缺少什么。</p>
     <div class="stack">
       <div class="stk">
         <div class="stk-icon">RENDER</div>
         <h3>Node + Remotion</h3>
-        <p>Code-driven animated scenes that render both aspect ratios. Install Node 20+, then let <code>npm install</code> prepare the project.</p>
+        <p>用代码驱动的动画场景渲染双平台画面。安装 Node 20+ 后由 <code>npm install</code> 准备项目依赖。</p>
       </div>
       <div class="stk">
         <div class="stk-icon">VOICE</div>
         <h3>Python + edge-tts</h3>
-        <p>Audio files are generated and stored locally. The client sends narration text to Microsoft Edge speech; with MiniMax BYOK, it sends the signed narration text to your own MiniMax account.</p>
+        <p>音频文件在本机生成和保存；旁白文本由本机客户端发送给 Microsoft Edge 语音服务。也可自带 MiniMax key，把签名讲稿文本发送到自己的 MiniMax 账户。</p>
       </div>
       <div class="stk">
         <div class="stk-icon">MUX</div>
-        <h3>ffmpeg (with libass)</h3>
-        <p>Burns Chinese subtitles and stitches the final video. Use <code>ffmpeg-full</code> on macOS or a native Windows ffmpeg build with libass; doctor verifies the actual capability.</p>
+        <h3>ffmpeg（带 libass）</h3>
+        <p>烧录中文字幕、合成成片。macOS 使用 <code>ffmpeg-full</code>；Windows 使用带 libass 的原生 ffmpeg build。最终都由 doctor 按能力验证。</p>
       </div>
     </div>
   </div>
@@ -459,67 +481,93 @@
 
 <section class="block" id="how">
   <div class="wrap">
-    <div class="kicker">How to use</div>
-    <h2 class="section-title">Designed to be <em>agent-friendly</em>.</h2>
-    <p class="section-lede">The installed Skill drives one control flow. Brief approval, 10-credit Manifest-generation approval, and complete signed-script approval are three independent human gates before local TTS and rendering.</p>
+    <div class="kicker">怎么用</div>
+    <h2 class="section-title">设计为 <em>agent-friendly</em>。</h2>
+    <p class="section-lede">安装后的 Skill 驱动唯一控制流。Brief、10-credit Manifest 生成、完整签名讲稿分别是三次独立人工门禁；全部通过后才进入本地 TTS 和渲染。</p>
     <div class="steps">
       <div class="step">
         <div class="step-n">01</div>
         <div class="step-body">
-          <h3>Install the CLI</h3>
-          <p>Use <code>install.sh</code> on macOS or <code>install.ps1</code> in Windows PowerShell. Both install the commercial CLI, signature verification, and Agent Skill. Then start a new Agent task; its current Skill runs onboard with exact <code>--adapter</code> and <code>--host-contract</code> arguments.<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">See on GitHub →</a></p>
+          <h3>装上 CLI</h3>
+          <p>macOS 使用 <code>install.sh</code>，Windows PowerShell 使用 <code>install.ps1</code>；两者都会安装商业 CLI、签名验证和 Agent Skill。安装后新建 Agent 任务，由当前 Skill 运行带 <code>--adapter</code> 与 <code>--host-contract</code> 的 onboard 命令。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">看 GitHub →</a></p>
         </div>
       </div>
       <div class="step">
         <div class="step-n">02</div>
         <div class="step-body">
-          <h3>Your Agent completes commercial onboarding</h3>
-          <p>The new task attests the installer-owned current Skill, then checks the account, monthly pass, credits, and renderer. It executes only the CLI's returned next_action; missing or stale Skill state stops before project mutation or rendering.<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/AGENTS.md">See AGENTS.md →</a></p>
+          <h3>Agent 完成商业 onboarding</h3>
+          <p>新任务证明已加载安装器拥有的当前 Skill，再检查账户、月卡、credits 与渲染器；之后只执行 CLI 返回的唯一 next_action。Skill 缺失、过期或宿主漂移都会在项目写入和渲染前停止。<br/><a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/AGENTS.md">看 AGENTS.md →</a></p>
         </div>
       </div>
       <div class="step">
         <div class="step-n">03</div>
         <div class="step-body">
-          <h3>Director plans; your machine ships</h3>
-          <p>Following Director choices and Creative Brief approval, 10 credits are consumed for the signed ProductionManifest. The Agent presents the complete signed narration—still immutable—and waits again for approval; only then do local TTS, landscape and portrait renders, subtitles, and two covers proceed. A QA failure stops delivery.</p>
+          <h3>Director 定方案，本地完成出片</h3>
+          <p>通过 Director 选择和 Brief 审批后，消耗 10 credits 获取签名 ProductionManifest。Agent 展示不可变的完整签名讲稿并再次等待批准；批准后即在本机执行 TTS、横竖双版渲染、字幕与双封面，QA 失败时停止交付。</p>
         </div>
       </div>
     </div>
   </div>
 </section>
 
+<section class="block" id="guides">
+  <div class="wrap">
+    <div class="kicker">课程视频指南</div>
+    <h2 class="section-title">从主题到双平台成片，先看清<em>决策与制作边界</em>。</h2>
+    <p class="section-lede">两份指南解释 AI 课程视频生成的完整流程，以及 Bilibili 横版与小红书竖版为什么需要独立布局。</p>
+    <div class="routes">
+      <article class="route">
+        <div class="route-top"><span class="route-label">入门指南</span><span class="route-status">主题到成片</span></div>
+        <h3>什么是 AI 课程视频生成器</h3>
+        <p>了解 Creative Brief、10-credit 签名 Manifest、完整讲稿审批、本地 TTS 与渲染的三道人工作业门禁。</p>
+        <a class="link" href="/guides/ai-course-video-generator/">阅读生成器指南 →</a>
+      </article>
+      <article class="route">
+        <div class="route-top"><span class="route-label">平台指南</span><span class="route-status">横竖双版</span></div>
+        <h3>Bilibili 与小红书课程视频怎么做</h3>
+        <p>理解 16:9 与 9:16 的信息层级、字幕安全区、封面和节奏差异，而不是简单裁切同一条成片。</p>
+        <a class="link" href="/guides/course-video-for-bilibili-xiaohongshu/">阅读双平台指南 →</a>
+      </article>
+    </div>
+  </div>
+</section>
+
 <section class="block" id="faq">
   <div class="wrap">
-    <div class="kicker">FAQ</div>
+    <div class="kicker">常见问题</div>
     <h2 class="section-title">FAQ.</h2>
     <div class="faq-list">
       <details class="faq-item">
-        <summary>Does it cost anything? Do I need an account?</summary>
-        <div class="faq-answer">Lecturecast requires an active <strong>AgentMesh360 monthly pass</strong> and universal API key. It reuses shared credits and needs no separate LectureCast pass. Choices and Brief creation do not deduct credits; 10 credits are deducted only upon approval of ProductionManifest generation.</div>
+        <summary>要钱吗？要注册账户吗？</summary>
+        <div class="faq-answer">需要有效的 <strong>AgentMesh360 月卡</strong>和通用 API Key。Lecturecast 使用月卡账户的共享 credits，无需另购独立 LectureCast 订阅；结构化选择和 Brief 不扣费，10 credits 仅在批准生成 ProductionManifest 时扣减。</div>
       </details>
       <details class="faq-item">
-        <summary>Does the video get uploaded to the cloud?</summary>
-        <div class="faq-answer">Original media is not uploaded. A bounded source summary, stable option IDs, the Brief, and client capabilities go to the cloud Director; narration text goes to the selected TTS provider. Original media, local paths, generated audio, subtitles, rendering, and outputs stay local.</div>
+        <summary>视频会上传到云端吗？</summary>
+        <div class="faq-answer">原始媒体不会上传。受限素材摘要、稳定选项 ID、Brief 和客户端能力进入云端 Director；旁白文本发送给所选 TTS 服务。原始媒体、本地路径、生成音频、字幕、渲染与成片留在本机。</div>
       </details>
       <details class="faq-item">
-        <summary>What does the voiceover use? Can I get a richer voice?</summary>
-        <div class="faq-answer">Edge TTS sends narration text to Microsoft's Edge speech service. MiniMax BYOK sends the signed narration text to your own <a class="link" href="https://www.minimaxi.com">MiniMax</a> account. LectureCast does not intentionally persist <code>MINIMAX_API_KEY</code>; use secure process-environment injection because typing a literal shell <code>export</code> may put it in shell history.</div>
+        <summary>配音用什么？能换更好的音色吗？</summary>
+        <div class="faq-answer">默认 Edge TTS 会把旁白文本发送到 Microsoft Edge 语音服务；MiniMax BYOK 会把签名讲稿文本发送到你自己的 <a class="link" href="https://www.minimaxi.com">MiniMax</a> 账户。LectureCast 不会主动持久化 <code>MINIMAX_API_KEY</code>，建议用安全的进程环境注入；直接在 shell 中输入 <code>export</code> 可能进入历史记录。</div>
       </details>
       <details class="faq-item">
-        <summary>Is production fully automatic? What are the human gates?</summary>
-        <div class="faq-answer">Production is not unattended. Delivery requires three human approvals: the Creative Brief, a 10-credit Manifest generation, and section-by-section review of the complete signed narration. Once signed, the host Agent may not edit it; failure at any gate stops delivery before TTS or rendering.</div>
+        <summary>视频是全自动生成的吗？有哪些人工门禁？</summary>
+        <div class="faq-answer">不是无人值守。交付需经三次人工批准：Creative Brief、10-credit Manifest 生成、完整签名讲稿逐段审阅。签名内容生成后宿主 Agent 不得修改；任一门禁未通过即停止，不进入 TTS 或渲染。</div>
       </details>
       <details class="faq-item">
-        <summary>What do I need to install?</summary>
-        <div class="faq-answer">Three local pieces: <code>Node</code> + Remotion, <code>Python</code> + edge-tts, and <code>ffmpeg</code> with libass. macOS <code>install.sh</code> and Windows <code>install.ps1</code> both distinguish CLI installation from renderer readiness; doctor is the capability source of truth.</div>
+        <summary>需要装什么？</summary>
+        <div class="faq-answer">本地三件套：<code>Node</code> + Remotion（渲染）、<code>Python</code> + edge-tts（配音）、<code>ffmpeg</code> 带 libass（烧字幕）。macOS 的 <code>install.sh</code> 与 Windows 的 <code>install.ps1</code> 都会区分 CLI 安装成功和渲染器就绪；以 doctor 的能力检查为准。</div>
       </details>
       <details class="faq-item">
-        <summary>Which platforms are the outputs for?</summary>
-        <div class="faq-answer">Four standard files: a Bilibili landscape MP4 (<code>1920×1080</code>), a Xiaohongshu portrait MP4 (<code>1080×1920</code>), and two matching PNG covers.</div>
+        <summary>支持哪些平台的成片？</summary>
+        <div class="faq-answer">标准交付是四个文件：B 站横版 MP4（<code>1920×1080</code>）、小红书竖版 MP4（<code>1080×1920</code>），以及两张对应尺寸的 PNG 封面。</div>
       </details>
       <details class="faq-item">
-        <summary>Is the public client open source?</summary>
-        <div class="faq-answer">The public CLI, local execution tools, and website are Apache 2.0 on <a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a>. The complete product has one commercial path: an active monthly pass, universal API key, shared credits, and the cloud Director are required. There is no account-free route.</div>
+        <summary>Lecturecast 适合谁？和 CreatorCut 有什么区别？</summary>
+        <div class="faq-answer">Lecturecast 适合需要<strong>从一个主题生成知识讲解或课程视频</strong>的创作者、讲师和产品团队；<a class="link" href="https://creatorcut.agentmesh360.com/">AgentMesh-CreatorCut</a> 则从已经录好的口播或产品录屏出发，完成智能后期。</div>
+      </details>
+      <details class="faq-item">
+        <summary>公开客户端是开源的吗？</summary>
+        <div class="faq-answer">公开 CLI、本地执行工具与网站代码采用 Apache 2.0，位于 <a class="link" href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a>。完整产品仍只有一条商业路线：必须使用有效月卡、通用 API Key、共享 credits 和云端 Director，没有免账户路径。</div>
       </details>
     </div>
   </div>
@@ -528,20 +576,19 @@
 <footer class="foot">
   <div class="wrap foot-inner">
     <div>
-      <a href="/" class="brand">
+      <a href="/zh/" class="brand">
         <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <rect x="3" y="6" width="14" height="12" rx="2" stroke="currentColor" stroke-width="1.4"/>
           <path d="M17 10l4-2.5v9L17 14" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
         </svg>
         Lecturecast
       </a>
-      <div style="margin-top:8px;font-size:13.5px;color:var(--muted);">AgentMesh360 commercial product · Apache 2.0 public client · active monthly pass and Director required</div>
-      <div class="foot-note">Machine-assisted translation. Feedback welcome via <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/issues">GitHub issues</a>.</div>
+      <div style="margin-top:8px;font-size:13.5px;color:var(--muted);">AgentMesh360 商业产品 · 公开客户端 Apache 2.0 · 需要有效月卡与 Director</div>
     </div>
     <div class="foot-meta">
       <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast">GitHub</a>
-      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md">Local workflow</a>
-      <a href="https://agentmesh360.com">AgentMesh360</a>
+      <a href="https://github.com/jiyangnan/AgentMesh-Lecturecast/blob/main/docs/LOCAL-WORKFLOW.md">本地工作流</a>
+      <a href="https://agentmesh360.com/zh/">AgentMesh360</a>
       <span>© 2026</span>
     </div>
   </div>
@@ -553,6 +600,57 @@
     const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 8);
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
+  })();
+
+  // install terminal: copy-to-clipboard
+  (function(){
+    const btn = document.getElementById('copyCmds');
+    const pre = document.getElementById('cmdBlock');
+    if (!btn || !pre) return;
+
+    // Build clean text (strip leading "$ " prompt; keep comment lines as-is).
+    function buildCopyText() {
+      const lines = pre.innerText.split('\n');
+      return lines
+        .map(l => l.replace(/^\s*(?:\$|PS>)\s?/, '').trimEnd())        .filter(l => l.length > 0)
+        .join('\n');
+    }
+
+    const ORIGINAL = btn.textContent;
+    let resetTimer = null;
+
+    function flash(label, isOk) {
+      if (resetTimer) clearTimeout(resetTimer);
+      btn.textContent = label;
+      btn.classList.toggle('copied', !!isOk);
+      resetTimer = setTimeout(() => {
+        btn.textContent = ORIGINAL;
+        btn.classList.remove('copied');
+      }, 1800);
+    }
+
+    async function doCopy() {
+      const text = buildCopyText();
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        flash('✓ copied', true);
+      } catch (e) {
+        flash('✗ failed', false);
+      }
+    }
+
+    btn.addEventListener('click', doCopy);
   })();
 </script>
 
