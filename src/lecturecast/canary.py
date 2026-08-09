@@ -530,7 +530,7 @@ def run_canary(
             adapter_kind="text", adapter_version="1.0.0",
             project_root=project_dir, env=sources,
             adapter_probe=default_heygen_adapter_probe,
-            journal_probe=lambda: default_heygen_journal_probe(project_root),
+            journal_probe=lambda: default_heygen_journal_probe(project_dir),
         )
         payload = caps.model_dump()
         third_party = payload.get("third_party_processors")
