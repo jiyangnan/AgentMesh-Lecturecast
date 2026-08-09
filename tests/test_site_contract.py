@@ -36,6 +36,22 @@ def _page(
     )
 
 
+def _json_ld_graph(source: str) -> list[dict[str, object]]:
+    blocks = re.findall(
+        r'<script type="application/ld\+json">\s*(.*?)\s*</script>',
+        source,
+        flags=re.DOTALL,
+    )
+    assert blocks
+    graph: list[dict[str, object]] = []
+    for block in blocks:
+        payload = json.loads(block)
+        entries = payload.get("@graph", [payload])
+        assert isinstance(entries, list)
+        graph.extend(entries)
+    return graph
+
+
 def _write_base_site(root: Path, *, body: str | None = None) -> None:
     root.mkdir()
     (root / "index.html").write_text(_page(body=body or '<main id="main"></main>'))
@@ -240,10 +256,21 @@ def test_current_site_publishes_real_dual_format_customer_case() -> None:
         "ko/index.html",
     ):
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
+        videos = [
+            item for item in _json_ld_graph(page) if item.get("@type") == "VideoObject"
+        ]
         case = page.split('data-case-study="real-customer-canary-v1"', 1)[1].split("</section>", 1)[
             0
         ]
 
+        assert len(videos) == 2
+        assert all(
+            re.fullmatch(
+                r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})",
+                video["uploadDate"],
+            )
+            for video in videos
+        )
         assert case.count("<video ") == 2
         assert case.count(" controls") == 2
         assert case.count(" playsinline") == 2
