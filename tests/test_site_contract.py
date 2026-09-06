@@ -9,6 +9,13 @@ import sys
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "validate_site.py"
+CHECKIN_LINKS = {
+    "index.html": ("https://agentmesh360.com/app/#check-in", "Check in"),
+    "en/index.html": ("https://agentmesh360.com/app/#check-in", "Check in"),
+    "zh/index.html": ("https://agentmesh360.com/app/?lang=zh-CN#check-in", "今日签到"),
+    "ja/index.html": ("https://agentmesh360.com/app/?lang=ja#check-in", "毎日チェックイン"),
+    "ko/index.html": ("https://agentmesh360.com/app/?lang=ko#check-in", "출석 체크"),
+}
 
 
 def _validate(
@@ -88,6 +95,27 @@ def test_production_site_links_and_indexes_course_video_guides() -> None:
         assert f'rel="canonical" href="{canonical}"' in source
         assert 'type="application/ld+json"' in source
         assert f"<loc>{canonical}</loc>" in sitemap
+
+
+def test_four_language_landings_link_to_the_central_checkin_page() -> None:
+    for relative, (href, label) in CHECKIN_LINKS.items():
+        source = (ROOT / "site" / relative).read_text(encoding="utf-8")
+        assert f'href="{href}" class="nav-checkin"' in source
+        assert 'data-checkin-link' in source
+        assert 'data-checkin-surface="lecturecast"' in source
+        assert 'data-checkin-complete-label=' in source
+        assert f'>{label}</a>' in source
+        assert 'src="/assets/checkin-launch.js"' in source
+        assert ".nav-checkin{color:var(--accent-ink);font-weight:600}" in source
+        assert ":not(.nav-checkin)" in source
+
+    launch_script = (ROOT / "site" / "assets" / "checkin-launch.js").read_text(
+        encoding="utf-8"
+    )
+    assert 'event.origin !== coreOrigin' in launch_script
+    assert 'event.source !== activeLaunch.popup' in launch_script
+    assert 'event.data?.request_id !== activeLaunch.id' in launch_script
+    assert 'window.location.assign(target.toString())' in launch_script
 
 
 def test_validate_site_rejects_invalid_jsonld_duplicate_ids_and_missing_targets(
