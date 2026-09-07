@@ -151,6 +151,7 @@
   .brand small{font-family:var(--sans);font-weight:450;color:var(--muted);font-size:13px;letter-spacing:0;white-space:nowrap}
   .nav-links{display:flex;align-items:center;gap:22px;font-size:14px;color:var(--ink-soft);flex-shrink:0}
   .nav-links a{transition:color .15s;white-space:nowrap} .nav-links a:hover{color:var(--accent)}
+  .nav-checkin{color:var(--accent-ink);font-weight:600}
   .nav-cta{font-size:14px;background:var(--ink);color:var(--surface);padding:9px 16px;border-radius:999px;transition:background .15s,color .15s;white-space:nowrap}
   .nav-links .nav-cta:hover{background:var(--accent);color:var(--surface)}
   .lang-switch{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:12px;letter-spacing:0.02em;flex-shrink:0}
@@ -159,7 +160,7 @@
   .lang-switch .lang.lang-active{color:var(--accent-ink);font-weight:500}
   .lang-switch .sep{width:1px;height:11px;background:var(--rule);display:inline-block;flex-shrink:0}
   @media(max-width:880px){.nav-links a.nav-section{display:none}}
-  @media(max-width:720px){.nav-links a:not(.nav-cta):not(.lang){display:none} .lang-switch{gap:7px} .brand small{display:none}}
+  @media(max-width:720px){.nav-links a:not(.nav-cta):not(.nav-checkin):not(.lang){display:none} .lang-switch{gap:7px} .brand small{display:none}}
   @media(max-width:480px){.nav-inner{gap:12px;padding:14px 16px} .brand{font-size:15px;gap:7px} .brand-mark{width:20px;height:20px} .lang-switch{gap:5px;font-size:11px} .nav-cta{padding:8px 12px;font-size:13px}}
   @media(max-width:520px){.nav-cta{display:none} h1.display{font-size:34px;overflow-wrap:anywhere}.route{min-width:0}.route-top{align-items:flex-start;flex-direction:column}.route-status{white-space:normal}}
 
@@ -250,6 +251,7 @@
   .foot-note a{border-bottom:1px dotted currentColor} .foot-note a:hover{color:var(--accent);border-bottom-color:var(--accent)}
 </style>
 <script defer src="https://analytics.agentmesh360.com/script.js" data-website-id="0471cc3b-8e74-442e-925f-fc76c33291da"></script>
+<script defer src="/assets/checkin-launch.js"></script>
 </head>
 <body>
 
@@ -277,6 +279,7 @@
         <span class="sep"></span>
         <a class="lang" href="/ko/" hreflang="ko">한</a>
       </span>
+      <a href="https://agentmesh360.com/app/#check-in" class="nav-checkin" data-checkin-link data-checkin-surface="lecturecast" data-checkin-complete-label="Checked in">Check in</a>
       <a href="#install" class="nav-cta">Install</a>
     </nav>
   </div>
