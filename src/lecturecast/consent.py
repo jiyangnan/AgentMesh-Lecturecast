@@ -31,6 +31,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Mapping
 from urllib.parse import urlparse
 
 from lecturecast.heygen_journal import _chmod_secure, _utc_now, init_database
