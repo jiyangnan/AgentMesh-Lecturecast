@@ -238,6 +238,19 @@ Before changing installer, host-adapter, recovery or render behavior, read the
 
 ---
 
+## Part of AgentMesh360
+
+This product is part of the [AgentMesh360](https://agentmesh360.com/) product matrix — one account powers multiple vertical AI agents.
+
+| Product | Repository | Site |
+|---|---|---|
+| AgentMesh-JobAgent — AI job-search agent for Chinese recruiting platforms | [jiyangnan/AgentMesh-JobAgent](https://github.com/jiyangnan/AgentMesh-JobAgent) | [jobagent.agentmesh360.com](https://jobagent.agentmesh360.com/) |
+| AgentMesh-CreatorCut — AI post-production for talking-head and product recordings | [jiyangnan/AgentMesh-CreatorCut](https://github.com/jiyangnan/AgentMesh-CreatorCut) | [creatorcut.agentmesh360.com](https://creatorcut.agentmesh360.com/) |
+| AgentMesh-Lecturecast — agentic course-video production | [jiyangnan/AgentMesh-Lecturecast](https://github.com/jiyangnan/AgentMesh-Lecturecast) | [lecturecast.agentmesh360.com](https://lecturecast.agentmesh360.com/) |
+| AgentMesh-Runtime — local AI agent memory and recovery | [jiyangnan/AgentMesh-Runtime](https://github.com/jiyangnan/AgentMesh-Runtime) | [runtime.agentmesh360.com](https://runtime.agentmesh360.com/) |
+| AgentMesh-Deploy-Agent — open-source deployment operations agent | [jiyangnan/AgentMesh-Deploy-Agent](https://github.com/jiyangnan/AgentMesh-Deploy-Agent) | [deploy.agentmesh360.com](https://deploy.agentmesh360.com/) |
+| AgentMesh-OfficialRecruitment — official career-site application workspace | [jiyangnan/AgentMesh-OfficialRecruitmentAgent](https://github.com/jiyangnan/AgentMesh-OfficialRecruitmentAgent) | [recruit.agentmesh360.com](https://recruit.agentmesh360.com/) |
+
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).
