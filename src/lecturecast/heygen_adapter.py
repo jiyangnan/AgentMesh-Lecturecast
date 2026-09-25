@@ -22,7 +22,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Mapping, Protocol
+from typing import TYPE_CHECKING, Mapping, Protocol
+
+if TYPE_CHECKING:
+    from .operation_repository import MediaProbeResult, PreparedDownload
 
 
 def _require_tz_iso(value: str) -> None:
