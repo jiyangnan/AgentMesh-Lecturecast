@@ -5,6 +5,8 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
+from html import unescape
 
 
 ROOT = Path(__file__).parents[1]
@@ -291,23 +293,17 @@ def test_current_site_publishes_real_dual_format_customer_case() -> None:
             0
         ]
 
-        assert len(videos) == 2
-        assert all(
-            re.fullmatch(
-                r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})",
-                video["uploadDate"],
-            )
-            for video in videos
-        )
-        assert case.count("<video ") == 2
-        assert case.count(" controls") == 2
-        assert case.count(" playsinline") == 2
-        assert case.count('preload="none"') == 2
+        assert videos == []
+        assert "<video" not in case
+        assert case.count('class="case-watch-link"') == 2
         assert "autoplay" not in case
         assert "1920 × 1080" in case
         assert "1080 × 1920" in case
-        for target in (*media, *posters):
+        for target in posters:
             assert f"/{target}" in case
+        prefix = "" if relative in ("index.html", "en/index.html") else relative.split("/")[0] + "/"
+        for slug in ("difficult-task-landscape", "difficult-task-portrait"):
+            assert f'href="/{prefix}videos/{slug}/"' in case
 
     for target in (*media, *posters):
         path = ROOT / "site" / target
@@ -317,6 +313,61 @@ def test_current_site_publishes_real_dual_format_customer_case() -> None:
     for target in media:
         header = (ROOT / "site" / target).read_bytes()[:12]
         assert header[4:8] == b"ftyp"
+
+
+def test_course_videos_have_dedicated_localized_watch_pages_and_matching_sitemap() -> None:
+    origin = "https://lecturecast.agentmesh360.com"
+    locales = {"en": "", "zh-CN": "zh/", "ja": "ja/", "ko": "ko/"}
+    namespaces = {
+        "s": "http://www.sitemaps.org/schemas/sitemap/0.9",
+        "v": "http://www.google.com/schemas/sitemap-video/1.1",
+    }
+    sitemap = ET.parse(ROOT / "site" / "sitemap.xml")
+    entries = {
+        entry.findtext("s:loc", namespaces=namespaces): entry
+        for entry in sitemap.findall("s:url", namespaces)
+    }
+    for locale, prefix in locales.items():
+        for slug in ("difficult-task-landscape", "difficult-task-portrait"):
+            route = f"/{prefix}videos/{slug}/"
+            canonical = origin + route
+            page = (ROOT / "site" / route.lstrip("/") / "index.html").read_text()
+            graph = _json_ld_graph(page)
+            videos = [node for node in graph if node.get("@type") == "VideoObject"]
+            assert len(videos) == page.count("<video ") == 1
+            video = videos[0]
+            webpage = next(node for node in graph if node.get("@type") == "WebPage")
+            assert webpage["mainEntity"] == {"@id": video["@id"]}
+            assert webpage["inLanguage"] == locale
+            assert video["url"] == canonical and "embedUrl" not in video
+            assert video["inLanguage"] == "zh-CN"
+            assert video["name"] == unescape(re.search(r"<h1>(.*?)</h1>", page)[1])
+            assert f'<html lang="{locale}">' in page
+            assert f'<link rel="canonical" href="{canonical}"' in page
+            assert "noindex" not in page and "autoplay" not in page
+            assert re.search(r"<video[^>]+ controls playsinline", page)
+            assert 'preload="metadata"' in page
+            poster = re.search(r'<video[^>]+poster="([^"]+)"', page)[1]
+            media = re.search(r'<source src="([^"]+)"', page)[1]
+            assert video["thumbnailUrl"] == origin + poster
+            assert video["contentUrl"] == origin + media
+            assert re.fullmatch(
+                r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})",
+                video["uploadDate"],
+            )
+            for lang, locale_prefix in locales.items():
+                target = f"{origin}/{locale_prefix}videos/{slug}/"
+                assert f'hreflang="{lang}" href="{target}"' in page
+            for asset in (poster, media, "/watch.css"):
+                assert (ROOT / "site" / asset.lstrip("/")).is_file()
+            descriptor = entries[canonical].find("v:video", namespaces)
+            assert descriptor is not None
+            for field, property_name in (
+                ("content_loc", "contentUrl"), ("thumbnail_loc", "thumbnailUrl"),
+                ("title", "name"), ("description", "description"),
+                ("publication_date", "uploadDate"),
+            ):
+                assert descriptor.findtext(f"v:{field}", namespaces=namespaces) == video[property_name]
 
 
 def test_current_site_localizes_dual_format_platform_labels() -> None:
@@ -352,18 +403,6 @@ def test_current_site_localizes_dual_format_platform_labels() -> None:
             "<h3>TikTok 세로형</h3>",
         ),
     }
-    metadata_names = {
-        "index.html": (
-            "real YouTube landscape delivery",
-            "real TikTok portrait delivery",
-        ),
-        "en/index.html": (
-            "real YouTube landscape delivery",
-            "real TikTok portrait delivery",
-        ),
-        "ja/index.html": ("YouTube 横版の実納品", "TikTok 縦版の実納品"),
-        "ko/index.html": ("YouTube 가로형 실제 납품", "TikTok 세로형 실제 납품"),
-    }
 
     for relative, labels in expected.items():
         page = (ROOT / "site" / relative).read_text(encoding="utf-8")
@@ -372,8 +411,6 @@ def test_current_site_localizes_dual_format_platform_labels() -> None:
         ]
         for label in labels:
             assert label in case
-        for name in metadata_names.get(relative, ()):
-            assert name in page
 
 
 def test_current_site_installs_then_onboards_before_conditional_login() -> None:

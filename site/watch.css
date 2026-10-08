@@ -1,0 +1,25 @@
+/* Video navigation on product pages and dedicated watch-page layout. */
+.demo-watch-link, .case-watch-link { display:block; position:relative; border-radius:9px; overflow:hidden; }
+.demo-watch-link:focus-visible, .case-watch-link:focus-visible { outline:3px solid #0e8a6e; outline-offset:5px; }
+.watch-label { position:absolute; inset:auto 14px 14px auto; padding:10px 16px; border:1px solid #ffffff80; border-radius:6px; background:#072f28ed; color:#fff; font:600 14px/1.4 system-ui,sans-serif; box-shadow:0 3px 12px #0003; }
+.watch-page { --watch-accent:#0e8a6e; --watch-ink:#122c28; --watch-rule:#d8e4df; margin:0; background:#f6f8f5; color:var(--watch-ink); font:16px/1.6 system-ui,-apple-system,sans-serif; }
+.watch-page.jobagent { --watch-accent:#2563a6; --watch-ink:#182d42; --watch-rule:#dbe2e9; }
+.watch-page * { box-sizing:border-box; }
+.watch-page a { color:var(--watch-accent); text-underline-offset:4px; }
+.watch-page a:focus-visible { outline:3px solid var(--watch-accent); outline-offset:4px; }
+.watch-header { display:flex; justify-content:space-between; align-items:center; gap:16px; max-width:1128px; margin:auto; padding:20px 24px; border-bottom:1px solid var(--watch-rule); }
+.watch-brand { display:flex; align-items:center; gap:10px; color:var(--watch-ink)!important; text-decoration:none; font-weight:700; }
+.watch-brand img { width:28px; height:28px; }
+.watch-locales { display:flex; gap:6px; flex-wrap:wrap; }
+.watch-locales a { padding:5px 9px; text-decoration:none; font-size:13px; border-radius:5px; }
+.watch-locales a[aria-current="page"] { background:var(--watch-accent); color:white; }
+.watch-main { max-width:1128px; padding:24px; margin:auto; }
+.watch-main h1 { margin:0 0 10px; font-size:clamp(24px,3.5vw,38px); font-weight:650; line-height:1.25; letter-spacing:-.025em; }
+.watch-meta { color:#536960; margin:0 0 20px; font-size:14px; }
+.watch-media { margin:0; }
+.watch-player { display:block; width:100%; height:auto; max-height:65svh; border:1px solid var(--watch-rule); border-radius:12px; background:#071713; object-fit:contain; }
+.watch-media.portrait .watch-player { width:auto; height:min(65svh,640px); max-width:100%; margin-inline:auto; aspect-ratio:9/16; }
+.watch-media figcaption { margin-top:12px; font-size:14px; color:#536960; }
+.watch-description { margin:20px 0; max-width:850px; }
+.watch-actions { display:flex; flex-wrap:wrap; gap:14px 24px; border-top:1px solid var(--watch-rule); padding-top:18px; font-size:14px; }
+@media(max-width:600px) { .watch-header { padding:14px 16px; gap:8px; } .watch-brand { gap:6px; font-size:14px; } .watch-locales { gap:0; } .watch-locales a { padding:5px 7px; font-size:12px; } .watch-main { padding:20px 16px; } .watch-main h1 { font-size:25px; } .watch-meta { margin-bottom:14px; } .watch-label { inset:auto 8px 8px auto; padding:8px 12px; font-size:13px; } }

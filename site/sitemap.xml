@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
-        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+        xmlns:xhtml="http://www.w3.org/1999/xhtml"
+        xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">
   <url>
     <loc>https://lecturecast.agentmesh360.com/</loc>
     <xhtml:link rel="alternate" hreflang="zh-CN" href="https://lecturecast.agentmesh360.com/zh/" />
@@ -56,5 +57,141 @@
     <lastmod>2026-07-30</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://lecturecast.agentmesh360.com/videos/difficult-task-landscape/</loc>
+    <lastmod>2026-10-08</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://lecturecast.agentmesh360.com/videos/difficult-task-landscape/" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://lecturecast.agentmesh360.com/zh/videos/difficult-task-landscape/" />
+    <xhtml:link rel="alternate" hreflang="ja" href="https://lecturecast.agentmesh360.com/ja/videos/difficult-task-landscape/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://lecturecast.agentmesh360.com/ko/videos/difficult-task-landscape/" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://lecturecast.agentmesh360.com/videos/difficult-task-landscape/" />
+    <video:video>
+      <video:thumbnail_loc>https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili-poster.jpg</video:thumbnail_loc>
+      <video:title>Difficult Task Start — landscape course video</video:title>
+      <video:description>Watch a Lecturecast course video about starting difficult tasks, with Chinese narration and burned-in subtitles.</video:description>
+      <video:content_loc>https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili.mp4</video:content_loc>
+      <video:duration>288</video:duration>
+      <video:publication_date>2026-07-26T19:04:08+08:00</video:publication_date>
+    </video:video>
+  </url>
+  <url>
+    <loc>https://lecturecast.agentmesh360.com/videos/difficult-task-portrait/</loc>
+    <lastmod>2026-10-08</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://lecturecast.agentmesh360.com/videos/difficult-task-portrait/" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://lecturecast.agentmesh360.com/zh/videos/difficult-task-portrait/" />
+    <xhtml:link rel="alternate" hreflang="ja" href="https://lecturecast.agentmesh360.com/ja/videos/difficult-task-portrait/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://lecturecast.agentmesh360.com/ko/videos/difficult-task-portrait/" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://lecturecast.agentmesh360.com/videos/difficult-task-portrait/" />
+    <video:video>
+      <video:thumbnail_loc>https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu-poster.jpg</video:thumbnail_loc>
+      <video:title>Difficult Task Start — portrait course video</video:title>
+      <video:description>Watch a Lecturecast course video about starting difficult tasks, with Chinese narration and burned-in subtitles.</video:description>
+      <video:content_loc>https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu.mp4</video:content_loc>
+      <video:duration>288</video:duration>
+      <video:publication_date>2026-07-26T19:04:08+08:00</video:publication_date>
+    </video:video>
+  </url>
+  <url>
+    <loc>https://lecturecast.agentmesh360.com/zh/videos/difficult-task-landscape/</loc>
+    <lastmod>2026-10-08</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://lecturecast.agentmesh360.com/videos/difficult-task-landscape/" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://lecturecast.agentmesh360.com/zh/videos/difficult-task-landscape/" />
+    <xhtml:link rel="alternate" hreflang="ja" href="https://lecturecast.agentmesh360.com/ja/videos/difficult-task-landscape/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://lecturecast.agentmesh360.com/ko/videos/difficult-task-landscape/" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://lecturecast.agentmesh360.com/videos/difficult-task-landscape/" />
+    <video:video>
+      <video:thumbnail_loc>https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili-poster.jpg</video:thumbnail_loc>
+      <video:title>困难任务启动术 — 横版课程视频</video:title>
+      <video:description>观看 Lecturecast 制作的《困难任务启动术》课程视频，包含中文配音和烧录字幕。</video:description>
+      <video:content_loc>https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili.mp4</video:content_loc>
+      <video:duration>288</video:duration>
+      <video:publication_date>2026-07-26T19:04:08+08:00</video:publication_date>
+    </video:video>
+  </url>
+  <url>
+    <loc>https://lecturecast.agentmesh360.com/zh/videos/difficult-task-portrait/</loc>
+    <lastmod>2026-10-08</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://lecturecast.agentmesh360.com/videos/difficult-task-portrait/" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://lecturecast.agentmesh360.com/zh/videos/difficult-task-portrait/" />
+    <xhtml:link rel="alternate" hreflang="ja" href="https://lecturecast.agentmesh360.com/ja/videos/difficult-task-portrait/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://lecturecast.agentmesh360.com/ko/videos/difficult-task-portrait/" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://lecturecast.agentmesh360.com/videos/difficult-task-portrait/" />
+    <video:video>
+      <video:thumbnail_loc>https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu-poster.jpg</video:thumbnail_loc>
+      <video:title>困难任务启动术 — 竖版课程视频</video:title>
+      <video:description>观看 Lecturecast 制作的《困难任务启动术》课程视频，包含中文配音和烧录字幕。</video:description>
+      <video:content_loc>https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu.mp4</video:content_loc>
+      <video:duration>288</video:duration>
+      <video:publication_date>2026-07-26T19:04:08+08:00</video:publication_date>
+    </video:video>
+  </url>
+  <url>
+    <loc>https://lecturecast.agentmesh360.com/ja/videos/difficult-task-landscape/</loc>
+    <lastmod>2026-10-08</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://lecturecast.agentmesh360.com/videos/difficult-task-landscape/" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://lecturecast.agentmesh360.com/zh/videos/difficult-task-landscape/" />
+    <xhtml:link rel="alternate" hreflang="ja" href="https://lecturecast.agentmesh360.com/ja/videos/difficult-task-landscape/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://lecturecast.agentmesh360.com/ko/videos/difficult-task-landscape/" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://lecturecast.agentmesh360.com/videos/difficult-task-landscape/" />
+    <video:video>
+      <video:thumbnail_loc>https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili-poster.jpg</video:thumbnail_loc>
+      <video:title>難しいタスクの始め方 — 横型の講座動画</video:title>
+      <video:description>Lecturecast で制作した、難しいタスクを始めるための講座動画です。中国語のナレーションと焼き込み字幕が付いています。</video:description>
+      <video:content_loc>https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili.mp4</video:content_loc>
+      <video:duration>288</video:duration>
+      <video:publication_date>2026-07-26T19:04:08+08:00</video:publication_date>
+    </video:video>
+  </url>
+  <url>
+    <loc>https://lecturecast.agentmesh360.com/ja/videos/difficult-task-portrait/</loc>
+    <lastmod>2026-10-08</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://lecturecast.agentmesh360.com/videos/difficult-task-portrait/" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://lecturecast.agentmesh360.com/zh/videos/difficult-task-portrait/" />
+    <xhtml:link rel="alternate" hreflang="ja" href="https://lecturecast.agentmesh360.com/ja/videos/difficult-task-portrait/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://lecturecast.agentmesh360.com/ko/videos/difficult-task-portrait/" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://lecturecast.agentmesh360.com/videos/difficult-task-portrait/" />
+    <video:video>
+      <video:thumbnail_loc>https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu-poster.jpg</video:thumbnail_loc>
+      <video:title>難しいタスクの始め方 — 縦型の講座動画</video:title>
+      <video:description>Lecturecast で制作した、難しいタスクを始めるための講座動画です。中国語のナレーションと焼き込み字幕が付いています。</video:description>
+      <video:content_loc>https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu.mp4</video:content_loc>
+      <video:duration>288</video:duration>
+      <video:publication_date>2026-07-26T19:04:08+08:00</video:publication_date>
+    </video:video>
+  </url>
+  <url>
+    <loc>https://lecturecast.agentmesh360.com/ko/videos/difficult-task-landscape/</loc>
+    <lastmod>2026-10-08</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://lecturecast.agentmesh360.com/videos/difficult-task-landscape/" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://lecturecast.agentmesh360.com/zh/videos/difficult-task-landscape/" />
+    <xhtml:link rel="alternate" hreflang="ja" href="https://lecturecast.agentmesh360.com/ja/videos/difficult-task-landscape/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://lecturecast.agentmesh360.com/ko/videos/difficult-task-landscape/" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://lecturecast.agentmesh360.com/videos/difficult-task-landscape/" />
+    <video:video>
+      <video:thumbnail_loc>https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili-poster.jpg</video:thumbnail_loc>
+      <video:title>어려운 작업 시작하기 — 가로형 강의 영상</video:title>
+      <video:description>어려운 작업을 시작하는 방법을 다룬 Lecturecast 강의 영상입니다. 중국어 내레이션과 번인 자막이 포함되어 있습니다.</video:description>
+      <video:content_loc>https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-bilibili.mp4</video:content_loc>
+      <video:duration>288</video:duration>
+      <video:publication_date>2026-07-26T19:04:08+08:00</video:publication_date>
+    </video:video>
+  </url>
+  <url>
+    <loc>https://lecturecast.agentmesh360.com/ko/videos/difficult-task-portrait/</loc>
+    <lastmod>2026-10-08</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://lecturecast.agentmesh360.com/videos/difficult-task-portrait/" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://lecturecast.agentmesh360.com/zh/videos/difficult-task-portrait/" />
+    <xhtml:link rel="alternate" hreflang="ja" href="https://lecturecast.agentmesh360.com/ja/videos/difficult-task-portrait/" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://lecturecast.agentmesh360.com/ko/videos/difficult-task-portrait/" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://lecturecast.agentmesh360.com/videos/difficult-task-portrait/" />
+    <video:video>
+      <video:thumbnail_loc>https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu-poster.jpg</video:thumbnail_loc>
+      <video:title>어려운 작업 시작하기 — 세로형 강의 영상</video:title>
+      <video:description>어려운 작업을 시작하는 방법을 다룬 Lecturecast 강의 영상입니다. 중국어 내레이션과 번인 자막이 포함되어 있습니다.</video:description>
+      <video:content_loc>https://lecturecast.agentmesh360.com/assets/showcase/difficult-task-xiaohongshu.mp4</video:content_loc>
+      <video:duration>288</video:duration>
+      <video:publication_date>2026-07-26T19:04:08+08:00</video:publication_date>
+    </video:video>
   </url>
 </urlset>
