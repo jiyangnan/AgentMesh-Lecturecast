@@ -331,7 +331,7 @@ def test_course_videos_have_dedicated_localized_watch_pages_and_matching_sitemap
         for slug in ("difficult-task-landscape", "difficult-task-portrait"):
             route = f"/{prefix}videos/{slug}/"
             canonical = origin + route
-            page = (ROOT / "site" / route.lstrip("/") / "index.html").read_text()
+            page = (ROOT / "site" / route.lstrip("/") / "index.html").read_text(encoding="utf-8")
             graph = _json_ld_graph(page)
             videos = [node for node in graph if node.get("@type") == "VideoObject"]
             assert len(videos) == page.count("<video ") == 1
