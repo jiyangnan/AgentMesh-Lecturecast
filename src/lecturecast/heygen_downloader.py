@@ -27,6 +27,7 @@ from typing import Protocol
 from urllib import request as urllib_request
 from urllib.parse import urlparse
 
+from lecturecast.heygen_adapter import MediaProbe
 from lecturecast.operation_repository import MediaProbeResult, PreparedDownload
 
 _DEFAULT_DOWNLOAD_HOSTS = frozenset({"files.heygen.ai"})

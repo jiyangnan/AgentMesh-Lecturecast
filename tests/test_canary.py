@@ -184,6 +184,29 @@ def test_canary_m1_independence_asserts_omission(tmp_path: Path) -> None:
     assert report.invariant("m1_independence").passed
 
 
+def test_canary_m1_independence_journal_probe_uses_project_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the canary must bind its journal probe to the supplied
+    sandbox directory.  A stale ``project_root`` name previously raised only
+    when capability capture actually invoked the callback."""
+
+    class _Capabilities:
+        def model_dump(self) -> dict[str, object]:
+            return {"runtime": {"can_render_locally": False}}
+
+    def _capture(**kwargs: object) -> _Capabilities:
+        journal_probe = kwargs["journal_probe"]
+        assert callable(journal_probe)
+        assert journal_probe() is True
+        return _Capabilities()
+
+    monkeypatch.setattr("lecturecast.canary.capture_capabilities_v1_1", _capture)
+    report = _run(tmp_path, env={})
+
+    assert report.invariant("m1_independence").passed
+
+
 # ----- D12: isolated sandbox -----
 
 def test_canary_writes_only_to_its_sandbox(tmp_path: Path) -> None:

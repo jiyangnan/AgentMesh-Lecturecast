@@ -8,10 +8,13 @@ import re
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .errors import LectureCastError
 from .protocol import ProductionManifest, canonical_digest, manifest_signing_bytes
+
+if TYPE_CHECKING:
+    from .protocol import OrchestrationPlanV1_1, PresenterPlanV1_1, RecoveryDirectiveCatalog
 
 
 KEYRING_PATH = Path(__file__).with_name("signing-keyring.json")
